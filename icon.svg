@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0e1730"/>
+      <stop offset="58%" stop-color="#4a2f3a"/>
+      <stop offset="100%" stop-color="#a85a3a"/>
+    </linearGradient>
+    <linearGradient id="paint" x1="0.15" y1="0" x2="0.9" y2="1">
+      <stop offset="0%" stop-color="#ef5a52"/>
+      <stop offset="100%" stop-color="#b01f2c"/>
+    </linearGradient>
+    <radialGradient id="lamp" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff7e4"/>
+      <stop offset="40%" stop-color="#f2c07a"/>
+      <stop offset="100%" stop-color="#f2c07a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="108" fill="url(#sky)"/>
+  <ellipse cx="256" cy="455" rx="200" ry="48" fill="#e8b089" opacity="0.16"/>
+
+  <!-- Road -->
+  <path d="M64 412 C150 378 362 378 448 412 L428 438 C348 410 164 410 84 438 Z" fill="#12141a"/>
+  <rect x="232" y="400" width="28" height="8" rx="2" fill="#f4efe4" opacity="0.5"/>
+  <rect x="292" y="400" width="28" height="8" rx="2" fill="#f4efe4" opacity="0.28"/>
+
+  <!-- Wheels -->
+  <circle cx="160" cy="320" r="62" fill="#0a0c10"/>
+  <circle cx="160" cy="320" r="62" fill="none" stroke="#ddd6c8" stroke-width="11"/>
+  <circle cx="160" cy="320" r="16" fill="#2c2e34"/>
+
+  <circle cx="360" cy="320" r="62" fill="#0a0c10"/>
+  <circle cx="360" cy="320" r="62" fill="none" stroke="#ddd6c8" stroke-width="11"/>
+  <circle cx="360" cy="320" r="16" fill="#2c2e34"/>
+
+  <!-- Swingarm / lower frame -->
+  <path d="M160 320 L250 300 L330 312 L360 320" fill="none" stroke="#2a2c32" stroke-width="14" stroke-linecap="round"/>
+
+  <!-- Cafe tank + tail -->
+  <path d="
+    M132 278
+    C150 230, 190 198, 248 196
+    C292 194, 328 214, 346 248
+    L328 258
+    C312 232, 284 220, 250 222
+    C210 224, 180 246, 168 278
+    Z
+  " fill="url(#paint)"/>
+
+  <!-- Seat / cowl -->
+  <path d="
+    M128 278
+    C138 252, 158 238, 182 236
+    L168 278
+    Z
+  " fill="#6e141c"/>
+
+  <!-- Headstock / fork -->
+  <path d="M318 236 L358 308" stroke="#e8e2d4" stroke-width="13" stroke-linecap="round"/>
+  <path d="M330 234 L366 306" stroke="#8a857a" stroke-width="7" stroke-linecap="round"/>
+
+  <!-- Headlight -->
+  <circle cx="378" cy="236" r="38" fill="url(#lamp)"/>
+  <circle cx="378" cy="236" r="15" fill="#fff8ea"/>
+</svg>
