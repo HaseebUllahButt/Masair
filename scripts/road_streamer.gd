@@ -2,6 +2,7 @@ extends Node3D
 ## Streams road chunks ahead of the player and drops them behind.
 
 const RoadChunkGD: GDScript = preload("res://scripts/road_chunk.gd")
+const RoadPathGD: GDScript = preload("res://scripts/road_path.gd")
 const CHUNK_LENGTH: float = 40.0
 @export var chunks_ahead: int = 9
 @export var chunks_behind: int = 2
@@ -63,43 +64,54 @@ func theme_for_chunk(index: int) -> int:
 
 func _sync(build_all: bool) -> void:
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
-	var behind: int = chunks_behind
-	var ahead: int = chunks_ahead
-	if _path and _path.has_method("on_spur") and _path.call("on_spur", _player.track_z, _player.lateral):
-		# On a viewpoint spur the rider stops, gets off and turns round. Two
-		# chunks of history is fine at 200 km/h and absurd standing still: the
-		# road they just rode up would end in mid-air behind them.
-		behind = 9
-		# Near the destination the landscape, not only the road, has to exist around
-		# the player.  The lake is just over a kilometre long; the normal riding ring
-		# loaded only 360 m each way and cut its water, far shore and range into hard
-		# triangular ends inside the reward view.  Expand only for the final approach
-		# and platform, while the incremental builder keeps the extra chunks spread
-		# over frames.
-		var centre: float = float(_path.call("viewpoint_centre_for", _player.track_z))
-		if absf(_player.track_z - centre) < 620.0:
-			behind = 15
-			ahead = 15
-	var min_i: int = maxi(current - behind, 0)
-	var max_i: int = current + ahead
+	var bounds := _desired_bounds(current)
+	var min_i: int = bounds.x
+	var max_i: int = bounds.y
 
-	for i in range(min_i, max_i + 1):
-		if _chunks.has(i):
-			continue
-		if build_all:
-			_spawn(i, false)
-		elif not _build_in_flight:
+	if build_all:
+		for i in range(min_i, max_i + 1):
+			if not _chunks.has(i):
+				_spawn(i, false)
+	elif not _build_in_flight:
+		var next := _nearest_missing(current, min_i, max_i)
+		if next >= 0:
 			_build_in_flight = true
-			_spawn_incremental(i, _stream_generation)
-		# Never start a second coroutine while the first one is yielding through
-		# its ribbon and MultiMesh stages.
-		if not build_all:
-			break
+			_spawn_incremental(next, _stream_generation)
 
 	for i in _chunks.keys():
 		if int(i) < min_i or int(i) > max_i:
 			(_chunks[i] as Node).queue_free()
 			_chunks.erase(i)
+
+
+func _desired_bounds(current: int) -> Vector2i:
+	var min_i := maxi(current - chunks_behind, 0)
+	var max_i := current + chunks_ahead
+	if _path and _path.has_method("on_spur") and _path.call("on_spur", _player.track_z, _player.lateral):
+		# Keep the complete authored spur once the rider commits to it. The road is
+		# 2.32 km end-to-end; the old fixed 600 m ring freed its two ends while the
+		# player was still on it, so looking back showed the route ending in empty sky.
+		var centre: float = float(_path.call("viewpoint_centre_for", _player.track_z))
+		var half_span: float = RoadPathGD.SPUR_HALF_SPAN
+		min_i = maxi(floori((centre - half_span) / CHUNK_LENGTH) - 1, 0)
+		max_i = ceili((centre + half_span) / CHUNK_LENGTH) + 1
+	return Vector2i(min_i, max_i)
+
+
+func _nearest_missing(current: int, min_i: int, max_i: int) -> int:
+	## Build what can enter the camera first. Iterating from min_i made a scenic
+	## expansion construct its far end while a nearby empty chunk was visible.
+	var radius := 0
+	var furthest := maxi(current - min_i, max_i - current)
+	while radius <= furthest:
+		var ahead := current + radius
+		if ahead <= max_i and not _chunks.has(ahead):
+			return ahead
+		var behind := current - radius
+		if radius > 0 and behind >= min_i and not _chunks.has(behind):
+			return behind
+		radius += 1
+	return -1
 
 
 func _spawn(index: int, incremental: bool) -> void:

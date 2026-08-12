@@ -45,6 +45,26 @@ func _process(_delta: float) -> bool:
 		check(player.track_z < 12.0 and player.alive, "bike remains near the reset point")
 		check((streamer.get("_chunks") as Dictionary).size() >= 2, "nearby road is ready immediately")
 		check((traffic.get("_cars") as Array).is_empty(), "traffic is cleared")
+		# Committing to the 2.32 km scenic spur must retain both junctions. The old
+		# fixed ring covered only 600 m around the bike and visibly deleted the route.
+		var original_z: float = player.track_z
+		var original_lateral: float = player.lateral
+		var viewpoint: float = float(path.call("viewpoint_centre_for", 800.0))
+		var viewpoint_side: float = float(path.call("viewpoint_side_for", viewpoint))
+		player.track_z = viewpoint
+		player.lateral = viewpoint_side * float(path.call("spur_offset", viewpoint))
+		var scenic_bounds: Vector2i = streamer.call("_desired_bounds", floori(viewpoint / 40.0))
+		var spur_span: float = float(path.get_script().get_script_constant_map()["SPUR_HALF_SPAN"])
+		check(float(scenic_bounds.x) * 40.0 <= viewpoint - spur_span, "scenic streaming retains the entrance junction")
+		check(float(scenic_bounds.y + 1) * 40.0 >= viewpoint + spur_span, "scenic streaming retains the exit junction")
+		player.track_z = original_z
+		player.lateral = original_lateral
+		var chunks_before_light: Array = (streamer.get("_chunks") as Dictionary).keys()
+		main.call("_cycle_lighting")
+		check(
+			(streamer.get("_chunks") as Dictionary).keys() == chunks_before_light,
+			"changing time never rebuilds or removes streamed road"
+		)
 		# Road-only confinement: even a stale/out-of-range lateral write must be
 		# projected back onto the authored tarmac before the bike is placed.
 		var road_bounds: Vector2 = path.call("road_bounds_at", player.track_z)

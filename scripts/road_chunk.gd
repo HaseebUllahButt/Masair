@@ -40,8 +40,8 @@ static func _rock_scene(prefer_a: bool) -> PackedScene:
 enum Env { CITY, FOREST, COAST, MOUNTAIN, COUNTRY }
 
 const LENGTH := 40.0
-const STEPS := 24  # 1.67 m cross-sections keep crests visually round without expensive subdivision
-const RIBBON_STEPS_PER_FRAME := 4
+const STEPS := 12  # 3.3 m cross-sections stay smooth on broad grades and keep mesh uploads inside a frame
+const RIBBON_STEPS_PER_FRAME := 2
 const HALF_WIDTH := 8.0
 ## Asphalt is one continuous road, even when the surrounding biome changes.
 ## Keeping this outside the palettes prevents visible colour seams at run edges.
@@ -95,22 +95,12 @@ const HALF_PROFILE := [
 	[8.7, 0.14, "curb"],  # curb outer face
 	[11.5, 0.55, "verge"],
 	[14.0, 0.6, "ground"],
-	[17.0, 0.6, "ground"],
 	[20.5, 0.4, "ground"],
-	[24.5, 0.2, "ground"],
 	[29.0, 0.0, "ground"],
-	[34.0, 0.0, "ground"],
-	[40.0, 0.0, "ground"],
 	[47.0, 0.0, "ground"],
-	[55.0, 0.0, "ground"],
-	[64.0, 0.0, "ground"],
 	[75.0, 0.0, "ground"],
-	[88.0, 0.0, "ground"],
-	[104.0, 0.0, "ground"],
 	[125.0, 0.0, "ground"],
-	[155.0, 0.0, "ground"],
 	[195.0, 0.0, "ground"],
-	[245.0, 0.0, "ground"],
 	[305.0, 0.0, "ground"],
 	[370.0, 0.0, "ground"],
 ]
@@ -498,14 +488,15 @@ func setup_incremental(index: int, theme_id: int) -> void:
 	var builders := _new_ribbon_builders()
 	var hard: LowPoly = builders[0]
 	var road: LowPoly = builders[1]
-	var soft: LowPoly = builders[2]
+	var soft_left: LowPoly = builders[2]
+	var soft_right: LowPoly = builders[3]
 	var z0: float = float(chunk_index) * LENGTH
 	for first_step in range(0, STEPS, RIBBON_STEPS_PER_FRAME):
-		_build_ribbon_rows(hard, road, soft, z0, first_step, mini(first_step + RIBBON_STEPS_PER_FRAME, STEPS))
+		_build_ribbon_rows(hard, road, soft_left, soft_right, z0, first_step, mini(first_step + RIBBON_STEPS_PER_FRAME, STEPS))
 		await get_tree().process_frame
-	_finish_ribbon(hard, road, soft, z0)
+	await _finish_ribbon_incremental(hard, road, soft_left, soft_right, z0)
 	await get_tree().process_frame
-	_build_furniture()
+	await _build_furniture_incremental()
 	await get_tree().process_frame
 	_build_theme_scenery()
 	await get_tree().process_frame
@@ -794,10 +785,11 @@ func _build_ribbon() -> void:
 	var builders := _new_ribbon_builders()
 	var hard: LowPoly = builders[0]
 	var road: LowPoly = builders[1]
-	var soft: LowPoly = builders[2]
+	var soft_left: LowPoly = builders[2]
+	var soft_right: LowPoly = builders[3]
 	var z0: float = float(chunk_index) * LENGTH
-	_build_ribbon_rows(hard, road, soft, z0, 0, STEPS)
-	_finish_ribbon(hard, road, soft, z0)
+	_build_ribbon_rows(hard, road, soft_left, soft_right, z0, 0, STEPS)
+	_finish_ribbon(hard, road, soft_left, soft_right, z0)
 
 
 func _new_ribbon_builders() -> Array[LowPoly]:
@@ -806,13 +798,21 @@ func _new_ribbon_builders() -> Array[LowPoly]:
 	# quads; averaging their normals made each triangle catch a different dusk
 	# highlight and produced the pale triangular patches visible from the cockpit.
 	var road := LowPoly.new()  # tarmac — crisp, original-style road surface
-	var soft := LowPoly.new()  # terrain — averaged normals so the hills roll
-	soft.smooth = true
-	return [hard, road, soft]
+	var soft_left := LowPoly.new()  # terrain — averaged normals so the hills roll
+	var soft_right := LowPoly.new()
+	soft_left.smooth = true
+	soft_right.smooth = true
+	return [hard, road, soft_left, soft_right]
 
 
 func _build_ribbon_rows(
-	hard: LowPoly, road: LowPoly, soft: LowPoly, z0: float, first_step: int, end_step: int
+	hard: LowPoly,
+	road: LowPoly,
+	soft_left: LowPoly,
+	soft_right: LowPoly,
+	z0: float,
+	first_step: int,
+	end_step: int
 ) -> void:
 	var step := LENGTH / float(STEPS)
 	var bands := _view_bands()
@@ -843,6 +843,7 @@ func _build_ribbon_rows(
 					Vector2(l0, zb)
 				)
 			elif band[4] == "ground":
+				var soft := soft_left if (l0 + l1) < 0.0 else soft_right
 				soft.add_quad_shaded(
 					pa,
 					pb,
@@ -866,27 +867,66 @@ func _build_ribbon_rows(
 
 
 
-func _finish_ribbon(hard: LowPoly, road: LowPoly, soft: LowPoly, z0: float) -> void:
+func _finish_ribbon(
+	hard: LowPoly, road: LowPoly, soft_left: LowPoly, soft_right: LowPoly, z0: float
+) -> void:
+	_prepare_ribbon(hard, road, z0)
+	_commit_hard_ribbon(hard)
+	_commit_road_ribbon(road)
+	_commit_terrain_ribbon(soft_left, "Terrain")
+	_commit_terrain_ribbon(soft_right, "TerrainRight")
+	_clear_ribbon_samples()
+
+
+func _finish_ribbon_incremental(
+	hard: LowPoly, road: LowPoly, soft_left: LowPoly, soft_right: LowPoly, z0: float
+) -> void:
+	## ArrayMesh creation uploads geometry to the renderer. Publishing all three
+	## unique surfaces in one frame caused the remaining one-hitch-per-chunk spike,
+	## even though their CPU-side vertices were already built incrementally.
+	_prepare_ribbon(hard, road, z0)
+	_commit_hard_ribbon(hard)
+	await get_tree().process_frame
+	_commit_road_ribbon(road)
+	await get_tree().process_frame
+	_commit_terrain_ribbon(soft_left, "Terrain")
+	await get_tree().process_frame
+	_commit_terrain_ribbon(soft_right, "TerrainRight")
+	_clear_ribbon_samples()
+
+
+func _prepare_ribbon(hard: LowPoly, road: LowPoly, z0: float) -> void:
 	_build_markings(hard, z0)
 	if _on_spur:
 		_build_spur_ribbon(hard, road, z0)
 	if theme == Env.COAST:
 		_build_sea(hard, z0)
 
+
+func _commit_hard_ribbon(hard: LowPoly) -> void:
 	var hard_mesh: MeshInstance3D = hard.commit_to(self, "RoadDetails")
 	if hard_mesh:
 		# Markings and curb faces should stay crisp and matte; their vertex colours
 		# carry the reflective/painted distinction without extra materials.
 		hard_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+func _commit_road_ribbon(road: LowPoly) -> void:
 	var road_mesh: MeshInstance3D = road.commit_to(self, "RoadSurface")
 	if road_mesh:
 		road_mesh.material_override = _road_material()
 		road_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	var terrain_mesh: MeshInstance3D = soft.commit_to(self, "Terrain")
+
+
+func _commit_terrain_ribbon(soft: LowPoly, node_name: String) -> void:
+	var terrain_mesh: MeshInstance3D = soft.commit_to(self, node_name)
 	if terrain_mesh:
 		terrain_mesh.material_override = LowPoly.terrain_material()
 		# Flat ground casting onto itself buys nothing and costs a shadow pass.
 		terrain_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+func _clear_ribbon_samples() -> void:
 	_road_samples.clear()
 	_point_samples.clear()
 
@@ -1524,6 +1564,28 @@ func _build_furniture() -> void:
 	## Reflector posts on both shoulders. Cheap, and the strobe of them going past
 	## is most of what sells speed at 200 km/h. Amber and small: a white cube of
 	## glow on every post read as floating litter.
+	_build_reflectors()
+	_verge_planting()
+	if theme_carries_power_line(theme):
+		_power_line()
+	_build_guardrail()
+
+
+func _build_furniture_incremental() -> void:
+	## These stages used to land together in one 5–11 ms frame. Keeping the same
+	## furniture while yielding between independent buckets removes that recurring
+	## CPU spike each time a country chunk streams in.
+	_build_reflectors()
+	await get_tree().process_frame
+	_verge_planting()
+	await get_tree().process_frame
+	if theme_carries_power_line(theme):
+		_power_line()
+		await get_tree().process_frame
+	_build_guardrail()
+
+
+func _build_reflectors() -> void:
 	var z0: float = float(chunk_index) * LENGTH
 	var z := z0
 	while z < z0 + LENGTH - 0.01:
@@ -1534,15 +1596,15 @@ func _build_furniture() -> void:
 			_lamp(z, lx, Vector3(0.11, 0.09, 0.045), REFLECTOR, 0.86)
 		z += 10.0
 
-	_verge_planting()
-	if theme_carries_power_line(theme):
-		_power_line()
 
+
+func _build_guardrail() -> void:
 	# Armco on the outside of anything fast, and always where there is a drop.
 	# The lake shore counts as a drop: the ground falls nine metres to the water
 	# a few strides past the verge for the whole run up to the overlook, and it
 	# takes the barrier for that to read as a road along a lake rather than a
 	# road that happens to end.
+	var z0: float = float(chunk_index) * LENGTH
 	var curv: float = _path.curvature_at(z0 + LENGTH * 0.5)
 	var side_for_curve: float = -signf(curv) if absf(curv) > 0.0018 else 0.0
 	if _on_lake:
@@ -1625,37 +1687,27 @@ func _pole_exists_at(z: float) -> bool:
 	var theme_id: int = theme if index == chunk_index else int(_path.theme_for_chunk(index))
 	if not theme_carries_power_line(theme_id):
 		return false
-	# The wire is drawn straight into the mesh, without going through the prop
-	# clearance test every scattered object gets, so it has to check for itself.
-	# Ending the line at the last pole clear of the junction is what the span
-	# logic below already does for a theme boundary.
+	# Cables follow these same pole decisions, so a span is only built when both
+	# endpoints exist and never crosses a theme boundary or scenic junction.
 	return not _junction_occupies(z, _power_line_lateral())
 
 
 func _power_line() -> void:
-	## Poles and catenary wire down one side, the length of the route.
+	## Utility poles and three gently sagging cables down one side of the route.
+	## Cables use the shared cube MultiMesh rather than a unique ribbon mesh per
+	## chunk, so they inherit the 280 m prop cutoff and cannot alias into the long
+	## black skyline needles the old unbounded ribbons produced.
 	##
-	## Pole positions come from world z, not from the chunk, so a span always
-	## finds its neighbour across a chunk seam and the wire runs unbroken to the
-	## horizon. The side is fixed by the world seed for the same reason.
+	## Pole positions come from world z, not from the chunk, so spacing stays
+	## continuous across chunk seams. The side is fixed by the world seed too.
 	const SPACING := 24.0
-	const SEGMENTS := 5
+	const CABLE_SEGMENTS := 6
 	var lx: float = _power_line_lateral()
 	var pole_color := Color("4a382c")
-	var wire_color := Color("15151c")
+	var cable_color := Color("17171b")
 	var z0: float = float(chunk_index) * LENGTH
 	var first: float = ceilf(z0 / SPACING) * SPACING
-	var b := LowPoly.new()
-
 	var arm_height := func(z: float) -> float: return 8.4 + sin(z * 0.017) * 0.35
-	var wire_at := func(z: float, index: int) -> Vector3:
-		# Catenary between the two poles either side of z, plus the crossarm offset.
-		var span_start: float = floorf(z / SPACING) * SPACING
-		var t: float = (z - span_start) / SPACING
-		var sag: float = 0.95 * (1.0 - 4.0 * pow(t - 0.5, 2.0))
-		var lift: float = lerpf(arm_height.call(span_start), arm_height.call(span_start + SPACING), t) - sag
-		var offset: float = (float(index) - 1.0) * 0.85
-		return _p(z, lx + offset, -lift)
 
 	var z: float = first
 	# Half-open [z0, z0 + LENGTH): a pole landing exactly on a chunk seam belongs
@@ -1668,46 +1720,67 @@ func _power_line() -> void:
 		# to this chunk is drawn here even when its span reaches into the next.
 		var foot: Vector3 = _terrain_surface_at(z, lx) - _origin
 		var head: float = arm_height.call(z)
-		b.add_capsule(
-			Transform3D(Basis.IDENTITY, foot + Vector3(0, head * 0.5, 0)), 0.17, head, 6, pole_color
-		)
-		b.add_box(
-			Transform3D(Basis.IDENTITY, foot + Vector3(0, head - 0.35, 0)), Vector3(2.1, 0.15, 0.15), pole_color
-		)
+		_cubes.append(Transform3D(Basis.IDENTITY.scaled(Vector3(0.34, head, 0.34)), foot + Vector3(0, head * 0.5, 0)))
+		_cube_cols.append(pole_color)
+		_cubes.append(Transform3D(Basis.IDENTITY.scaled(Vector3(2.1, 0.15, 0.15)), foot + Vector3(0, head - 0.35, 0)))
+		_cube_cols.append(pole_color)
 		for index in 3:
-			b.add_box(
-				Transform3D(Basis.IDENTITY, foot + Vector3((float(index) - 1.0) * 0.85, head - 0.18, 0)),
-				Vector3(0.13, 0.22, 0.13),
-				Color("6e7276")
+			_cubes.append(
+				Transform3D(
+					Basis.IDENTITY.scaled(Vector3(0.13, 0.22, 0.13)),
+					foot + Vector3((float(index) - 1.0) * 0.85, head - 0.18, 0)
+				)
 			)
+			_cube_cols.append(Color("6e7276"))
 		z += SPACING
 
-	# Spans. Each chunk draws the wire crossing it, sampled along the catenary.
-	#
-	# A span is only drawn when both of its poles are actually built. Poles stop at
-	# the forest and coast sections, so a span reaching across that boundary had
-	# nothing to hang from and the wire ran out into empty air — the line now ends
-	# at the last real pole instead.
-	var span_start: float = floorf(z0 / SPACING) * SPACING
-	while span_start < z0 + LENGTH + 0.01:
-		if not (_pole_exists_at(span_start) and _pole_exists_at(span_start + SPACING)):
-			span_start += SPACING
-			continue
-		for index in 3:
-			for seg in SEGMENTS:
-				var za: float = span_start + SPACING * float(seg) / float(SEGMENTS)
-				var zb: float = span_start + SPACING * float(seg + 1) / float(SEGMENTS)
-				if zb < z0 - 0.01 or za > z0 + LENGTH + 0.01:
-					continue
-				var pa: Vector3 = wire_at.call(za, index)
-				var pb: Vector3 = wire_at.call(zb, index)
-				# A vertical ribbon rather than a tube: a wire is sub-pixel at any
-				# real distance, and this is two triangles instead of eighty.
-				var drop := Vector3(0, 0.045, 0)
-				b.add_quad(pa + drop, pb + drop, pb - drop, pa - drop, wire_color)
-				b.add_quad(pb + drop, pa + drop, pa - drop, pb - drop, wire_color)
+	# Each span belongs to the chunk containing its first pole. It may extend past
+	# the chunk origin, which is fine; this ownership rule prevents doubled cables
+	# at seams. Endpoints derive from the same pole foot and crossarm height above,
+	# so no road-bank or terrain sign can stretch a segment vertically.
+	var span_start: float = ceilf(z0 / SPACING) * SPACING
+	while span_start < z0 + LENGTH - 0.01:
+		if _pole_exists_at(span_start) and _pole_exists_at(span_start + SPACING):
+			for cable_index in 3:
+				for segment in CABLE_SEGMENTS:
+					var ta := float(segment) / float(CABLE_SEGMENTS)
+					var tb := float(segment + 1) / float(CABLE_SEGMENTS)
+					var za := span_start + SPACING * ta
+					var zb := span_start + SPACING * tb
+					var pa := _cable_point(za, span_start, ta, cable_index, lx, arm_height)
+					var pb := _cable_point(zb, span_start, tb, cable_index, lx, arm_height)
+					_local_cable_segment(pa, pb, cable_color)
 		span_start += SPACING
-	_landmark_mesh(b, "PowerLine")
+
+
+func _cable_point(
+	z: float, span_start: float, t: float, cable_index: int, lateral: float, arm_height: Callable
+) -> Vector3:
+	var foot: Vector3 = _terrain_surface_at(z, lateral) - _origin
+	var top: float = lerpf(float(arm_height.call(span_start)), float(arm_height.call(span_start + 24.0)), t)
+	var sag: float = sin(t * PI) * 0.72
+	var across: float = (float(cable_index) - 1.0) * 0.85
+	return foot + Vector3(across, top - 0.18 - sag, 0.0)
+
+
+func _local_cable_segment(a: Vector3, b: Vector3, color: Color) -> void:
+	var span := b - a
+	var length := span.length()
+	if length < 0.001:
+		return
+	var up := span / length
+	var side := up.cross(Vector3.FORWARD)
+	if side.length_squared() < 0.0001:
+		side = up.cross(Vector3.RIGHT)
+	side = side.normalized()
+	# Scale the local axes explicitly. Basis.scaled() applies scale in parent axes;
+	# on a sloped cable that turns its long dimension toward world Y and recreates
+	# the vertical needles this path exists to prevent.
+	var forward := side.cross(up).normalized()
+	var basis := Basis(side * 0.035, up * length, forward * 0.035)
+	_cubes.append(Transform3D(basis, (a + b) * 0.5))
+	_cube_cols.append(color)
+
 
 
 func _verge_planting() -> void:

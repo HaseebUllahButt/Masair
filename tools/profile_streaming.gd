@@ -24,9 +24,15 @@ class Runner:
 
 	func _ready() -> void:
 		process_mode = Node.PROCESS_MODE_ALWAYS
+		var path := get_tree().root.get_node("RoadPath")
+		path.call("set_world_seed", 72117)
+		var streamer := get_tree().root.find_child("RoadStreamer", true, false)
+		streamer.call("reset_world")
 		var hud := get_tree().root.find_child("HUD", true, false)
 		if hud and hud.has_method("_start_ride"):
 			hud.call("_start_ride")
+		var player := get_tree().root.find_child("Player", true, false)
+		player.set("_invuln", WARMUP_SECONDS + SAMPLE_SECONDS + 5.0)
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 		Input.action_press("throttle")
 

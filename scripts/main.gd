@@ -377,18 +377,20 @@ func _build_environment() -> void:
 	# only changes with meaningful weather/mood changes. Incremental filtering can
 	# then spread those rare refreshes without a permanent realtime GPU tax.
 	sky.process_mode = Sky.PROCESS_MODE_INCREMENTAL
-	sky.radiance_size = Sky.RADIANCE_SIZE_128
+	# The background still renders at full viewport resolution. Only the filtered
+	# ambient/reflection cubemap is smaller, making a T-key mood change cheap enough
+	# not to stall or briefly black out the scenic landscape.
+	sky.radiance_size = Sky.RADIANCE_SIZE_64
 
 	_environment = Environment.new()
 	_environment.background_mode = Environment.BG_SKY
 	_environment.sky = sky
 	_environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	_environment.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
-	_environment.ssr_enabled = true
-	_environment.ssr_max_steps = 48
-	_environment.ssr_fade_in = 0.12
-	_environment.ssr_fade_out = 2.4
-	_environment.ssr_depth_tolerance = 0.18
+	# Road and water already use authored sky/specular reflections. SSR added
+	# 4–6 ms on the target integrated GPU and was the largest sustained loss of
+	# frame headroom, especially while the scenic landscape was streaming.
+	_environment.ssr_enabled = false
 	_environment.tonemap_mode = Environment.TONE_MAPPER_ACES
 
 	# Bloom. The world is built from HDR vertex colours — lamps, windows, dials,

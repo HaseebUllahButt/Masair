@@ -280,7 +280,7 @@ void sky() {
 		// while mostly turning into sub-pixel shimmer at riding resolution.
 		for (int layer = 0; layer < 2; layer++) {
 			float density = layer == 0 ? 110.0 : 300.0;
-			float cut = layer == 0 ? 0.9835 : 0.9915;
+			float cut = layer == 0 ? 0.9770 : 0.9885;
 			vec3 cell = EYEDIR * density;
 			vec3 id3 = floor(cell);
 			float id = hash13(id3);
@@ -293,12 +293,14 @@ void sky() {
 				float mag = 0.35 + 0.65 * fract(id * 71.3);
 				// Blue-white through to warm amber, weighted toward white.
 				vec3 tint = mix(vec3(0.70, 0.80, 1.0), vec3(1.0, 0.84, 0.62), fract(id * 133.7));
-				float size = layer == 0 ? 0.20 : 0.105;
+				// Small pinpoints, not the square/triangular blobs produced by the old
+				// cell radius once bloom and ACES amplified them.
+				float size = layer == 0 ? 0.120 : 0.065;
 				float star = smoothstep(size, 0.01, d);
 				// Brightest layer gets a soft bloom halo, so a few stars read as
 				// genuinely bright rather than merely present.
 				if (layer == 0) {
-					star += smoothstep(size * 2.8, 0.0, d) * 0.36;
+					star += smoothstep(size * 2.2, 0.0, d) * 0.18;
 				}
 				col += tint * star * twinkle * mag * star_intensity * sky_open;
 			}

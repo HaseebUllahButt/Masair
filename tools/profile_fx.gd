@@ -31,6 +31,7 @@ class Runner:
 	var _frames := 0
 
 	func _ready() -> void:
+		process_mode = Node.PROCESS_MODE_ALWAYS
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 		# GPU milliseconds, not fps: a compositor that paces the swapchain pins fps
 		# at the refresh rate and hides every cost being measured here.
@@ -38,15 +39,18 @@ class Runner:
 		Input.action_press("throttle")
 		var world_env := get_tree().root.find_child("WorldEnvironment", true, false) as WorldEnvironment
 		_env = world_env.environment
+		var hud := get_tree().root.find_child("HUD", true, false)
+		if hud and hud.has_method("_start_ride"):
+			hud.call("_start_ride")
 		# Alternating A/B/A/B: a single ordered sweep confounds each effect's cost
 		# with whatever scenery happens to be on screen at that point in the ride.
 		_cases = [
-			["glow on", func() -> void: _env.glow_enabled = true],
-			["glow off", func() -> void: _env.glow_enabled = false],
-			["glow on", func() -> void: _env.glow_enabled = true],
-			["glow off", func() -> void: _env.glow_enabled = false],
-			["glow on", func() -> void: _env.glow_enabled = true],
-			["glow off", func() -> void: _env.glow_enabled = false],
+			["SSR + glow", func() -> void: _env.ssr_enabled = true; _env.glow_enabled = true],
+			["no SSR", func() -> void: _env.ssr_enabled = false; _env.glow_enabled = true],
+			["no SSR or glow", func() -> void: _env.ssr_enabled = false; _env.glow_enabled = false],
+			["SSR + glow", func() -> void: _env.ssr_enabled = true; _env.glow_enabled = true],
+			["no SSR", func() -> void: _env.ssr_enabled = false; _env.glow_enabled = true],
+			["no SSR or glow", func() -> void: _env.ssr_enabled = false; _env.glow_enabled = false],
 		]
 
 	func _process(delta: float) -> void:

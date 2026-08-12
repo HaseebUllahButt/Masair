@@ -134,15 +134,13 @@ class Capture:
 			Input.action_press("throttle")
 		if look != "":
 			Input.action_press("look_%s" % look)
-		# The menu boots on its selected Golden Dusk option.  T then follows the
-		# Main enum: dusk -> day -> night.  Keeping this mapping honest matters when
-		# visual QA compares the same scene under all three authored looks.
-		var cycles: int = {"auto": 0, "dusk": 0, "day": 1, "night": 2}.get(mode, 0)
-		for i in cycles:
-			Input.action_press("toggle_day")
-			await get_tree().process_frame
-			Input.action_release("toggle_day")
-			await get_tree().process_frame
+		# Select the requested authored look directly. Simulating T here was order-
+		# dependent: Main could process before this helper released/re-pressed the
+		# action, leaving a file named "night" with the previous dusk sky.
+		var mood_id: int = {"auto": 0, "dusk": 0, "day": 1, "night": 2}.get(mode, 0)
+		var main := get_tree().root.find_child("Main", true, false)
+		if main and main.has_method("preview_mood"):
+			main.call("preview_mood", mood_id)
 		await get_tree().process_frame
 		await get_tree().process_frame
 		if menu and hud:

@@ -59,6 +59,7 @@ func _run() -> void:
 	chunk.call("setup", 0, RoadChunkGD.Env.CITY)
 	check(chunk.get_node_or_null("RoadSurface") != null, "chunk has a dedicated road surface")
 	check(chunk.get_node_or_null("RoadDetails") != null, "chunk has visible edge and marking details")
+	check(chunk.get_node_or_null("PowerLine") == null, "distant cable ribbons cannot spike through the skyline")
 	check(chunk.get_node_or_null("Terrain") != null, "chunk has a separate terrain ribbon")
 	check(chunk.get_node_or_null("Cubes") != null, "chunk has batched roadside furniture")
 	check(chunk.get_node_or_null("RoadSurface/RoadDetails") == null, "road details are not nested over the road surface")
@@ -75,6 +76,28 @@ func _run() -> void:
 	check(is_equal_approx(widest, RoadChunkGD.HALF_WIDTH), "road UV.x spans the full carriageway in metres")
 
 	chunk.free()
+	var country: Node3D = RoadChunkGD.new()
+	country.name = "CableVisualTest"
+	get_root().add_child(country)
+	country.call("setup", 4, RoadChunkGD.Env.COUNTRY)
+	var furniture := country.get_node_or_null("Cubes") as MultiMeshInstance3D
+	var cable_segments := 0
+	var vertical_cables := 0
+	var cable_transforms: Array = country.get("_cubes")
+	for value in cable_transforms:
+		if value is Transform3D:
+			var cable_transform := value as Transform3D
+			var x_size := cable_transform.basis.x.length()
+			var y_size := cable_transform.basis.y.length()
+			var z_size := cable_transform.basis.z.length()
+			if x_size < 0.05 and z_size < 0.05 and y_size > 2.0 and y_size < 6.0:
+				cable_segments += 1
+				if absf(cable_transform.basis.y.normalized().y) > 0.75:
+					vertical_cables += 1
+	check(cable_segments > 0, "utility poles retain visible batched power cables (%d transforms)" % cable_transforms.size())
+	check(vertical_cables == 0, "power cables run between poles instead of spiking vertically")
+	check(furniture != null and furniture.visibility_range_end <= 280.0, "power cables leave the distant skyline clean")
+	country.free()
 
 	# The overlook chunk carries the whole set piece: the spur's own road surface
 	# inside the ribbon, the water, and the range across it.
