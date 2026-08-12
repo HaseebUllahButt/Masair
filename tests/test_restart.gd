@@ -1,0 +1,186 @@
+extends SceneTree
+## Integration check for the instant in-place restart path.
+
+const MainScene := preload("res://scenes/main.tscn")
+const RoadChunkGD := preload("res://scripts/road_chunk.gd")
+
+var failures: int = 0
+var frames: int = 0
+var game: Node
+var path: Node
+var main: Node
+var old_seed: int
+
+
+func check(ok: bool, what: String) -> void:
+	if not ok:
+		failures += 1
+		print("FAIL: ", what)
+
+
+func _process(_delta: float) -> bool:
+	frames += 1
+	if frames == 1:
+		game = root.get_node("GameManager")
+		path = root.get_node("RoadPath")
+		main = MainScene.instantiate()
+		root.add_child(main)
+		current_scene = main
+		old_seed = path.world_seed
+	if frames == 10:
+		var restart_started := Time.get_ticks_usec()
+		game.restart()
+		var restart_ms := float(Time.get_ticks_usec() - restart_started) / 1000.0
+		var reset_player: Node = main.get_node("Player")
+		check(reset_player.track_z < 0.05 and reset_player.alive, "restart resets the bike immediately")
+		check(restart_ms < 16.0, "restart stays inside one frame (%.2f ms)" % restart_ms)
+	if frames == 20:
+		var player: Node = main.get_node("Player")
+		var streamer: Node = main.get_node("RoadStreamer")
+		var traffic: Node = main.get_node("TrafficManager")
+		var camera_pivot: Node3D = main.get_node("Player/CameraPivot") as Node3D
+		check(path.world_seed == old_seed, "restart keeps the streamed route and avoids rebuilding it")
+		# Heavy streamed chunks can take several real frames; the immediate check
+		# above proves the reset itself while this allows the bike to roll a little.
+		check(player.track_z < 12.0 and player.alive, "bike remains near the reset point")
+		check((streamer.get("_chunks") as Dictionary).size() >= 2, "nearby road is ready immediately")
+		check((traffic.get("_cars") as Array).is_empty(), "traffic is cleared")
+		# Road-only confinement: even a stale/out-of-range lateral write must be
+		# projected back onto the authored tarmac before the bike is placed.
+		var road_bounds: Vector2 = path.call("road_bounds_at", player.track_z)
+		player.set("lateral", road_bounds.y + 43.0)
+		player.call("_place")
+		check(
+			absf(float(player.get("lateral"))) <= float(player.get("max_lateral")) + 0.001,
+			"bike clamps lateral movement to the road boundary"
+		)
+		check(
+			path.call("is_on_road", player.track_z, player.lateral, player.half_width + player.road_edge_margin),
+			"bike hitbox remains inside defined road after confinement"
+		)
+		var road_transform: Transform3D = path.call(
+			"road_transform_at", player.track_z, player.lateral, player.half_width + player.road_edge_margin
+		)
+		check(
+			(player as Node3D).global_position.distance_to(road_transform.origin) < 0.01,
+			"bike placement uses the road surface, never terrain"
+		)
+		Input.action_press("look_right")
+		player.call("_update_view", 0.5)
+		Input.action_release("look_right")
+		check(camera_pivot.rotation.y > PI + 0.5, "Q/E head-look turns independently of steering")
+		player.set("wheelie", 1.0)
+		player.set("lean", 0.0)
+		player.call("_update_view", 1.0)
+		check(absf(camera_pivot.position.z) > 0.3, "rider eye orbits with the bike during a wheelie")
+		# Free Ride has one stable English-countryside identity on every seed and
+		# at every distance; randomization only changes the road and planting.
+		for run in 48:
+			var generated_theme: int = streamer.call("theme_for_chunk", run * 7)
+			check(generated_theme == RoadChunkGD.Env.COUNTRY, "every route chunk stays English countryside")
+		# Time of day is chosen for the run rather than driven by distance.
+		main.set("rain", 0.0)
+		main.set("lighting_mode", 1)
+		main.call("_apply_lighting")
+		var environment: Environment = (main.get_node("WorldEnvironment") as WorldEnvironment).environment
+		var sun: DirectionalLight3D = main.get_node("Sun") as DirectionalLight3D
+		var sky_material: ShaderMaterial = environment.sky.sky_material as ShaderMaterial
+		check(environment.sky.process_mode == Sky.PROCESS_MODE_INCREMENTAL, "static cloud formations avoid per-frame radiance rebuilds")
+		var day_fog: float = environment.fog_density
+		check(not sun.shadow_enabled, "directional shadow mesh artefacts stay disabled")
+		var ride_audio := main.get_node("RideAudio")
+		var continuous_voices := 0
+		for child in ride_audio.get_children():
+			if child is AudioStreamPlayer and (child as AudioStreamPlayer).stream is AudioStreamWAV:
+				if ((child as AudioStreamPlayer).stream as AudioStreamWAV).loop_mode != AudioStreamWAV.LOOP_DISABLED:
+					continuous_voices += 1
+		check(continuous_voices == 0, "ride audio has no continuous wind or noise loops")
+		check(environment.ambient_light_energy < 0.4, "day mode avoids washed-out ambient light")
+		check(environment.tonemap_exposure < 0.9, "day mode keeps highlight exposure controlled")
+		check(day_fog < 0.001, "day mode opens the viewing distance")
+		check(
+			sun.light_color.r > 0.9 and sun.light_color.b > 0.5 and sun.light_color.r > sun.light_color.b,
+			"day mode uses controlled warm sunlight"
+		)
+		check(
+			float(sky_material.get_shader_parameter("star_intensity")) == 0.0,
+			"day mode shows no stars"
+		)
+		main.set("lighting_mode", 2)
+		main.call("_apply_lighting")
+		# Energy times colour, not energy alone. Ambient contributes the product of
+		# the two, and a bare energy threshold silently stopped meaning "darker"
+		# the moment the ambient colours changed — it only ever held because the
+		# three rows happened to use similarly bright colours.
+		var night_ambient: float = environment.ambient_light_energy * environment.ambient_light_color.get_luminance()
+		var day_ambient: float = (
+			float(main.MOODS[1]["ambient"]) * (main.MOODS[1]["ambient_color"] as Color).get_luminance()
+		)
+		var dusk_ambient: float = (
+			float(main.MOODS[0]["ambient"]) * (main.MOODS[0]["ambient_color"] as Color).get_luminance()
+		)
+		check(
+			night_ambient < day_ambient and night_ambient < dusk_ambient,
+			"night mode is darker than day and dusk"
+		)
+		check(environment.fog_density > 0.001 and environment.fog_density < 0.002, "night remains readable through controlled fog")
+		check(sun.light_color.b > sun.light_color.r, "night mode uses cool moonlight")
+		# Moon and stars are drawn by the sky shader at infinity rather than by a
+		# quad parented to the camera, which is what stops them sliding across the
+		# sky as the rider turns.
+		check(
+			float(sky_material.get_shader_parameter("star_intensity")) > 0.0,
+			"night mode reveals stars"
+		)
+		check(
+			float(sky_material.get_shader_parameter("moon_face")) > 0.0,
+			"night mode gives the celestial body a moon face"
+		)
+		check(
+			main.get_node_or_null("Player/CameraPivot/Camera3D/NightSky") == null,
+			"no camera-parented celestial art remains to swim with the view"
+		)
+		main.set("lighting_mode", 0)
+		main.call("_apply_lighting")
+		check(environment.fog_density > day_fog, "dusk mode restores evening atmosphere")
+		var obscured: Dictionary = main.MOODS[0].duplicate()
+		obscured["fog_density"] = 0.004
+		obscured["fog_aerial"] = 0.45
+		obscured["fog_sky"] = 0.28
+		obscured["fog_height_density"] = 0.02
+		obscured["contrast"] = 1.0
+		obscured["saturation"] = 0.72
+		var scenic: Dictionary = main.call("_protect_scenic_visibility", obscured)
+		check(float(scenic["fog_density"]) <= 0.00034, "viewpoint weather preserves the distant view")
+		check(
+			float(scenic["contrast"]) >= 1.2 and float(scenic["saturation"]) >= 1.1,
+			"viewpoint weather preserves scenic colour separation"
+		)
+
+		main.call("begin_ride", 2, 2)
+		check(int(main.get("lighting_mode")) == 2, "the start menu mood remains fixed for the ride")
+		check(int(main.get_node("TrafficManager").get("max_active")) == 24, "hard mode selects dense traffic")
+
+		# Weather: mostly dry, deterministic from the world seed, and arriving as
+		# a band rather than as a per-frame roll.
+		var wet_samples := 0
+		var previous: float = float(main.call("rain_at", 0.0))
+		var worst_jump := 0.0
+		for step in 900:
+			var metres := float(step) * 40.0
+			var amount: float = float(main.call("rain_at", metres))
+			check(amount >= 0.0 and amount <= 1.0, "rain amount stays in range")
+			worst_jump = maxf(worst_jump, absf(amount - previous))
+			previous = amount
+			if amount > 0.5:
+				wet_samples += 1
+		check(wet_samples > 0, "the route runs into rain somewhere in 36 km")
+		check(wet_samples < 450, "the route is dry more often than it is wet")
+		check(worst_jump < 0.25, "weather arrives as a front, not as a switch")
+		check(
+			is_equal_approx(float(main.call("rain_at", 12345.0)), float(main.call("rain_at", 12345.0))),
+			"weather is deterministic for a given route position"
+		)
+		print("restart self-check: %d failures" % failures)
+		quit(1 if failures > 0 else 0)
+	return false
