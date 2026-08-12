@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Masair
+GenericName=Motorcycle Riding Game
+Comment=Fast low-poly motorcycle riding — coffee, petrol, the long way round
+Exec=godot --path /home/haseeb/dev/me/hehe/Masair
+Path=/home/haseeb/dev/me/hehe/Masair
+Icon=masair
+Terminal=false
+Categories=Game;ActionGame;
+Keywords=motorcycle;racing;godot;ride;cafe;
+StartupNotify=true
+StartupWMClass=Masair
