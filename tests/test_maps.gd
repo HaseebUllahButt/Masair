@@ -26,9 +26,20 @@ func _initialize() -> void:
 	check(not path.has_method("scenic_detours"), "detour overlay data is removed")
 	check(not path.has_method("scenic_detour_at"), "detour overlay lookup is removed")
 	check(int(path.get("RIDEABLE_HALF_WIDTH")) == int(path.get("HALF_WIDTH")), "rideable width is exactly the road width")
+	var pool: Array = path.get("THEME_POOL")
+	check(pool.size() == 4, "the route has four rural biomes")
+	check(not pool.has(RoadChunkGD.Env.CITY), "city is never in the biome pool")
+	for env in [RoadChunkGD.Env.FOREST, RoadChunkGD.Env.COAST, RoadChunkGD.Env.MOUNTAIN, RoadChunkGD.Env.COUNTRY]:
+		check(pool.has(env), "biome pool includes environment %d" % env)
+	var biome_length: float = float(path.get("BIOME_LENGTH"))
+	check(biome_length >= 10000.0 and biome_length <= 14000.0, "each biome lasts about 10–14 km")
 	check(
-		int(path.get("ENGLISH_COUNTRYSIDE_THEME")) == RoadChunkGD.Env.COUNTRY,
-		"the route's only environment is English countryside"
+		float(path.get("VIEWPOINT_PERIOD")) > 2.0 * float(path.get("SPUR_HALF_SPAN")),
+		"detours leave a stretch of main road between them"
+	)
+	check(
+		float(path.get("VIEWPOINT_PERIOD")) >= 4000.0 and float(path.get("VIEWPOINT_PERIOD")) <= 4500.0,
+		"overlooks come around every four kilometres"
 	)
 
 	# Route distances with no spur anywhere near them, so the plain carriageway
@@ -57,7 +68,7 @@ func _initialize() -> void:
 		"the route never rounds back to an overlook behind the start line"
 	)
 	check(float(path.get("VIEWPOINT_FIRST")) >= 2000.0, "the first scenic reward is earned well into the ride")
-	check(float(path.get("SPUR_HALF_SPAN")) >= 700.0, "the scenic lead-off is a substantial side-road journey")
+	check(float(path.get("SPUR_HALF_SPAN")) >= 1400.0, "the scenic lead-off is a substantial side-road journey")
 
 	var platform: Vector2 = path.call("spur_interval", centre)
 	# A motorcycle turns inside about four metres, so this is a guard against an
@@ -95,7 +106,7 @@ func _initialize() -> void:
 	var bike_margin := 1.28
 	var envelope_joined := false
 	var join_z := entry
-	while join_z < entry + 120.0:
+	while join_z < entry + 280.0:
 		var join_span: Vector2 = path.call("spur_interval", join_z)
 		if join_span != Vector2.ZERO:
 			var near_edge: float = minf(absf(join_span.x), absf(join_span.y))
@@ -255,13 +266,14 @@ func _initialize() -> void:
 	while probe_z <= centre + float(path.get("LAKE_SPAN")) * 0.6:
 		if float(path.call("point_at", probe_z, 0.0).y) <= water_y:
 			flooded += 1
-		if float(path.call("ground_at", probe_z, side * (float(path.get("LAKE_NEAR")) + 80.0)).y) < water_y:
+		if float(path.call("ground_at", probe_z, side * (float(path.call("viewpoint_near_shore", centre)) + 80.0)).y) < water_y:
 			wet += 1
 		probe_z += 5.0
 	check(flooded == 0, "the water level never rises over the carriageway")
 	check(wet > 60, "the middle of the lake is actually below the water level")
+	var far_out: float = float(path.call("viewpoint_far_shore", centre, centre))
 	check(
-		float(path.call("ground_at", centre, side * (float(path.get("LAKE_FAR")) + float(path.get("FAR_BANK")))).y) > water_y,
+		float(path.call("ground_at", centre, side * (far_out + float(path.get("FAR_BANK")))).y) > water_y,
 		"the far bank climbs back out of the water"
 	)
 
@@ -273,6 +285,7 @@ func _initialize() -> void:
 	check(seat.origin.y - surface_y > 0.9 and seat.origin.y - surface_y < 2.0, "the seated eye is at head height above the platform")
 	var out_dir: Vector3 = (path.call("frame_flat_at", centre) as Basis).x * side
 	check(-seat.basis.z.dot(out_dir) > 0.9, "sitting down faces the view, not the road")
+	check((-seat.basis.z).y < -0.18, "sitting down looks into the basin, not at the horizon")
 
 	# Ground the overlook owns, which the random scenery pass has to keep out of.
 	check(path.call("viewpoint_reserves", centre, platform_mid), "the platform is reserved from scattered scenery")
@@ -284,16 +297,48 @@ func _initialize() -> void:
 		"the reservation ends with the overlook"
 	)
 
-	for chunk in range(24):
+	var chunks_per_biome := int(biome_length / float(path.get("CHUNK_LENGTH")))
+	var start_theme := int(path.call("theme_for_chunk", 0))
+	check(start_theme != RoadChunkGD.Env.CITY, "the run never starts in the city")
+	for chunk in chunks_per_biome:
+		check(
+			int(path.call("theme_for_chunk", chunk)) == start_theme,
+			"neighbouring chunks inside a region share a theme (chunk %d)" % chunk
+		)
+	check(
+		int(path.call("theme_for_chunk", chunks_per_biome)) != start_theme,
+		"the next region is a different biome"
+	)
+	var seen := {}
+	for chunk in chunks_per_biome * 4:
 		var theme := int(path.call("theme_for_chunk", chunk))
-		check(theme == RoadChunkGD.Env.COUNTRY, "free ride chunk %d stays English countryside" % chunk)
+		seen[theme] = true
+		check(theme != RoadChunkGD.Env.CITY, "city never appears on the route")
+	check(seen.size() == 4, "all four rural biomes appear over a full permutation")
+
+	var order_a: Array = path.call("biome_order")
+	path.call("set_world_seed", 72117)
+	var order_b: Array = path.call("biome_order")
+	check(order_a == order_b, "a seed rebuilds the same biome permutation")
+	path.call("set_world_seed", 4096)
+	var order_c: Array = path.call("biome_order")
+	check(order_a != order_c, "a different seed shuffles the biomes")
+	path.call("set_world_seed", 72117)
 
 	var viewpoints := 0
-	for chunk in range(320):
-		var theme := int(path.call("theme_for_chunk", chunk))
-		if RoadChunkGD.is_viewpoint_chunk(chunk, theme):
+	var rural := [RoadChunkGD.Env.FOREST, RoadChunkGD.Env.COAST, RoadChunkGD.Env.MOUNTAIN, RoadChunkGD.Env.COUNTRY]
+	for scan_chunk in range(chunks_per_biome * 4):
+		var scan_theme := int(path.call("theme_for_chunk", scan_chunk))
+		if RoadChunkGD.is_viewpoint_chunk(scan_chunk, scan_theme):
 			viewpoints += 1
-			check(theme == RoadChunkGD.Env.COUNTRY, "viewpoint stays within the English countryside biome")
+			check(scan_theme in rural, "viewpoint stays in a rural biome")
+			var vp_centre: float = float(path.call("viewpoint_centre_for", (float(scan_chunk) + 0.5) * 40.0))
+			var entry_theme := int(path.call("theme_for_chunk", int(floor((vp_centre - half_span) / 40.0))))
+			var exit_theme := int(path.call("theme_for_chunk", int(floor((vp_centre + half_span) / 40.0))))
+			check(
+				entry_theme == scan_theme and exit_theme == scan_theme,
+				"a detour's spur stays inside the centre's biome"
+			)
 	check(viewpoints >= 3, "the endless route regularly schedules scenic overlooks")
 
 	print("map self-check: %d failures" % failures)

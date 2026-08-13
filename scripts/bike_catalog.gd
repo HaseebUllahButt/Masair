@@ -1,6 +1,9 @@
 extends RefCounted
 ## Bike progression and tuning maths. The garage UI and motorcycle both read
 ## this table so displayed performance and ridden performance cannot drift.
+##
+## Every machine is a café racer: round lamp, clip-ons, teardrop tank, hump
+## tail. Nothing here is a sports bike.
 
 const MAX_TUNE_LEVEL := 5
 const TUNE_KEYS := ["engine", "brakes", "handling"]
@@ -8,7 +11,7 @@ const TUNE_KEYS := ["engine", "brakes", "handling"]
 const BIKES: Array[Dictionary] = [
 	{
 		"name": "MESA 400",
-		"tagline": "LIGHT · HONEST · 200 KM/H",
+		"tagline": "HONEST CAFÉ · 200 KM/H",
 		"unlock_m": 0.0,
 		"top_speed": 55.5556,
 		"engine_accel": 12.0,
@@ -19,8 +22,8 @@ const BIKES: Array[Dictionary] = [
 	},
 	{
 		"name": "SABRE 650",
-		"tagline": "TWIN CAFÉ · 220 KM/H",
-		"unlock_m": 2000.0,
+		"tagline": "SLIM TWIN · 220 KM/H",
+		"unlock_m": 5000.0,
 		"top_speed": 61.1111,
 		"engine_accel": 14.3,
 		"brake_accel": 17.8,
@@ -29,15 +32,37 @@ const BIKES: Array[Dictionary] = [
 		"start_speed": 17.0,
 	},
 	{
+		"name": "HALCYON 750",
+		"tagline": "BRITISH GREEN · 232 KM/H",
+		"unlock_m": 12000.0,
+		"top_speed": 64.4444,
+		"engine_accel": 15.6,
+		"brake_accel": 18.8,
+		"lean_grip": 41.0,
+		"high_speed_lean_rate": 0.59,
+		"start_speed": 17.5,
+	},
+	{
 		"name": "TEMPEST 900",
-		"tagline": "BIG TWIN · 250 KM/H",
-		"unlock_m": 6000.0,
-		"top_speed": 69.4444,
-		"engine_accel": 17.0,
-		"brake_accel": 20.0,
-		"lean_grip": 42.0,
+		"tagline": "BIG TWIN CAFÉ · 248 KM/H",
+		"unlock_m": 22000.0,
+		"top_speed": 68.8889,
+		"engine_accel": 17.2,
+		"brake_accel": 20.2,
+		"lean_grip": 42.5,
 		"high_speed_lean_rate": 0.61,
 		"start_speed": 18.0,
+	},
+	{
+		"name": "RAVEN 1100",
+		"tagline": "BLACK BOMBER · 262 KM/H",
+		"unlock_m": 36000.0,
+		"top_speed": 72.7778,
+		"engine_accel": 19.0,
+		"brake_accel": 22.0,
+		"lean_grip": 44.0,
+		"high_speed_lean_rate": 0.63,
+		"start_speed": 19.0,
 	},
 ]
 
@@ -49,9 +74,10 @@ static func empty_tuning() -> Dictionary:
 static func tune_cost(bike_id: int, category: String, current_level: int) -> int:
 	if category not in TUNE_KEYS or current_level < 0 or current_level >= MAX_TUNE_LEVEL:
 		return 0
-	var base: int = {"engine": 60, "brakes": 45, "handling": 50}[category]
-	var bike_factor := 1.0 + float(clampi(bike_id, 0, BIKES.size() - 1)) * 0.45
-	return int(round(float(base * (current_level + 1)) * bike_factor))
+	var base: int = {"engine": 150, "brakes": 115, "handling": 130}[category]
+	var bike_factor := 1.0 + float(clampi(bike_id, 0, BIKES.size() - 1)) * 0.65
+	var level_factor := float(current_level + 1) * pow(1.22, float(current_level))
+	return int(round(float(base) * level_factor * bike_factor))
 
 
 static func stats(bike_id: int, tuning: Dictionary) -> Dictionary:

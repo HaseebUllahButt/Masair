@@ -33,7 +33,6 @@ func _follow_player() -> void:
 		global_position = _player.global_position
 		# The endless-road skyline is deliberately a complete ring, which is useful
 		# while riding and disastrous at the authored overlook: its near layer sits
-		# in front of the lake's own shore, waterfall and four composed ranges and
 		# turns all of them into one unbroken wall.  The overlook owns its horizon.
 		visible = not (
 			_path

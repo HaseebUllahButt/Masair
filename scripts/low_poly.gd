@@ -163,11 +163,19 @@ static func terrain_material() -> StandardMaterial3D:
 		_terrain.roughness = 1.0
 		_terrain.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 		_terrain.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
-		# Wrapped, not banded. The ground is one continuous surface: a hard
-		# terminator sweeping across a hillside reads as a seam in the mesh
-		# rather than as a change of slope. Wrap keeps the falloff soft while
-		# still carrying light round the shoulder of a hill.
-		_terrain.diffuse_mode = BaseMaterial3D.DIFFUSE_LAMBERT_WRAP
+		# Plain Lambert, not wrapped. Wrap remaps N·L from [-1,1] into [0,1], so a
+		# slope facing directly away from the sun still collects half the key —
+		# and under a strongly coloured key (the dusk sun is `ff9e62` at 1.42)
+		# that paints every face in the landscape the same hue no matter which
+		# way it points. It is why four differently-coloured overlooks all came
+		# out as the same orange dunes: the albedos were fine, the light was
+		# erasing them.
+		#
+		# The seam this was guarding against belongs to a *toon* terminator, not
+		# to Lambert. Lambert's falloff is still smooth across rolling ground —
+		# it just reaches an honest dark on the shaded side, which is the only
+		# thing giving a hillside form in a game that renders no shadows.
+		_terrain.diffuse_mode = BaseMaterial3D.DIFFUSE_LAMBERT
 	return _terrain
 
 

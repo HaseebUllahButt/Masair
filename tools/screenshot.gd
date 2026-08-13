@@ -2,6 +2,7 @@ extends SceneTree
 ## Dev tool: boots the real game, rides it, and writes PNG frames to disk.
 ##
 ##   godot --path . --script res://tools/screenshot.gd -- --out=/tmp/shots --shots=6 --gap=4
+##   godot --path . --script res://tools/screenshot.gd -- --catalog --out=/tmp/masair-gallery
 ##
 ## Run it through gamescope so it never steals focus or makes noise:
 ##
@@ -14,6 +15,7 @@ extends SceneTree
 
 const DEFAULT_OUT := "/tmp/masair-shots"
 const RoadChunkGD: GDScript = preload("res://scripts/road_chunk.gd")
+const BikeCatalog := preload("res://scripts/bike_catalog.gd")
 
 
 func _initialize() -> void:
@@ -38,6 +40,10 @@ func _initialize() -> void:
 	cap.menu = opts.has("menu")
 	cap.bike = int(opts.get("bike", 0))
 	cap.world_seed = int(opts.get("seed", 0))
+	cap.park_z = float(opts.get("z", -1.0))
+	cap.shot_name = String(opts.get("name", ""))
+	cap.nohud = opts.has("nohud")
+	cap.catalog = opts.has("catalog")
 	cap.tree_ref = self
 	root.add_child(cap)
 
@@ -83,6 +89,15 @@ class Capture:
 	var wet := false
 	var menu := false
 	var bike: int = 0
+	## Park on the carriageway at this route distance instead of riding. Negative
+	## leaves the bike under throttle as usual.
+	var park_z: float = -1.0
+	## Filename stem. Empty uses the lighting mode, as before.
+	var shot_name: String = ""
+	var nohud := false
+	## One boot, every rural biome on the road and seated at its first overlook.
+	var catalog := false
+	var _catalog_jobs: Array[Dictionary] = []
 	var _cam: Camera3D
 	## Pin the world so a ride and a parked shot are of the same landscape. The
 	## route boots on a clock-time seed, which makes two runs incomparable.
@@ -116,7 +131,7 @@ class Capture:
 			# (gamescope), the measured GPU time below is the honest number.
 			DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 			RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
-		if notraffic or detour:
+		if catalog or notraffic or detour:
 			# The autopilot steers for a line, not around obstacles, so a lorry in
 			# lane two ends every detour run long before the spur opens. Traffic is
 			# not what a detour capture is for.
@@ -124,12 +139,22 @@ class Capture:
 			if traffic:
 				traffic.set("max_active", 0)
 				traffic.call("reset_world")
-		if overview != "":
+		if nohud or catalog:
+			if hud:
+				hud.visible = false
+		if catalog:
+			dry = true
+			DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+			_prepare_catalog()
+			_apply_catalog_job(0)
+		elif overview != "":
 			# Deferred: root is still setting up its children during _ready(), and
 			# an add_child() there is refused outright.
 			_overview_camera.call_deferred()
 		elif viewpoint:
 			_park_at_viewpoint()
+		elif park_z >= 0.0:
+			_park_on_road(park_z)
 		elif not menu:
 			Input.action_press("throttle")
 		if look != "":
@@ -144,7 +169,7 @@ class Capture:
 		await get_tree().process_frame
 		await get_tree().process_frame
 		if menu and hud:
-			var id := clampi(bike, 0, 2)
+			var id := clampi(bike, 0, BikeCatalog.BIKES.size() - 1)
 			hud.set("_bike_index", id)
 			var game := get_tree().root.get_node_or_null("GameManager")
 			if game and game.has_method("preview_bike"):
@@ -158,10 +183,126 @@ class Capture:
 		if streamer and streamer.has_method("reset_world"):
 			streamer.call("reset_world")
 
+	func _prepare_catalog() -> void:
+		## Four seeds whose first biome (and therefore first overlook) is each
+		## rural theme. The permutation is shuffled from the seed, so walking
+		## small integers is enough.
+		var path := get_tree().root.get_node("RoadPath")
+		var labels := {1: "forest", 2: "coast", 3: "mountain", 4: "country"}
+		var seeds := {}
+		var probe := 1
+		while seeds.size() < 4 and probe < 20000:
+			path.call("set_world_seed", probe)
+			var theme_id: int = int(path.call("theme_for_chunk", 0))
+			if theme_id in labels and not seeds.has(theme_id):
+				seeds[theme_id] = probe
+				print("catalog seed %s=%d" % [labels[theme_id], probe])
+			probe += 1
+		_catalog_jobs.clear()
+		for theme_id in [1, 2, 3, 4]:
+			var label: String = labels[theme_id]
+			var seed: int = int(seeds.get(theme_id, 72117))
+			var road := {
+				"name": "%s_road" % label,
+				"seed": seed,
+				"kind": "road",
+				"z": 1600.0,
+				# Five seconds was enough for three biomes and not for the fourth:
+				# the coast frame came out as a slab of tarmac ending in mid-air
+				# because the chunks in front of the bike had not finished
+				# streaming. A catalog shot that races the streamer is a shot that
+				# reports a regression the game does not have.
+				"warmup": 11.0,
+				# No forced look. The coast shot used to hold look-left through the
+				# capture on the theory that the sea is what a coast ride is about,
+				# but a ninety-degree head turn puts the camera side-on across the
+				# carriageway: the road becomes a featureless slab with the lane
+				# dashes running across it and the sea reduced to a sliver at the
+				# frame edge. Facing down the route the sea reads perfectly well
+				# beside it, and the frame is comparable with the other three.
+				"look": "",
+			}
+			var lookoff := {
+				"name": "%s_lookoff" % label,
+				"seed": seed,
+				# An overlook is twenty-odd chunks of basin, far shore and skyline
+				# arriving one per frame through the incremental streamer, and at 12 s
+				# a catalog run would occasionally photograph a valley with its far
+				# side still missing — which is indistinguishable from a lighting
+				# regression until you re-run it.
+				"kind": "lookoff",
+				"warmup": 18.0,
+				"look": "",
+			}
+			_catalog_jobs.append(road)
+			_catalog_jobs.append(lookoff)
+		shots = _catalog_jobs.size()
+		gap = 0.0
+
+	func _apply_catalog_job(index: int) -> void:
+		if index < 0 or index >= _catalog_jobs.size():
+			return
+		var job: Dictionary = _catalog_jobs[index]
+		shot_name = String(job["name"])
+		warmup = float(job["warmup"])
+		world_seed = int(job["seed"])
+		seated = String(job["kind"]) == "lookoff"
+		viewpoint = seated
+		park_z = float(job.get("z", -1.0))
+		look = String(job.get("look", ""))
+		_elapsed = 0.0
+		_busy = false
+		Input.action_release("throttle")
+		Input.action_release("steer_left")
+		Input.action_release("steer_right")
+		Input.action_release("look_left")
+		Input.action_release("look_right")
+		if seated:
+			_park_at_viewpoint()
+		else:
+			_park_on_road(park_z)
+		if look != "":
+			Input.action_press("look_%s" % look)
+
+	func _set_seed(value: int) -> void:
+		var path := get_tree().root.get_node("RoadPath")
+		path.call("set_world_seed", value)
+
+	func _park_on_road(z: float) -> void:
+		## Mid-biome carriageway, looking down the route. Chunk 0 of mountain is
+		## a tunnel mouth; a kilometre in is the ordinary landscape.
+		var player := get_tree().root.find_child("Player", true, false)
+		if player == null:
+			return
+		if world_seed == 0:
+			world_seed = 72117
+		_set_seed(world_seed)
+		player.track_z = z
+		player.lateral = 0.0
+		player.speed = 0.0
+		player.lat_vel = 0.0
+		player.set("seated", false)
+		player.set("_committed_to_spur", false)
+		player.set("_heading", 0.0)
+		player.set("_look_yaw", 0.0)
+		# Clear the bench camera too. `_park_at_viewpoint` zeroes these on its way
+		# *in*, and nothing zeroed them on the way out — so a road shot that
+		# happened to follow a lookoff inherited the seated pitch and yaw and came
+		# back as a slab of tarmac with the horizon jammed against the top of the
+		# frame. The catalog runs road-then-lookoff per biome, so every road shot
+		# after the first is downstream of a seated job.
+		player.set("_seat_yaw", 0.0)
+		player.set("_seat_pitch", 0.0)
+		player.call("_place")
+		var streamer := get_tree().root.find_child("RoadStreamer", true, false)
+		if streamer and streamer.has_method("reset_world"):
+			streamer.call("reset_world")
+
 	func _overview_camera() -> void:
 		var path := get_tree().root.get_node("RoadPath")
 		if world_seed == 0:
-			_pin_world(72117)
+			world_seed = 72117
+		_set_seed(world_seed)
 		var centre: float = path.call("viewpoint_centre_for", 800.0)
 		var side: float = path.call("viewpoint_side_for", centre)
 		var player := get_tree().root.find_child("Player", true, false)
@@ -189,10 +330,15 @@ class Capture:
 			"across":
 				# From out over the water, looking back at the headland.
 				eye = path.call("point_at", centre, side * 260.0) + Vector3(0, 40.0, 0)
+			"junction":
+				# The mouth of the spur, from just above the carriageway before it.
+				var entry: float = centre - float(path.get("SPUR_HALF_SPAN"))
+				subject = path.call("point_at", entry + 70.0, side * 10.0)
+				eye = path.call("point_at", entry - 30.0, -side * 6.0) + Vector3(0, 22.0, 0)
 			_:
 				eye = path.call("point_at", centre - 70.0, side * (float(path.call("spur_offset", centre)) - 40.0)) + Vector3(0, 55.0, 0)
 		var cam := Camera3D.new()
-		cam.far = 2000.0
+		cam.far = 5200.0
 		cam.fov = 62.0
 		get_tree().root.add_child(cam)
 		cam.global_position = eye
@@ -205,7 +351,8 @@ class Capture:
 		## top of the spur, facing the view.
 		var path := get_tree().root.get_node("RoadPath")
 		if world_seed == 0:
-			_pin_world(72117)
+			world_seed = 72117
+		_set_seed(world_seed)
 		var centre: float = path.call("viewpoint_centre_for", 800.0)
 		var side: float = path.call("viewpoint_side_for", centre)
 		var player := get_tree().root.find_child("Player", true, false)
@@ -216,13 +363,20 @@ class Capture:
 		var apron: float = float(path.get("PLATFORM_HALF_WIDTH"))
 		player.lateral = side * (float(path.call("spur_offset", centre)) + apron - 3.5)
 		player.speed = 0.0
+		player.lat_vel = 0.0
+		player.set("_committed_to_spur", true)
 		player.call("_place")
 		var streamer := get_tree().root.find_child("RoadStreamer", true, false)
 		if streamer and streamer.has_method("reset_world"):
 			streamer.call("reset_world")
 		if seated:
-			player.call("_toggle_seat")
+			# Set the flag directly: _toggle_seat() would stand up if a previous
+			# catalog job already sat the rider down.
+			player.set("seated", true)
+			player.set("_seat_yaw", 0.0)
+			player.set("_seat_pitch", 0.0)
 		else:
+			player.set("seated", false)
 			look = "right" if side > 0.0 else "left"
 
 	func _process(delta: float) -> void:
@@ -255,7 +409,10 @@ class Capture:
 				_last_slow = _elapsed
 		if _busy or _taken >= shots:
 			return
-		if _elapsed < warmup + gap * float(_taken):
+		if catalog:
+			if _elapsed < warmup:
+				return
+		elif _elapsed < warmup + gap * float(_taken):
 			return
 		_busy = true
 		_shoot()
@@ -286,7 +443,8 @@ class Capture:
 	func _shoot() -> void:
 		await RenderingServer.frame_post_draw
 		var img := get_viewport().get_texture().get_image()
-		var path := "%s/%s_%02d.png" % [out_dir, mode, _taken]
+		var stem := shot_name if shot_name != "" else mode
+		var path := "%s/%s.png" % [out_dir, stem] if shot_name != "" else "%s/%s_%02d.png" % [out_dir, stem, _taken]
 		img.save_png(path)
 		_ignore_next_frame = true
 		print("shot ", path)
@@ -296,6 +454,8 @@ class Capture:
 			Input.action_release("throttle")
 			_report()
 			tree_ref.quit(0)
+		elif catalog:
+			_apply_catalog_job(_taken)
 
 	func _report() -> void:
 		var ridden := maxf(_elapsed - warmup, 0.001)

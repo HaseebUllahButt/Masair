@@ -87,10 +87,7 @@ const HEAD_UPRIGHT := 0.56
 ## the way across the frame on every lane change. Physically the frame still
 ## leans the whole amount; only what is drawn is damped.
 const VISUAL_LEAN := 0.72
-const LOOK_YAW := deg_to_rad(72.0)
-## Stopped, the neck is not the limit any more: a rider who has pulled up at an
-## overlook can turn round and take the whole place in.
-const LOOK_YAW_PARKED := deg_to_rad(165.0)
+const LOOK_YAW := deg_to_rad(90.0)
 const PARKED_SPEED := 2.0
 ## How far the nose swings toward the direction the bike is actually travelling.
 ## On the carriageway this is a few degrees of drift; on the spur, where the
@@ -474,10 +471,17 @@ func reset_run() -> void:
 	seated = false
 	_seat_blend = 0.0
 	_heading = 0.0
+	_look_yaw = 0.0
+	_seat_yaw = 0.0
+	_seat_pitch = 0.0
 	_committed_to_spur = false
 	_invuln = invuln_time
 	_shake = 0.0
 	_road_pitch = _path.pitch_at(0.0)
+	camera_pivot.position = _pivot_base
+	camera_pivot.rotation = Vector3(0.0, PI, 0.0)
+	camera.transform = Transform3D(_cam_basis, _cam_base)
+	visual.rotation = Vector3.ZERO
 	_place()
 
 
@@ -516,16 +520,12 @@ func _update_view(delta: float) -> void:
 	# Slower than the rest of the rig on purpose: the neck settles into a corner
 	# rather than snapping to it, and it is the snap that reads as camera shake.
 	camera_pivot.rotation.z = lerpf(camera_pivot.rotation.z, head_lean, 1.0 - exp(-6.0 * delta))
-	# Q/E is independent head movement: steer one way while looking the other, or
-	# stop at a pull-off and take in the view. With neither held, retain the small
-	# automatic corner glance that helps read the road exit.
-	#
-	# Riding, the range is a neck: about 72 degrees. Stopped, it opens up to very
-	# nearly a full turn, because a rider who has parked at a viewpoint is not
-	# still facing the handlebars.
+	# Q/E is independent head movement: steer one way while looking the other.
+	# Ninety degrees is a hard neck — enough to see the verge, not enough to
+	# spin the camera around behind the bike. The bench at an overlook is the
+	# place for a full turn, and that uses A/D.
 	var look_input := Input.get_axis("look_left", "look_right")
-	var range_now: float = lerpf(LOOK_YAW, LOOK_YAW_PARKED, 1.0 - smoothstep(0.0, PARKED_SPEED * 3.0, speed))
-	var target_look := look_input * range_now if absf(look_input) > 0.01 else lean * 0.18
+	var target_look := look_input * LOOK_YAW if absf(look_input) > 0.01 else lean * 0.18
 	_look_yaw = lerpf(_look_yaw, target_look, 1.0 - exp(-7.0 * delta))
 	camera_pivot.rotation.y = PI + _look_yaw
 
@@ -535,6 +535,8 @@ func _update_view(delta: float) -> void:
 	var v := speed / top_speed
 	_ride_fov = lerpf(_ride_fov, 76.0 + v * 9.0, 1.0 - exp(-4.0 * delta))
 	camera.fov = _ride_fov
+	var scenic := seated or (_path != null and bool(_path.at_platform(track_z, lateral)))
+	camera.far = 5200.0 if scenic else 2200.0
 
 	_bob += delta * (6.0 + speed * 0.5)
 	var jitter := Vector3.ZERO
@@ -576,7 +578,16 @@ func _update_seat(delta: float) -> void:
 	# is a movement, and the cut version reads as a camera bug.
 	var eased: float = smoothstep(0.0, 1.0, _seat_blend)
 	camera.transform = ride.interpolate_with(target, eased)
-	camera.fov = lerpf(_ride_fov, 70.0, eased)
+	# Tighter than the ride, not wider.
+	#
+	# 78° vertical on a 16:9 frame is 110° across — a lens nobody would put on a
+	# landscape, and the reason a range of mountains two kilometres out read as a
+	# low bump on a very wide horizon. Sitting down is the one moment the game
+	# asks the player to *look* at something rather than to watch the road and the
+	# verges at once, so the frame should close in and the peaks should get big.
+	camera.fov = lerpf(_ride_fov, 62.0, eased)
+	# The authored range sits two to three kilometres out. The ride clips at
+	# 2.2 km; sitting down has to see the far peaks or the detour is a pond.
 
 
 func _update_audio(delta: float) -> void:

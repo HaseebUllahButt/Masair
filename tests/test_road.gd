@@ -20,6 +20,22 @@ func check(ok: bool, what: String) -> void:
 		print("FAIL: ", what)
 
 
+func _biome_mid(path: Node, theme_id: int) -> float:
+	var length: float = path.BIOME_LENGTH
+	for region in 8:
+		var z: float = (float(region) + 0.5) * length
+		if int(path.theme_at(z)) == theme_id:
+			return z
+	return -1.0
+
+
+func _mean_abs_curve(path: Node, z0: float) -> float:
+	var acc := 0.0
+	for i in 80:
+		acc += absf(float(path.curvature_at(z0 - 160.0 + float(i) * 4.0)))
+	return acc / 80.0
+
+
 func _initialize() -> void:
 	var p: Node = RoadPathGD.new()
 	var same_seed: Node = RoadPathGD.new()
@@ -39,10 +55,12 @@ func _initialize() -> void:
 
 	# Café Racer-like grades: hills may be visible and long, but the rider should
 	# never meet a sudden ramp or angular crest. Check both grade and rate of change.
+	# Sample across several biomes so a mountain stretch cannot hide a kink behind
+	# the first four kilometres of countryside.
 	var max_pitch := 0.0
 	var max_pitch_change := 0.0
 	var previous_pitch: float = p.pitch_at(0.0)
-	for i in 2000:
+	for i in 24000:
 		var sample_z := float(i) * 2.0
 		var sample_pitch: float = p.pitch_at(sample_z)
 		max_pitch = maxf(max_pitch, absf(sample_pitch))
@@ -52,6 +70,35 @@ func _initialize() -> void:
 	check(
 		max_pitch_change < deg_to_rad(0.08),
 		"hill pitch changes gradually (max %.3f deg per 2 m)" % rad_to_deg(max_pitch_change)
+	)
+
+	# Biomes change the same waves, slowly. A new frequency at a region cut would
+	# kink the ribbon; a step in amplitude would shove the bike sideways.
+	check(p.BIOME_BLEND >= 2000.0 and p.BIOME_BLEND <= 4000.0, "the road eases between biomes over kilometres")
+	var forest_mid := _biome_mid(p, 1)
+	var coast_mid := _biome_mid(p, 2)
+	var mountain_mid := _biome_mid(p, 3)
+	var country_mid := _biome_mid(p, 4)
+	check(forest_mid >= 0.0 and coast_mid >= 0.0 and mountain_mid >= 0.0 and country_mid >= 0.0, "all four biomes appear")
+	check(p.shape_at(forest_mid).is_equal_approx(p.SHAPE_FOREST), "forest settles to its own twist and hills")
+	check(p.shape_at(coast_mid).is_equal_approx(p.SHAPE_COAST), "coast settles to long sweepers")
+	check(p.shape_at(mountain_mid).is_equal_approx(p.SHAPE_MOUNTAIN), "mountain settles to tighter, hillier road")
+	check(p.shape_at(country_mid).is_equal_approx(p.SHAPE_COUNTRY), "country keeps the rolling baseline")
+	check(p.SHAPE_FOREST.y > p.SHAPE_COAST.y * 2.0, "forest is twistier than the coast")
+	check(p.SHAPE_COAST.x > p.SHAPE_FOREST.x, "coast sweepers are longer than forest bends")
+	check(p.SHAPE_MOUNTAIN.y > p.SHAPE_COUNTRY.y, "mountain corners are tighter than country")
+	check(p.SHAPE_MOUNTAIN.z > p.SHAPE_COAST.z, "mountain grades are bigger than coastal ones")
+	var across: float = p.BIOME_LENGTH
+	var before: Vector4 = p.shape_at(across - 0.5)
+	var after: Vector4 = p.shape_at(across + 0.5)
+	check(before.distance_to(after) < 0.02, "shape does not step at a biome boundary")
+	var from_a: Vector4 = p.shape_at(across * 0.5)
+	var from_b: Vector4 = p.shape_at(across * 1.5)
+	var mixed: Vector4 = p.shape_at(across)
+	check(mixed.distance_to(from_a.lerp(from_b, 0.5)) < 0.04, "the boundary is half the old country, half the new")
+	check(
+		_mean_abs_curve(p, mountain_mid) > _mean_abs_curve(p, coast_mid) * 1.15,
+		"a mountain stretch actually bends more than a coastal one"
 	)
 
 	for i in 400:

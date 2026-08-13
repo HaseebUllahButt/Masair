@@ -65,13 +65,13 @@ enum LightingMode { DUSK, DAY, NIGHT }
 const MOODS := {
 	LightingMode.DUSK:
 	{
-		"zenith_color": Color("101d38"),
-		"mid_color": Color("77465c"),
-		"horizon_color": Color("f39a55"),
+		"zenith_color": Color("12183c"),
+		"mid_color": Color("c45e78"),
+		"horizon_color": Color("f6b06a"),
 		"ground_color": Color("111a20"),
-		"band_low": 0.055,
-		"band_high": 0.34,
-		"horizon_glow": 0.22,
+		"band_low": 0.08,
+		"band_high": 0.50,
+		"horizon_glow": 0.34,
 		"energy": 1.0,
 		"sun_color": Color(1.0, 0.55, 0.28),
 		"sun_radius": 0.026,
@@ -81,15 +81,15 @@ const MOODS := {
 		"moon_face": 0.0,
 		"cloud_lit": Color("f4b07d"),
 		"cloud_dark": Color("413b58"),
-		"cloud_cover": 0.40,
-		"cloud_sharpness": 0.48,
-		"cloud_scale": 1.62,
+		"cloud_cover": 0.34,
+		"cloud_sharpness": 0.36,
+		"cloud_scale": 1.35,
 		"cloud_speed": 0.004,
-		"cloud_opacity": 0.76,
-		"bank_cover": 0.56,
-		"bank_opacity": 0.82,
-		"bank_height": 0.12,
-		"bank_haze": 0.54,
+		"cloud_opacity": 0.72,
+		"bank_cover": 0.50,
+		"bank_opacity": 0.70,
+		"bank_height": 0.13,
+		"bank_haze": 0.62,
 		"star_intensity": 0.0,
 		"galaxy_color": Color("6b74b8"),
 		"light_color": Color("ff9e62"),
@@ -108,9 +108,16 @@ const MOODS := {
 		# gamma too bright. At dusk the sun is three degrees up and dead ahead and
 		# puts nothing on a horizontal road at all — ambient and fill *are* the
 		# light on the tarmac, and at the old numbers it came out at 0.02.
-		"fill_color": Color("55768f"),
-		"fill_energy": 0.34,
-		"ambient": 0.54,
+		# Rebalanced when the terrain stopped using wrapped diffuse. Wrap was
+		# quietly donating half the key light to every surface facing away from the
+		# sun; taking it out is what finally gave hillsides a shaded side, and it
+		# also removed that donation from the exposure budget, so the shaded side
+		# landed on the floor. This is the same total light arriving in a form that
+		# models rather than flattens: cool fill and ambient, warm key, and the
+		# split between the two is the entire look at dusk.
+		"fill_color": Color("5b7ea0"),
+		"fill_energy": 0.52,
+		"ambient": 0.70,
 		"ambient_color": Color("40556f"),
 		"ambient_sky_mix": 0.30,
 		"exposure": 0.96,
@@ -141,13 +148,13 @@ const MOODS := {
 		# and warm, and that warm band is what makes the distance look like air
 		# instead of paint. It also feeds the sky ambient, so it warms the light
 		# on every shaded face in the world at the same time.
-		"zenith_color": Color("245779"),
-		"mid_color": Color("668da0"),
-		"horizon_color": Color("d8b88d"),
+		"zenith_color": Color("1a5688"),
+		"mid_color": Color("6aa3c4"),
+		"horizon_color": Color("e6d0a8"),
 		"ground_color": Color("505e57"),
-		"band_low": 0.09,
-		"band_high": 0.80,
-		"horizon_glow": 0.16,
+		"band_low": 0.10,
+		"band_high": 0.78,
+		"horizon_glow": 0.20,
 		"energy": 1.0,
 		"sun_color": Color(1.70, 1.58, 1.30),
 		"sun_radius": 0.019,
@@ -157,19 +164,15 @@ const MOODS := {
 		"moon_face": 0.0,
 		"cloud_lit": Color("f1ddbd"),
 		"cloud_dark": Color("718897"),
-		"cloud_cover": 0.32,
-		# Soft-edged cloud is an airbrush, and an airbrushed sky over flat-shaded
-		# ground is the mismatch that made the game look unfinished from the
-		# saddle. Sharpened until the cumulus have edges the geometry can live
-		# with.
-		"cloud_sharpness": 0.52,
-		"cloud_scale": 1.60,
-		"cloud_speed": 0.007,
-		"cloud_opacity": 0.85,
-		"bank_cover": 0.58,
+		"cloud_cover": 0.46,
+		"cloud_sharpness": 0.44,
+		"cloud_scale": 1.18,
+		"cloud_speed": 0.006,
+		"cloud_opacity": 0.90,
+		"bank_cover": 0.62,
 		"bank_opacity": 0.90,
-		"bank_height": 0.13,
-		"bank_haze": 0.46,
+		"bank_height": 0.16,
+		"bank_haze": 0.36,
 		"star_intensity": 0.0,
 		"galaxy_color": Color("6b74b8"),
 		"light_color": Color("ffd59a"),
@@ -188,9 +191,14 @@ const MOODS := {
 		# nothing was dark at all: greens went mint, tarmac went pale, and the
 		# distance dissolved. Halved, with the difference given back to the sun,
 		# so form comes from the light having a direction.
+		# Raised from 0.08 / 0.20 when the terrain dropped wrapped diffuse. The note
+		# above is still the rule — flat light is what took the greens to mint — but
+		# those numbers were set against a material that was adding half a key's
+		# worth of its own fill on top of them. Without it, nothing held a
+		# north-facing slope off the floor.
 		"fill_color": Color("7395ae"),
-		"fill_energy": 0.08,
-		"ambient": 0.20,
+		"fill_energy": 0.18,
+		"ambient": 0.32,
 		"ambient_color": Color("6f8796"),
 		"ambient_sky_mix": 0.52,
 		# ACES with the white point down at 1.45 compresses everything above a
@@ -217,40 +225,40 @@ const MOODS := {
 	},
 	LightingMode.NIGHT:
 	{
-		"zenith_color": Color("030818"),
-		"mid_color": Color("0b2244"),
-		"horizon_color": Color("205778"),
+		"zenith_color": Color("01040f"),
+		"mid_color": Color("071428"),
+		"horizon_color": Color("1a4560"),
 		"ground_color": Color("010309"),
-		"band_low": 0.08,
-		"band_high": 0.60,
-		"horizon_glow": 0.38,
-		"energy": 1.12,
+		"band_low": 0.10,
+		"band_high": 0.62,
+		"horizon_glow": 0.28,
+		"energy": 1.0,
 		"sun_color": Color(0.68, 0.72, 0.84),
 		"sun_radius": 0.040,
-		"sun_halo": 0.48,
-		"sun_halo_falloff": 13.0,
+		"sun_halo": 0.26,
+		"sun_halo_falloff": 18.0,
 		"sun_disc": 1.0,
 		"moon_face": 1.0,
 		"cloud_lit": Color("2e466b"),
 		"cloud_dark": Color("040814"),
-		"cloud_cover": 0.20,
-		"cloud_sharpness": 0.38,
-		"cloud_scale": 1.70,
-		"cloud_speed": 0.004,
-		"cloud_opacity": 0.48,
-		"bank_cover": 0.42,
-		"bank_opacity": 0.46,
-		"bank_height": 0.11,
-		"bank_haze": 0.55,
-		"star_intensity": 3.35,
-		"galaxy_color": Color("7588d5"),
+		"cloud_cover": 0.10,
+		"cloud_sharpness": 0.28,
+		"cloud_scale": 1.40,
+		"cloud_speed": 0.003,
+		"cloud_opacity": 0.28,
+		"bank_cover": 0.32,
+		"bank_opacity": 0.18,
+		"bank_height": 0.10,
+		"bank_haze": 0.62,
+		"star_intensity": 5.2,
+		"galaxy_color": Color("7d8ed4"),
 		"light_color": Color("9dbbe8"),
 		"light_energy": 0.68,
 		"light_angle": Vector3(-46.0, 32.0, 0.0),
 		"angular_distance": 0.6,
 		"fill_color": Color("31527e"),
-		"fill_energy": 0.18,
-		"ambient": 0.29,
+		"fill_energy": 0.26,
+		"ambient": 0.36,
 		"ambient_color": Color("1b3156"),
 		"ambient_sky_mix": 0.30,
 		"exposure": 0.91,
@@ -260,11 +268,11 @@ const MOODS := {
 		"fog_density": 0.00115,
 		"fog_sun_scatter": 0.20,
 		"fog_aerial": 0.24,
-		"fog_sky": 0.10,
+		"fog_sky": 0.04,
 		"fog_height": 3.5,
 		"fog_height_density": 0.006,
-		"glow": 0.64,
-		"glow_bloom": 0.10,
+		"glow": 0.58,
+		"glow_bloom": 0.06,
 		"contrast": 1.22,
 		"saturation": 1.02,
 	},
@@ -295,12 +303,7 @@ var _rain_fx: GPUParticles3D
 var _rain_process: ParticleProcessMaterial
 var _road_material: ShaderMaterial
 var _applied_rain: float = -1.0
-var _visual_update_accum: float = 0.0
-
-## Time-of-day and weather move over kilometres, not frames. Updating every
-## shader/environment property ten times a second is visually smooth while
-## avoiding a sky invalidation and dozens of property writes every rendered frame.
-const VISUAL_UPDATE_INTERVAL := 0.1
+var _applied_scenic: bool = false
 
 
 func _ready() -> void:
@@ -323,17 +326,21 @@ func _process(delta: float) -> void:
 		# Re-seeded every frame: a fixed noise pattern is a dirty lens, a moving
 		# one is grain, and only the moving one breaks up gradient banding.
 		_grade_mat.set_shader_parameter("seed", float(Time.get_ticks_msec() % 10000) * 0.37)
-	_visual_update_accum += delta
-	if _visual_update_accum < VISUAL_UPDATE_INTERVAL:
-		return
-	var update_delta := _visual_update_accum
-	_visual_update_accum = 0.0
-	_update_weather(update_delta)
-	# Quantise weather-driven lighting changes. The rain particles and wet road
-	# still ease continuously, but a tiny rain delta no longer rebuilds the sky's
-	# radiance map ten times a second.
-	if _applied_rain < 0.0 or absf(rain - _applied_rain) >= 0.20 or (rain == 0.0 and _applied_rain != 0.0):
+	_update_weather(delta)
+	# Realtime sky can absorb a uniform write every frame, so rain eases the
+	# overcast instead of jumping the deck in fifths.
+	#
+	# Riding onto the platform has to count as a change too. `_mood_now()` reads
+	# the scenic state, but the only thing that used to trigger a re-apply was the
+	# rain value moving — and dry weather pins that to exactly 0.0 and holds it
+	# there, so `is_equal_approx` was true every frame and the scenic mood never
+	# arrived. On a dry run the overlook was being lit by the riding mood for the
+	# whole time the rider was parked at it, which is the one place in the game
+	# that has a mood of its own.
+	var scenic := _at_scenic_view()
+	if _applied_rain < 0.0 or scenic != _applied_scenic or not is_equal_approx(rain, _applied_rain):
 		_applied_rain = rain
+		_applied_scenic = scenic
 		_apply_lighting()
 
 
@@ -373,14 +380,12 @@ func _build_environment() -> void:
 
 	var sky := Sky.new()
 	sky.sky_material = _sky_mat
-	# Clouds use a fixed authored phase rather than shader TIME, so this cubemap
-	# only changes with meaningful weather/mood changes. Incremental filtering can
-	# then spread those rare refreshes without a permanent realtime GPU tax.
-	sky.process_mode = Sky.PROCESS_MODE_INCREMENTAL
-	# The background still renders at full viewport resolution. Only the filtered
-	# ambient/reflection cubemap is smaller, making a T-key mood change cheap enough
-	# not to stall or briefly black out the scenic landscape.
+	# Realtime radiance is the cheap path for a sky that uses TIME (cloud drift,
+	# twinkle) and that weather eases every frame. Incremental plus a frozen
+	# phase was cheaper, and it is also why rain used to step the whole look.
+	sky.process_mode = Sky.PROCESS_MODE_REALTIME
 	sky.radiance_size = Sky.RADIANCE_SIZE_64
+	_sky_mat.set_shader_parameter("sky_phase", float(_path_seed() % 1000) * 0.17)
 
 	_environment = Environment.new()
 	_environment.background_mode = Environment.BG_SKY
@@ -438,7 +443,20 @@ func _build_fill_light() -> void:
 	_fill.name = "Fill"
 	_fill.shadow_enabled = false
 	_fill.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY
-	_fill.rotation_degrees = Vector3(-32.0, 152.0, 0.0)
+	# Steep, and from the side the key is not.
+	#
+	# At 32° it was nearly as low as the sun and pointing down the route, which
+	# meant the two lights agreed about which faces mattered: anything turned
+	# across the road got neither. That is most of the overlook — the headland
+	# face, the shore and the near fells all present themselves broadside to a
+	# rider looking out across the valley — and it is why the whole foreground
+	# there came out at a value of about three percent.
+	#
+	# Raised to 64° it stands in for skylight, which is what a fill is: the ground
+	# and every slope facing anywhere near up now collects it, vertical faces
+	# still do not, and the low warm key keeps its monopoly on the faces it rakes.
+	# Low warm key, high cool fill — the whole sunset landscape in two lights.
+	_fill.rotation_degrees = Vector3(-64.0, 152.0, 0.0)
 	add_child(_fill)
 
 
@@ -474,30 +492,65 @@ func _mood_now() -> Dictionary:
 	if rain > 0.001:
 		mood = _overcast(mood, rain)
 	# The overlook is the route's earned reveal. Weather may recolour it, but it
-	# must not erase it: at full overcast the general riding fog correctly closes
-	# visibility down, yet from the bench that merged lake, treeline and ranges
-	# into one beige card. Keep rain and its cloud deck, while guaranteeing enough
-	# clear air and tonal separation to read the four landscape layers.
-	if bool(player.get("seated")):
+	# must not erase it. From the parking as well as the bench: looking at the
+	# lake from the bike used the riding fog and the far shore vanished.
+	if _at_scenic_view():
 		mood = _protect_scenic_visibility(mood)
 	return mood
 
 
+func _at_scenic_view() -> bool:
+	## Sitting on the bench, or parked on the platform beside it. Both are the
+	## overlook being looked at rather than ridden past, and both want its mood.
+	if bool(player.get("seated")):
+		return true
+	var path := get_node_or_null("/root/RoadPath")
+	return path != null and bool(path.call("at_platform", player.track_z, player.lateral))
+
+
 static func _protect_scenic_visibility(mood: Dictionary) -> Dictionary:
+	## Aerial perspective, not clarity.
+	##
+	## This used to clamp the fog off — density down 7x, aerial down 5x — on the
+	## theory that a view you have ridden a 3 km detour to reach should be seen
+	## rather than hidden. What it actually removed was the one cue that tells a
+	## human eye how far away anything is: each successive ridge stepping paler,
+	## bluer and lower in contrast toward the sky. Every layer arrived at the same
+	## value, and a lake basin, a far shore and four mountain ranges collapsed
+	## into a single flat card. The riding view keeps its fog and reads as deep;
+	## the overlook threw its own depth away.
+	##
+	## So: density *low* — an exponential curve dense enough to eat the far range
+	## is not perspective, it is weather — and `fog_aerial` high, because aerial
+	## perspective blends toward the sky rather than toward a flat fog colour, so
+	## distant ridges take the sky's own hue and the relationship holds at every
+	## time of day. Roughly 7% haze on the near shore, 14% on the far, half on the
+	## furthest range: a ladder the eye reads as kilometres.
 	var out: Dictionary = mood.duplicate()
-	out["fog_density"] = minf(float(out["fog_density"]), 0.00034)
-	out["fog_aerial"] = minf(float(out["fog_aerial"]), 0.055)
-	out["fog_sky"] = minf(float(out["fog_sky"]), 0.035)
-	out["fog_height_density"] = minf(float(out["fog_height_density"]), 0.004)
+	out["fog_density"] = minf(float(out["fog_density"]), 0.00016)
+	out["fog_aerial"] = maxf(float(out["fog_aerial"]), 0.55)
+	# The sky is the far end of that ladder and must not be fogged onto itself.
+	out["fog_sky"] = minf(float(out["fog_sky"]), 0.02)
+	# No ground layer. A haze slab lying in the basin is a horizontal band across
+	# the middle of the view, which is the one place a vista cannot afford one.
+	out["fog_height_density"] = 0.0
+	# Agree with the sky rather than fighting it: the dusk fog colour is a muddy
+	# mauve that reads as dirt on the lens when it is carrying a whole valley.
+	out["fog_color"] = (out["fog_color"] as Color).lerp(out["mid_color"], 0.55)
 	out["contrast"] = maxf(float(out["contrast"]), 1.20)
 	out["saturation"] = maxf(float(out["saturation"]), 1.10)
-	# Sitting down should reveal detail the ride's dramatic key light can leave in
-	# silhouette.  A small exposure lift and a little more sky in the ambient keep
-	# wooded islands and the near shore readable at dusk/night without changing
-	# the lighting while the bike is moving.
+	# A small lift only. The old +1.02 exposure and +0.42 sky ambient were there
+	# to rescue detail out of silhouette back when the light had no darks in it
+	# to begin with; now that shaded slopes land honestly dark, lifting this hard
+	# just flattens the form the light is finally producing.
 	out["exposure"] = maxf(float(out["exposure"]), 1.02)
-	out["ambient_sky_mix"] = maxf(float(out["ambient_sky_mix"]), 0.42)
-	out["ambient_color"] = (out["ambient_color"] as Color).lightened(0.07)
+	# Enough sky in the ambient that a slope turned away from a low sun settles
+	# into a cool blue rather than into nothing. At 0.36 the shaded side of every
+	# fell in the forest and mountain views was reading as flat black, which is
+	# not a dark — it is an absence, and it takes the whole near half of the
+	# composition out of the picture.
+	out["ambient_sky_mix"] = maxf(float(out["ambient_sky_mix"]), 0.52)
+	out["ambient"] = maxf(float(out["ambient"]), 0.86)
 	return out
 
 
@@ -534,17 +587,25 @@ static func _overcast(mood: Dictionary, r: float) -> Dictionary:
 	## watching a filter fade in.
 	var out: Dictionary = mood.duplicate()
 	for key in ["zenith_color", "mid_color", "horizon_color", "ground_color", "cloud_lit", "cloud_dark", "ambient_color", "fog_color"]:
-		out[key] = _dull(mood[key], r * 0.72)
-	out["cloud_cover"] = lerpf(mood["cloud_cover"], 0.88, r)
+		out[key] = _dull(mood[key], r * 0.55)
+	# Steel, not brown: dulling a warm day horizon on its own just makes mud.
+	out["zenith_color"] = (out["zenith_color"] as Color).lerp(Color("3d4c5c"), r * 0.78)
+	out["mid_color"] = (out["mid_color"] as Color).lerp(Color("6e7886"), r * 0.82)
+	out["horizon_color"] = (out["horizon_color"] as Color).lerp(Color("90969e"), r * 0.90)
+	out["cloud_lit"] = (out["cloud_lit"] as Color).lerp(Color("c8ccd2"), r * 0.62)
+	out["cloud_dark"] = (out["cloud_dark"] as Color).lerp(Color("3a4450"), r * 0.62)
+	out["fog_color"] = (out["fog_color"] as Color).lerp(Color("7a828c"), r * 0.70)
+	out["cloud_cover"] = lerpf(mood["cloud_cover"], 0.90, r)
 	out["cloud_opacity"] = lerpf(mood["cloud_opacity"], 1.0, r)
-	# Softer and larger: a rain deck has no edges to catch light on.
-	out["cloud_sharpness"] = lerpf(mood["cloud_sharpness"], 0.60, r)
-	out["cloud_scale"] = lerpf(mood["cloud_scale"], 2.7, r)
-	out["cloud_speed"] = lerpf(mood["cloud_speed"], 0.016, r)
-	out["bank_cover"] = lerpf(mood["bank_cover"], 0.86, r)
+	# A rain deck is a sheet, not chopped cumulus: soften the edges and grow the
+	# masses so the sky closes over instead of tiling into noise.
+	out["cloud_sharpness"] = lerpf(mood["cloud_sharpness"], 0.14, r)
+	out["cloud_scale"] = lerpf(mood["cloud_scale"], 1.05, r)
+	out["cloud_speed"] = lerpf(mood["cloud_speed"], 0.012, r)
+	out["bank_cover"] = lerpf(mood["bank_cover"], 0.88, r)
 	out["bank_opacity"] = lerpf(mood["bank_opacity"], 1.0, r)
-	out["bank_height"] = lerpf(mood["bank_height"], 0.20, r)
-	out["bank_haze"] = lerpf(mood["bank_haze"], 0.85, r)
+	out["bank_height"] = lerpf(mood["bank_height"], 0.22, r)
+	out["bank_haze"] = lerpf(mood["bank_haze"], 0.88, r)
 	out["sun_disc"] = mood["sun_disc"] * (1.0 - r)
 	out["sun_halo"] = mood["sun_halo"] * (1.0 - r * 0.85)
 	out["horizon_glow"] = mood["horizon_glow"] * (1.0 - r * 0.7)

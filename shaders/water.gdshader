@@ -36,3 +36,36 @@ void fragment() {
 	ROUGHNESS = mix(0.16, 0.055, fresnel);
 	SPECULAR = 0.92;
 }
+
+// The sun path.
+//
+// A lake at a viewpoint is the largest single surface in the frame, and without
+// a path of light on it there is nothing to look at and nothing to say where the
+// sun is: it reads as a sheet of coloured glass laid in the valley. Painting one
+// into the vertex colour was tried and cannot work — it has to sit on the line
+// between the viewer and the sun, and that line moves with the head and with the
+// time of day, neither of which a baked mesh knows.
+//
+// Taking over light() means owning the diffuse term too, which is fine: water is
+// almost all specular anyway, and a lake wants far less diffuse than a Lambert
+// surface would give it.
+void light() {
+	float ndl = max(dot(NORMAL, LIGHT), 0.0);
+	DIFFUSE_LIGHT += ALBEDO * LIGHT_COLOR * ATTENUATION * ndl * 0.42;
+	// Deliberately broad. A tight lobe on a near-flat sheet is a single hot dot
+	// on the horizon; real glitter is thousands of small facets each catching the
+	// sun at a slightly different angle, and the wave normals above are standing
+	// in for those facets. A low exponent is what spreads it into a path running
+	// back toward the viewer instead of a spot sitting on the far shore.
+	vec3 half_vector = normalize(LIGHT + VIEW);
+	float spec = pow(max(dot(NORMAL, half_vector), 0.0), 22.0);
+	// Grazing angles catch far more of it, which is what makes the path widen and
+	// brighten as it runs away from the eye. Recomputed here rather than handed
+	// over from fragment(): a varying written in fragment() and read in light()
+	// is not something to rely on, and this is two instructions.
+	float glance = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 4.0);
+	float sparkle = 0.5 + 0.5 * sin(
+		world_position.x * 0.42 + world_position.z * 0.16 + TIME * wave_speed * 1.4
+	);
+	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * spec * mix(1.0, 3.4, glance) * (0.55 + 0.75 * sparkle);
+}

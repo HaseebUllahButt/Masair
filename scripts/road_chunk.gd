@@ -108,7 +108,7 @@ const HALF_PROFILE := [
 ## Roadside tree species. One shape — a ball on a stick — at every scale in every
 ## theme is what made a pine forest, an orchard and a coastal palm grove all read
 ## as the same green lollipops going past.
-enum Flora { BROADLEAF, CONIFER, BIRCH, PALM, BARE }
+enum Flora { BROADLEAF, CONIFER, BIRCH, PALM, BARE, CYPRESS }
 
 ## Bark colours. Wood is never the same green-brown twice, and a birch stand is
 ## recognisable at 200 m purely from the pale trunks.
@@ -470,9 +470,15 @@ var _point_samples: Dictionary = {}
 var _vp_centre: float = 0.0
 var _vp_side: float = 0.0
 var _vp_water_y: float = 0.0
+## Deterministic per-overlook phase for the landscape's shaping sines. Derived
+## from the centre and the world seed rather than from `_rng`, because every
+## chunk across the basin has to agree on the same shoreline and skyline — an
+## RNG draw would give each of the twenty chunks a different one.
+var _vp_phase: float = 0.0
 var _on_spur: bool = false
 var _on_lake: bool = false
 var _owns_platform: bool = false
+var _vp_theme: int = Env.COUNTRY
 
 
 func setup(index: int, theme_id: int) -> void:
@@ -493,15 +499,20 @@ func setup_incremental(index: int, theme_id: int) -> void:
 	var z0: float = float(chunk_index) * LENGTH
 	for first_step in range(0, STEPS, RIBBON_STEPS_PER_FRAME):
 		_build_ribbon_rows(hard, road, soft_left, soft_right, z0, first_step, mini(first_step + RIBBON_STEPS_PER_FRAME, STEPS))
-		await get_tree().process_frame
+		if not await _keep_streaming():
+			return
 	await _finish_ribbon_incremental(hard, road, soft_left, soft_right, z0)
-	await get_tree().process_frame
+	if not await _keep_streaming():
+		return
 	await _build_furniture_incremental()
-	await get_tree().process_frame
+	if not await _keep_streaming():
+		return
 	_build_theme_scenery()
-	await get_tree().process_frame
+	if not await _keep_streaming():
+		return
 	_build_distant_scenery()
-	await get_tree().process_frame
+	if not await _keep_streaming():
+		return
 	# Split across frames: the overlook landscape is the heaviest single thing a
 	# chunk builds, and the whole point of the incremental path is that nothing in
 	# it costs a visible frame. The stages are the same three calls the immediate
@@ -510,13 +521,25 @@ func setup_incremental(index: int, theme_id: int) -> void:
 	# running game, which streams every chunk through this function.
 	if _on_lake:
 		_build_lake_basin()
-		await get_tree().process_frame
+		if not await _keep_streaming():
+			return
 		_build_lake_distance()
-		await get_tree().process_frame
+		if not await _keep_streaming():
+			return
 		_build_lake_dressing()
-		await get_tree().process_frame
+		if not await _keep_streaming():
+			return
 	_build_set_piece()
 	await _commit_props_incremental()
+
+
+func _keep_streaming() -> bool:
+	## Restart frees this chunk mid-build. Stop rather than finishing a lake
+	## mesh into a world the bike has already left.
+	if not is_instance_valid(self) or not is_inside_tree():
+		return false
+	await get_tree().process_frame
+	return is_instance_valid(self) and is_inside_tree()
 
 
 func _configure(index: int, theme_id: int) -> void:
@@ -543,6 +566,13 @@ func _resolve_viewpoint() -> void:
 	_on_spur = gap <= RoadPathGD.SPUR_HALF_SPAN
 	_on_lake = gap <= RoadPathGD.LAKE_SPAN + 70.0
 	_owns_platform = int(_path.viewpoint_index_for(_vp_centre)) == chunk_index
+	# The basin dresses as the centre's biome even if a spur kisses a region edge.
+	_vp_theme = int(_path.theme_for_chunk(int(_path.viewpoint_index_for(_vp_centre))))
+	if _owns_platform:
+		_vp_theme = theme
+	_vp_phase = (
+		float(posmod(hash(Vector2i(int(round(_vp_centre)), int(_path.world_seed))), 1000)) * 0.00628
+	)
 	if _on_lake:
 		_vp_water_y = float(_path.viewpoint_water_y(_vp_centre))
 
@@ -562,7 +592,7 @@ func _build_theme_scenery() -> void:
 	# because lake chunks intentionally skip the ordinary countryside scatter.
 	if _on_spur:
 		_build_spur_woodland()
-	# The overlook has its own authored planting, islands, far shore and range.
+	# The overlook has its own authored planting, far shore and range.
 	# Layering a complete random biome over it both muddies the composition and
 	# makes every scenic chunk generate hundreds of transforms it never needs.
 	if _on_lake:
@@ -581,62 +611,135 @@ func _build_theme_scenery() -> void:
 
 
 func _build_spur_woodland() -> void:
-	## Tall trees on both sides, in two staggered rows. Their broad crowns overlap
-	## above the single carriageway while birch and conifer understory close the
-	## lower sightline. The last stretch opens gradually so the lake is a reveal,
-	## not something visible from the junction.
+	## Planting along the climb. The spur geometry is the same everywhere; what
+	## grows beside it follows the biome of this stretch, so a coastal headland
+	## is not ridden through a pine tunnel.
 	var z0: float = float(chunk_index) * LENGTH
-	for station in 4:
-		var z: float = z0 + 4.0 + float(station) * 10.5
+	for station in 5:
+		var z: float = z0 + 3.2 + float(station) * 7.4
 		if z >= z0 + LENGTH:
 			continue
 		var distance: float = absf(z - _vp_centre)
 		var divergence: float = float(_path.spur_divergence(z))
 		var half: float = float(_path.spur_half_width(z))
-		# No planting in the junction mouth. Around the summit, clear a long visual
-		# breath before the platform instead of ending the forest at a hard line.
 		var reveal: float = smoothstep(
-			RoadPathGD.PLATFORM_HALF_LENGTH + 72.0,
-			RoadPathGD.PLATFORM_HALF_LENGTH + 190.0,
+			RoadPathGD.PLATFORM_HALF_LENGTH + 90.0,
+			RoadPathGD.PLATFORM_HALF_LENGTH + 260.0,
 			distance
 		)
 		if divergence < 0.08 or half < 2.8 or reveal < 0.08:
 			continue
-		var centre: float = _vp_side * float(_path.spur_offset(z))
+		var towards_summit: float = 1.0 - clampf((distance - 80.0) / 1100.0, 0.0, 1.0)
 		for road_side in [-1.0, 1.0]:
-			# The near row makes the overhead arch; the second row prevents daylight
-			# behind it from turning the forest into two decorative tree lines.
 			for row in 2:
-				var jitter_z: float = z + _rng.randf_range(-2.2, 2.2)
-				var setback: float = half + RoadPathGD.SPUR_SHOULDER + 3.2 + float(row) * 7.5
-				var lateral: float = centre + road_side * (setback + _rng.randf_range(-0.9, 1.2))
-				var height: float = _rng.randf_range(12.5, 18.5) * lerpf(0.72, 1.0, reveal)
-				var tint: Color = Color("274b35").lerp(Color("476a3e"), _rng.randf() * 0.48)
-				var species: int = Flora.BROADLEAF if _rng.randf() < 0.74 else Flora.CONIFER
-				_tree(species, jitter_z, lateral, height, tint.darkened(float(row) * 0.12), true)
-
-			# A lower second canopy makes the road feel wooded at eye level while the
-			# taller crowns meet overhead. It stays beyond the surfaced shoulder.
-			var under_lateral: float = centre + road_side * (
-				half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(5.0, 8.0)
+				var jitter_z: float = z + _rng.randf_range(-2.0, 2.0)
+				# Sample the spur at the plant point, not the station. The apron
+				# widens through the taper; a setback computed 2 m uphill lands
+				# in the middle of the wider tarmac.
+				var plant_half: float = float(_path.spur_half_width(jitter_z))
+				var plant_centre: float = _vp_side * float(_path.spur_offset(jitter_z))
+				var setback: float = plant_half + RoadPathGD.SPUR_SHOULDER + 2.8 + float(row) * 7.2
+				var lateral: float = plant_centre + road_side * (setback + _rng.randf_range(-0.8, 1.1))
+				if _on_tarmac(jitter_z, lateral, 1.4):
+					continue
+				match _vp_theme:
+					Env.COAST:
+						var s := _rng.randf_range(1.4, 3.2)
+						_blob(
+							jitter_z,
+							lateral,
+							Vector3(s * 1.8, s * 0.7, s * 1.5),
+							Color("8a8070").lerp(Color("6a6458"), _rng.randf()),
+							0.0,
+							false,
+							true
+						)
+						if row == 0 and _rng.randf() < 0.28:
+							_tree(
+								Flora.CYPRESS if _rng.randf() < 0.55 else Flora.PALM,
+								jitter_z,
+								lateral,
+								_rng.randf_range(5.5, 9.0) * reveal,
+								Color("3a5c44").darkened(_rng.randf() * 0.2),
+								true
+							)
+					Env.MOUNTAIN:
+						var height: float = _rng.randf_range(8.0, 14.0) * lerpf(0.70, 1.0, reveal)
+						var species: int = Flora.CONIFER if _rng.randf() < 0.78 + towards_summit * 0.15 else Flora.BARE
+						_tree(species, jitter_z, lateral, height, Color("1c3028").lerp(Color("3a4638"), _rng.randf() * 0.3), true)
+						if _rng.randf() < 0.4:
+							var rock_s := _rng.randf_range(1.2, 2.8)
+							_blob(
+								jitter_z,
+								lateral + road_side * _rng.randf_range(1.0, 3.0),
+								Vector3(rock_s * 1.6, rock_s * 0.9, rock_s * 1.4),
+								Color("6a6458").darkened(_rng.randf() * 0.2),
+								0.0,
+								false,
+								true
+							)
+					_:
+						var height: float = _rng.randf_range(11.0, 17.5) * lerpf(0.70, 1.0, reveal)
+						if _vp_theme == Env.FOREST:
+							height *= 1.08
+						var tint: Color = Color("243e2c").lerp(Color("3f5c38"), _rng.randf() * 0.42)
+						var conifer_odds := 0.22 + towards_summit * 0.55
+						if _vp_theme == Env.FOREST:
+							conifer_odds = 0.42 + towards_summit * 0.35
+						var species: int = Flora.CONIFER if _rng.randf() < conifer_odds else Flora.BROADLEAF
+						_tree(species, jitter_z, lateral, height, tint.darkened(float(row) * 0.14), true)
+			if _vp_theme == Env.COAST:
+				continue
+			var under_z: float = z + _rng.randf_range(-2.6, 2.6)
+			var under_half: float = float(_path.spur_half_width(under_z))
+			var under_centre: float = _vp_side * float(_path.spur_offset(under_z))
+			var under_lateral: float = under_centre + road_side * (
+				under_half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(4.6, 7.6)
 			)
+			if _on_tarmac(under_z, under_lateral, 1.4):
+				continue
+			var under_species: int = Flora.CONIFER if _vp_theme == Env.MOUNTAIN else (Flora.BIRCH if _rng.randf() < 0.48 else Flora.BROADLEAF)
 			_tree(
-				Flora.BIRCH if _rng.randf() < 0.55 else Flora.BROADLEAF,
-				z + _rng.randf_range(-3.0, 3.0),
+				under_species,
+				under_z,
 				under_lateral,
-				_rng.randf_range(5.0, 8.0) * reveal,
-				Color("55724a").darkened(_rng.randf() * 0.18),
+				_rng.randf_range(4.6, 7.4) * reveal,
+				Color("4e6844").darkened(_rng.randf() * 0.2),
 				true
 			)
-			_blob(
-				z + _rng.randf_range(-3.5, 3.5),
-				centre + road_side * (half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(2.8, 5.5)),
-				Vector3(_rng.randf_range(2.2, 4.0), _rng.randf_range(1.0, 2.2), _rng.randf_range(2.0, 3.8)),
-				Color("203e2b").lightened(_rng.randf() * 0.08),
-				0.0,
-				true,
-				true
+			var bush_z: float = z + _rng.randf_range(-3.0, 3.0)
+			var bush_half: float = float(_path.spur_half_width(bush_z))
+			var bush_centre: float = _vp_side * float(_path.spur_offset(bush_z))
+			var bush_lateral: float = bush_centre + road_side * (
+				bush_half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(2.4, 5.2)
 			)
+			if not _on_tarmac(bush_z, bush_lateral, 1.2):
+				_blob(
+					bush_z,
+					bush_lateral,
+					Vector3(_rng.randf_range(2.0, 3.8), _rng.randf_range(0.9, 2.0), _rng.randf_range(1.8, 3.4)),
+					Color("1c3628").lightened(_rng.randf() * 0.1),
+					0.0,
+					true,
+					true
+				)
+			if _rng.randf() < 0.45:
+				var rock_z: float = z + _rng.randf_range(-2.0, 2.0)
+				var rock_half: float = float(_path.spur_half_width(rock_z))
+				var rock_centre: float = _vp_side * float(_path.spur_offset(rock_z))
+				var rock_lateral: float = rock_centre + road_side * (
+					rock_half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(1.6, 3.4)
+				)
+				if not _on_tarmac(rock_z, rock_lateral, 1.2):
+					_blob(
+						rock_z,
+						rock_lateral,
+						Vector3(_rng.randf_range(0.9, 1.8), _rng.randf_range(0.5, 1.1), _rng.randf_range(0.8, 1.6)),
+						Color("5a5348").darkened(_rng.randf() * 0.16),
+						0.0,
+						false,
+						true
+					)
 
 
 func _p(z: float, lateral: float, drop: float) -> Vector3:
@@ -675,6 +778,7 @@ func _ground_color(lateral: float, z: float) -> Color:
 	var color: Color = (_pal["ground"] as Color).lerp(_pal["ground_alt"], mix * 0.9)
 	if _on_spur:
 		color = color.lerp(_deck_color(z, lateral), _deck_mix(z, lateral))
+		color = color.lerp(_terrace_color(), _terrace_mix(z, lateral))
 	if _on_lake:
 		color = color.lerp(_face_color(), _face_mix(z, lateral))
 		color = color.lerp(_shore_color(), _shore_mix(z, lateral))
@@ -688,6 +792,14 @@ func _face_mix(z: float, lateral: float) -> float:
 	## look at, and twenty-seven metres of drop painted in a single flat green
 	## reads as a wall rather than as a hillside. Grass does not hold on the top
 	## third of a slope this steep in any case.
+	##
+	## `_on_lake` first, for the reason `_resolve_viewpoint` exists at all. Every
+	## chunk in the world runs this once per ribbon vertex, and without the guard
+	## the outer half of every ordinary verge in the game — where `out` clears the
+	## headland crest — went on to ask the path for a near-shore distance that
+	## only means anything at an overlook.
+	if not _on_lake:
+		return 0.0
 	if lateral * _vp_side <= 0.0:
 		return 0.0
 	var out := absf(lateral)
@@ -698,9 +810,15 @@ func _face_mix(z: float, lateral: float) -> float:
 	if out > near:
 		return 0.0
 	var t: float = (out - top) / maxf(near - top, 1.0)
-	# Strongest just under the lip, gone by the time the scree at the foot of it
-	# takes over.
-	var band: float = smoothstep(0.0, 0.2, t) * (1.0 - smoothstep(0.5, 0.95, t))
+	# Strongest just under the lip and carried all the way to the waterline.
+	#
+	# It used to fade out by the middle of the face, on the theory that the scree
+	# at the foot takes over from there — but the scree is scattered stones, not a
+	# surface, and what showed between them was the theme's ordinary ground colour.
+	# On mountain that is a dark grey-green, on a bank steep enough to catch
+	# neither the low key nor the overhead fill, and the bottom quarter of the
+	# seated frame came out as an unlit void with a few reeds floating in it.
+	var band: float = smoothstep(0.0, 0.18, t) * (1.0 - smoothstep(0.86, 1.0, t))
 	# Broken along the route as well as down the slope, so it comes out as
 	# outcrop and gully instead of a stripe painted round the headland.
 	var grain: float = 0.5 + 0.5 * sin(z * 0.058 + out * 0.047) * sin(z * 0.019 - out * 0.021)
@@ -730,11 +848,45 @@ func _deck_mix(z: float, lateral: float) -> float:
 	## apron, mottled by the grain below, is the patchwork the approach to the
 	## overlook was covered in. Now it is a shoulder: a couple of metres of
 	## surfacing beside the tarmac, and graded grass past that.
+	if not _on_spur:
+		return 0.0
 	var deck: float = float(_path.spur_deck_blend(z, lateral))
 	if deck <= 0.0:
 		return 0.0
 	var out: float = absf(absf(lateral) - float(_path.spur_offset(z))) - float(_path.spur_half_width(z))
 	return smoothstep(0.18, 0.75, deck) * (1.0 - smoothstep(RoadPathGD.SPUR_SHOULDER, RoadPathGD.SPUR_SHOULDER + 2.6, out))
+
+
+func _terrace_mix(z: float, lateral: float) -> float:
+	## Limestone paving on the view-side terrace. Without this the made ground
+	## past the shoulder stays hillside grass, and a grass shelf over a drop is
+	## what made the benches look like they were hovering over the lake.
+	if not _on_spur:
+		return 0.0
+	if float(_path.platform_blend(z)) <= 0.0:
+		return 0.0
+	if lateral * _vp_side <= 0.0:
+		return 0.0
+	var deck: float = float(_path.spur_deck_blend(z, lateral))
+	if deck <= 0.2:
+		return 0.0
+	var out: float = absf(absf(lateral) - float(_path.spur_offset(z))) - float(_path.spur_half_width(z))
+	return (
+		float(_path.platform_blend(z))
+		* deck
+		* smoothstep(0.15, 0.9, out)
+		* (1.0 - smoothstep(RoadPathGD.PLATFORM_TERRACE + 0.4, RoadPathGD.PLATFORM_TERRACE + 1.6, out))
+	)
+
+
+func _terrace_color() -> Color:
+	## Weathered dark stone, not pale limestone. This paving is the closest ground
+	## to the eye and runs the full width of the bottom of the frame, so at the
+	## old value it was the brightest object in a picture of a lake and a range of
+	## mountains — a bar of light across the foreground pulling the eye straight
+	## down out of the view. Foreground reads as foreground by being darker than
+	## what it frames, not by being lit.
+	return Color("574f45")
 
 
 func _deck_color(z: float, lateral: float) -> Color:
@@ -763,7 +915,11 @@ func _shore_mix(z: float, lateral: float) -> float:
 
 
 func _shore_color() -> Color:
-	return (_pal["shoulder"] as Color).lightened(0.22)
+	## Damp shingle. Barely lifted off the shoulder colour: at +0.22 the waterline
+	## drew a bright band right around the basin, and a hard pale line where land
+	## meets water is the one thing that makes a lake look like a texture rather
+	## than like a body of water sitting in a valley.
+	return (_pal["shoulder"] as Color).lightened(0.08)
 
 
 static var _road_mat_configured := false
@@ -1056,6 +1212,18 @@ func _build_sea(b: LowPoly, z0: float) -> void:
 # ------------------------------------------------------------------ prop API
 
 
+func _on_tarmac(z: float, lateral: float, clearance: float = PROP_ROAD_CLEARANCE) -> bool:
+	## True if this point is on the carriageway or the scenic spur, plus a
+	## clearance strip. The old check only knew about HALF_WIDTH, so anything
+	## planted at the spur's 160 m offset was "off the road".
+	if absf(lateral) <= HALF_WIDTH + clearance:
+		return true
+	var spur: Vector2 = _path.spur_interval(z)
+	if spur == Vector2.ZERO:
+		return false
+	return lateral >= spur.x - clearance and lateral <= spur.y + clearance
+
+
 func _footprint_is_clear(
 	z: float, lateral: float, half_lateral: float, half_depth: float, clearance: float = PROP_ROAD_CLEARANCE
 ) -> bool:
@@ -1078,7 +1246,16 @@ func _footprint_is_clear(
 		or _viewpoint_reserves_sightline(z + half_depth, lateral)
 	):
 		return false
-	if absf(lateral) - half_lateral > HALF_WIDTH + clearance + 1.0 + half_depth * half_depth * 0.005:
+	var curve_slop: float = 1.0 + half_depth * half_depth * 0.005
+	var far_from_main: bool = absf(lateral) - half_lateral > HALF_WIDTH + clearance + curve_slop
+	var spur: Vector2 = _path.spur_interval(z)
+	var far_from_spur := true
+	if spur != Vector2.ZERO:
+		far_from_spur = (
+			lateral + half_lateral < spur.x - clearance - curve_slop
+			or lateral - half_lateral > spur.y + clearance + curve_slop
+		)
+	if far_from_main and far_from_spur:
 		return true
 
 	var centre: Vector3 = _path.ground_at(z, lateral)
@@ -1092,7 +1269,7 @@ func _footprint_is_clear(
 		for lateral_factor in [-1.0, 0.0, 1.0]:
 			var point := centre + frame.x * (half_lateral * float(lateral_factor)) + forward * dz
 			var sample_lateral := (point - sample_centre).dot(sample_right)
-			if absf(sample_lateral) <= HALF_WIDTH + clearance:
+			if _on_tarmac(sample_z, sample_lateral, clearance):
 				return false
 	return true
 
@@ -1104,6 +1281,15 @@ func _viewpoint_reserves_sightline(z: float, lateral: float) -> bool:
 	## pass.
 	if not (_on_lake or _on_spur):
 		return false
+	# Below the waterline nothing random is allowed at all. `viewpoint_reserves`
+	# covers the lake *bed* the set piece digs, but the water sheet reaches far
+	# past it — out to the horizon on a coast — and the ordinary verge scatter was
+	# happily planting bushes over the whole of it. That went unnoticed only while
+	# every biome palette was the same low-chroma beige as the sea it was strewn
+	# across; the moment the palettes got their hues back it read as confetti
+	# floating on the water.
+	if _on_lake and _path.height_at(z) - _path.terrain_drop(lateral, z) < _vp_water_y + 0.6:
+		return true
 	return bool(_path.viewpoint_reserves(z, lateral))
 
 
@@ -1168,6 +1354,59 @@ func _cube(
 	var basis := Basis(Vector3.UP, _path.yaw_at(z) + yaw).scaled(size)
 	_cubes.append(Transform3D(basis, base + Vector3(0, size.y * 0.5, 0)))
 	_cube_cols.append(color)
+
+
+func _deck_cube(
+	z: float, lateral: float, size: Vector3, color: Color, yaw: float = 0.0, lift: float = 0.0
+) -> void:
+	## Sit a box on the spur deck, along the road's own up. World-Y placement is
+	## what left the benches hovering whenever the headland was pitched.
+	var flat: Basis = _path.frame_flat_at(z)
+	var frame := Basis(flat.x, flat.y, flat.z).rotated(flat.y, yaw)
+	var scaled := Basis(frame.x * size.x, frame.y * size.y, frame.z * size.z)
+	_cubes.append(Transform3D(scaled, _p(z, lateral, -(lift + size.y * 0.5))))
+	_cube_cols.append(color)
+
+
+func _deck_blob(
+	z: float, lateral: float, size: Vector3, color: Color, lift: float = 0.0, leafy: bool = true
+) -> void:
+	## Heather, turf and low planting on the terrace — same deck placement as
+	## `_deck_cube`, or it floats the moment the headland pitches.
+	var flat: Basis = _path.frame_flat_at(z)
+	var frame := Basis(flat.x, flat.y, flat.z).rotated(flat.y, _rng.randf_range(0.0, TAU))
+	var scaled := Basis(frame.x * size.x, frame.y * size.y, frame.z * size.z)
+	var xform := Transform3D(scaled, _p(z, lateral, -(lift + size.y * 0.42)))
+	if leafy:
+		_leaves.append(xform)
+		_leaf_cols.append(color)
+	else:
+		_blobs.append(xform)
+		_blob_cols.append(color)
+
+
+func _deck_lamp(z: float, lateral: float, size: Vector3, color: Color, lift: float) -> void:
+	var flat: Basis = _path.frame_flat_at(z)
+	var scaled := Basis(flat.x * size.x, flat.y * size.y, flat.z * size.z)
+	_lamps.append(Transform3D(scaled, _p(z, lateral, -(lift + size.y * 0.5))))
+	_lamp_cols.append(color)
+
+
+func _deck_light(z: float, lateral: float, lift: float, color: Color, radius: float, energy: float) -> void:
+	if _light_count >= MAX_LIGHTS_PER_CHUNK:
+		return
+	var light := OmniLight3D.new()
+	light.position = _p(z, lateral, -lift)
+	light.light_color = color
+	light.light_energy = energy
+	light.omni_range = radius
+	light.omni_attenuation = 1.5
+	light.shadow_enabled = false
+	light.distance_fade_enabled = true
+	light.distance_fade_begin = 35.0
+	light.distance_fade_length = 20.0
+	add_child(light)
+	_light_count += 1
 
 
 func _arch_cube(
@@ -1280,6 +1519,8 @@ func _tree(
 	match species:
 		Flora.CONIFER:
 			_grow_conifer(frame, height, color)
+		Flora.CYPRESS:
+			_grow_cypress(frame, height, color)
 		Flora.BIRCH:
 			_grow_birch(frame, height, color)
 		Flora.PALM:
@@ -1337,6 +1578,18 @@ func _grow_broadleaf(frame: Transform3D, height: float, color: Color) -> void:
 
 	var crown_h: float = (height - fork.y) * _rng.randf_range(1.0, 1.15)
 	_canopy(frame, fork + Vector3(lean.x * 0.3, -crown_h * 0.08, lean.z * 0.3), width, crown_h, color)
+
+
+func _grow_cypress(frame: Transform3D, height: float, color: Color) -> void:
+	## Italian cypress: a dark needle. The conifer mesh is a cone; scaled this
+	## thin it is a column, which is the tree that turns a pine lake into a
+	## Mediterranean one.
+	var bark: Color = BARK.darkened(_rng.randf_range(0.25, 0.45))
+	_limb(frame, Vector3.ZERO, Vector3(0, height * 0.62, 0), height * 0.022, bark)
+	var width: float = height * _rng.randf_range(0.048, 0.062)
+	var basis := Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(Vector3(width, height * 0.96, width))
+	_conifers.append(frame * Transform3D(basis, Vector3(0, height * 0.02, 0)))
+	_conifer_cols.append(color.darkened(0.18 + _rng.randf() * 0.12))
 
 
 func _grow_conifer(frame: Transform3D, height: float, color: Color) -> void:
@@ -1449,6 +1702,94 @@ func _lamp(z: float, lateral: float, size: Vector3, color: Color, lift: float, a
 	_lamp_cols.append(color)
 
 
+## Albedos for imported boulders, one per biome, cached because every rock in
+## the view would otherwise carry its own copy of the same material.
+static var _vista_rock_mats: Dictionary = {}
+
+
+static func _vista_rock_material(tint: Color) -> StandardMaterial3D:
+	var key: String = tint.to_html(false)
+	if _vista_rock_mats.has(key):
+		return _vista_rock_mats[key]
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = tint
+	mat.roughness = 0.94
+	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	mat.diffuse_mode = BaseMaterial3D.DIFFUSE_LAMBERT
+	_vista_rock_mats[key] = mat
+	return mat
+
+
+func _vista_rock_tint() -> Color:
+	## Whatever the imported asset thinks it is, in this game it is a rock in
+	## *this* valley. The Kenney boulders ship with a bright moss-green cap over
+	## an orange body, and dropped unaltered into a dusk sea-stack field they read
+	## as painted confetti floating on the water — the most conspicuous thing in
+	## the coast view, and the only object in it not built from the biome palette.
+	match _vp_theme:
+		Env.COAST:
+			return Color("4a5560")
+		Env.MOUNTAIN:
+			return Color("5a5148")
+		Env.FOREST:
+			return Color("3b4438")
+	return Color("6a5b45")
+
+
+func _vista_rock(z: float, lateral: float, scale: float, lift: float = 0.0, in_water: bool = false) -> void:
+	## Kenney boulders as real mass in the overlook: sea stacks, talus, a knoll.
+	## Bypasses the roadside import cap — six rocks on a 40 m verge is plenty,
+	## six rocks on a kilometre of view is nothing.
+	##
+	## `in_water` is the sea stacks and nothing else. Every other caller places
+	## talus on a slope, and the drowning test has to be made here against the
+	## very surface the rock is about to be stood on: doing it in the callers
+	## against `_height_above_water` compared a *different* query — centreline
+	## height less a profile drop, not the sampled terrain — and the two disagree
+	## exactly where the headland face falls away, which is where all the talus
+	## is. The callers' guards passed and the rocks still came up under the lake.
+	var ground: Vector3 = _terrain_surface_at(z, lateral)
+	if not in_water and ground.y < _vp_water_y + 0.8:
+		return
+	var tint: Color = _vista_rock_tint()
+	var rock: PackedScene = _rock_scene(_rng.randf() < 0.5)
+	if rock == null:
+		_blob(z, lateral, Vector3(scale * 1.6, scale, scale * 1.4), tint, lift, false, true)
+		return
+	var instance: Node3D = rock.instantiate() as Node3D
+	if instance == null:
+		return
+	var base: Vector3 = ground - _origin + Vector3(0.0, lift, 0.0)
+	instance.position = base
+	instance.rotation.y = _rng.randf_range(0.0, TAU)
+	# A sea stack is a column, not a boulder. The Kenney rocks are wide and low,
+	# and scaled uniformly they lie on the water like skipping stones however big
+	# you make them; squeezed in plan and pulled up, the same mesh reads as a
+	# remnant of a cliff the sea has cut away — which is what it is.
+	if in_water:
+		instance.scale = Vector3(scale * 0.52, scale * 1.55, scale * 0.52)
+	else:
+		instance.scale = Vector3.ONE * scale
+	_dress_imported_rock(instance, _vista_rock_material(tint.darkened(_rng.randf() * 0.22)))
+	add_child(instance)
+
+
+func _dress_imported_rock(node: Node, mat: StandardMaterial3D) -> void:
+	if node is GeometryInstance3D:
+		var geo := node as GeometryInstance3D
+		geo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		geo.material_override = mat
+	for child in node.get_children():
+		_dress_imported_rock(child, mat)
+
+
+func _silence_imported_shadows(node: Node) -> void:
+	if node is GeometryInstance3D:
+		(node as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for child in node.get_children():
+		_silence_imported_shadows(child)
+
+
 func _asset_prop(
 	scene: PackedScene,
 	z: float,
@@ -1541,18 +1882,15 @@ func _commit_mm(
 	# horizon in and out. Everything else stops well before the fog does.
 	if node_name == "Ridges":
 		mmi.visibility_range_end = 0.0
-	elif node_name == "Grass":
-		# Individual blades are sub-pixel well before the prop distance, and this
-		# is the densest bucket in the chunk by an order of magnitude.
+	elif node_name == "Grass" or node_name == "HayBales":
 		mmi.visibility_range_end = 95.0
-	elif _on_lake:
-		# Islands, the far bank and the tiny settlement are authored distance
-		# cues. The ordinary 280 m roadside cutoff made all of them disappear from
-		# the platform even though their generation cost was still being paid.
-		mmi.visibility_range_end = 1350.0
+	elif _on_lake and node_name in ["Conifers", "Cubes", "Architecture", "Rocks", "Trunks", "Crowns", "Foliage"]:
+		# The far shore and the stacks sit a kilometre out. The old 720 m window
+		# popped the trees off the opposite bank while the rider was still looking.
+		mmi.visibility_range_end = 1800.0
 	else:
 		mmi.visibility_range_end = 360.0 if node_name == "Architecture" else 280.0
-	if not shadows:
+	if not shadows or _on_lake:
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mmi)
 
@@ -2341,11 +2679,17 @@ func _build_landmark() -> void:
 	## Something worth turning your head for. These sit far off the road, tall
 	## enough to clear the roadside planting, and are the payoff for the Q/E
 	## glance — the verge alone gives the rider no reason to look sideways.
+	## No buildings: a copse, a dry-stone wall, a fall. Wind farms and masts
+	## read as infrastructure; these read as country.
 	match theme:
-		Env.COUNTRY, Env.COAST, Env.MOUNTAIN:
-			_landmark_wind_farm()
+		Env.FOREST:
+			_landmark_copse()
+		Env.COAST:
+			_landmark_waterfall()
+		Env.MOUNTAIN:
+			_landmark_waterfall()
 		_:
-			_landmark_mast()
+			_landmark_wall()
 
 
 func _strut(b: LowPoly, from: Vector3, to: Vector3, radius: float, color: Color) -> void:
@@ -2375,34 +2719,64 @@ func _landmark_mesh(b: LowPoly, node_name: String) -> void:
 
 
 func _landmark_wind_farm() -> void:
+	## Tower, nacelle and rotor are one machine. The old version stuffed the
+	## tower into the ridge bucket — a downland hump scaled up — so the spinning
+	## disc hung in the air above a hill.
 	var z0 := float(chunk_index) * LENGTH
 	var side: float = 1.0 if _rng.randf() < 0.5 else -1.0
-	var tower: Color = Color("e6e9ee").darkened(0.06)
+	var steel: Color = Color("e6e9ee").darkened(0.08)
+	var nacelle_col: Color = Color("d5dae2")
+	var b := LowPoly.new()
 	for i in 3:
 		var z := z0 + 5.0 + float(i) * 13.0 + _rng.randf_range(-3.0, 3.0)
 		var lx: float = side * _rng.randf_range(82.0, 155.0)
 		var height: float = _rng.randf_range(24.0, 34.0)
-		# Tower goes in the ridge bucket, which is never culled — the rotor node
-		# is not either, and a spinning rotor above a vanished tower is worse
-		# than no turbine at all.
-		_ridge(z, lx, Vector3(2.8, height, 2.8), tower)
+		var scale: float = height / 30.0
+		var ground: Vector3 = _terrain_surface_at(z, lx) - _origin
+		var hub: Vector3 = ground + Vector3(0.0, height, 0.0)
+		var forward: Vector3 = (_path.frame_flat_at(z).x * -side)
+		if forward.length_squared() < 1e-6:
+			forward = Vector3.FORWARD
+		else:
+			forward = forward.normalized()
+		# +Z toward the road so the disc faces the saddle and the nacelle sits
+		# behind the hub instead of in front of the blades.
+		var facing := Basis.looking_at(forward, Vector3.UP, true)
 
-		var hub: Vector3 = _terrain_surface_at(z, lx) - _origin + Vector3(0, height * 0.97, 0)
-		# Face the rotor across the road, so its disc is seen flat from the saddle
-		# rather than edge-on as a line.
-		var axis: Vector3 = _path.frame_flat_at(z).x * -side
+		b.add_loft(
+			PackedVector3Array([ground + Vector3(0.0, -1.4, 0.0), hub]),
+			PackedVector2Array([Vector2(1.22, 1.22) * scale, Vector2(0.50, 0.50) * scale]),
+			8,
+			steel
+		)
+		b.add_cylinder(Transform3D(Basis.IDENTITY, hub - Vector3(0.0, 0.28 * scale, 0.0)), 0.58 * scale, 1.0 * scale, 8, steel)
+
+		var nacelle_len := 4.6 * scale
+		var nacelle_h := 1.58 * scale
+		var nacelle_w := 1.62 * scale
+		# Front face of the nacelle is at the hub, so the rotor mounts into it.
+		var nacelle_pos: Vector3 = hub - forward * (nacelle_len * 0.5) + Vector3(0.0, 0.18 * scale, 0.0)
+		b.add_rounded_box(
+			Transform3D(facing, nacelle_pos),
+			Vector3(nacelle_w, nacelle_h, nacelle_len),
+			0.22 * scale,
+			nacelle_col
+		)
+
+		var rotor_pos: Vector3 = hub + forward * (0.52 * scale)
 		var node := Node3D.new()
-		node.name = "Turbine"
+		node.name = "Turbine%d" % i
 		node.set_script(TurbineGD)
 		node.set("speed", _rng.randf_range(0.42, 0.72) * (-1.0 if _rng.randf() < 0.3 else 1.0))
-		node.transform = Transform3D(Basis.looking_at(axis, Vector3.UP), hub)
-		node.scale = Vector3.ONE * (height / 30.0)
+		node.transform = Transform3D(facing, rotor_pos)
+		node.scale = Vector3.ONE * scale
 		var mesh := MeshInstance3D.new()
 		mesh.mesh = rotor_mesh()
 		mesh.material_override = LowPoly.solid_material()
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		node.add_child(mesh)
 		add_child(node)
+	_landmark_mesh(b, "WindFarm")
 
 
 func _landmark_mast() -> void:
@@ -2449,6 +2823,111 @@ func _landmark_mast() -> void:
 	add_child(beacon)
 
 
+func _landmark_side(z: float) -> float:
+	return 1.0 if posmod(hash(Vector2i(chunk_index, int(_path.world_seed))), 2) == 0 else -1.0
+
+
+func _landmark_waterfall() -> void:
+	## A fall on a hillside, far enough out that it is a glance not a roadside
+	## fountain. Never on the overlook: that view is empty country, and a strip
+	## of white water in it reads as a prop.
+	var z0 := float(chunk_index) * LENGTH
+	var z: float = z0 + _rng.randf_range(10.0, 28.0)
+	var side: float = _landmark_side(z)
+	var lx: float = side * _rng.randf_range(96.0, 148.0)
+	if _on_tarmac(z, lx, 8.0):
+		return
+	var high: Vector3 = _terrain_surface_at(z, lx) - _origin
+	var low: Vector3 = _terrain_surface_at(z, lx + side * 16.0) - _origin
+	var drop: float = high.y - low.y
+	if drop < 8.0:
+		low = high + Vector3(0.0, -_rng.randf_range(14.0, 22.0), 0.0)
+		drop = high.y - low.y
+	if theme == Env.MOUNTAIN:
+		low.y -= 8.0
+		drop = high.y - low.y
+	var rock := Color("5a554c").darkened(_rng.randf() * 0.08)
+	for i in 5:
+		var s := _rng.randf_range(2.2, 4.4)
+		_blob(
+			z + _rng.randf_range(-3.0, 3.0),
+			lx + side * _rng.randf_range(-2.0, 10.0),
+			Vector3(s * 1.6, s * 1.1, s * 1.4),
+			rock.darkened(_rng.randf() * 0.1),
+			0.0,
+			false,
+			true
+		)
+	var b := LowPoly.new()
+	var width: float = 3.4 if theme == Env.COAST else 2.6
+	var along: Vector3 = (_path.frame_flat_at(z) as Basis).z * width
+	var water := Color("8eb8b4")
+	var foam := Color("c5ddd8")
+	var top_a: Vector3 = high + Vector3(0.0, 0.6, 0.0) - along * 0.5
+	var top_b: Vector3 = high + Vector3(0.0, 0.6, 0.0) + along * 0.5
+	var bot_a: Vector3 = low + Vector3(0.0, 0.4, 0.0) - along * 0.35
+	var bot_b: Vector3 = low + Vector3(0.0, 0.4, 0.0) + along * 0.35
+	b.add_quad(top_a, top_b, bot_b, bot_a, water)
+	b.add_quad(top_a + along * 0.18, top_b - along * 0.18, bot_b - along * 0.12, bot_a + along * 0.12, foam)
+	var mesh: MeshInstance3D = b.commit_to(self, "Waterfall")
+	if mesh:
+		mesh.material_override = water_material()
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mesh.visibility_range_end = 420.0
+
+
+func _landmark_wall() -> void:
+	## Dry-stone following a fold of the hill, not a property boundary. It has
+	## to run with the ground or it reads as a fence the chunk forgot to hide.
+	var z0 := float(chunk_index) * LENGTH
+	var side: float = _landmark_side(z0)
+	var base_lat: float = side * _rng.randf_range(88.0, 132.0)
+	var stone := Color("8a8478").darkened(0.08)
+	var cap := stone.lightened(0.12)
+	var built := false
+	for i in 8:
+		var za: float = z0 + 4.0 + float(i) * 4.0
+		var zb: float = za + 4.0
+		var lat: float = base_lat + side * 4.2 * sin(za * 0.045)
+		if _on_tarmac(za, lat, 2.2) or _on_tarmac(zb, lat, 2.2):
+			continue
+		_terrain_beam(za, zb, lat, 0.42, 0.92, stone, 0.46)
+		_terrain_beam(za, zb, lat, 0.48, 0.16, cap, 0.96)
+		if i % 2 == 0:
+			_cube(za, lat, Vector3(0.5, 1.05, 0.55), stone.darkened(0.06))
+		built = true
+	if built:
+		var marker := Node3D.new()
+		marker.name = "RidgeWall"
+		add_child(marker)
+
+
+func _landmark_copse() -> void:
+	## A knoll with its own stand, dense enough to read as one thing from the
+	## saddle. Scattered verge trees are already everywhere; this is a place.
+	var z0 := float(chunk_index) * LENGTH
+	var z: float = z0 + _rng.randf_range(12.0, 26.0)
+	var side: float = _landmark_side(z)
+	var lx: float = side * _rng.randf_range(90.0, 140.0)
+	if _on_tarmac(z, lx, 10.0):
+		return
+	var knoll := Color("3a4a38").lerp(_pal["ground"], 0.35)
+	_blob(z, lx, Vector3(16.0, 4.2, 13.0), knoll, 0.0, false, true)
+	var tint := Color("1a3026").lerp(Color("2a4a34"), 0.4)
+	for i in 11:
+		var tz: float = z + _rng.randf_range(-6.5, 6.5)
+		var tlat: float = lx + _rng.randf_range(-7.0, 7.0)
+		if _on_tarmac(tz, tlat, 1.6):
+			continue
+		var species: int = Flora.CONIFER if _rng.randf() < 0.55 else Flora.BROADLEAF
+		if theme == Env.FOREST and _rng.randf() < 0.25:
+			species = Flora.BIRCH
+		_tree(species, tz, tlat, _rng.randf_range(9.0, 16.0), tint, true, 1.6)
+	var marker := Node3D.new()
+	marker.name = "Copse"
+	add_child(marker)
+
+
 func _build_set_piece() -> void:
 	## Set pieces are deterministic per chunk, so a streamed chunk is identical
 	## whenever the player reaches it and the route keeps a readable rhythm.
@@ -2489,10 +2968,7 @@ static func is_viewpoint_chunk(index: int, theme_id: int) -> bool:
 
 
 static func viewpoint_centre_static(z: float) -> float:
-	return (
-		RoadPathGD.VIEWPOINT_FIRST
-		+ RoadPathGD.VIEWPOINT_PERIOD * roundf((z - RoadPathGD.VIEWPOINT_FIRST) / RoadPathGD.VIEWPOINT_PERIOD)
-	)
+	return RoadPathGD.viewpoint_centre_static(z)
 
 
 static func viewpoint_side(index: int, world_seed: int) -> float:
@@ -2504,15 +2980,19 @@ static func viewpoint_side(index: int, world_seed: int) -> float:
 #
 # The detour, in the order the rider meets it:
 #
-#   a sign 120 m out  ->  a junction where a spur road diverges  ->  250 m of
-#   climbing, curving single carriageway  ->  a parking platform on a headland
-#   thirteen metres above the road  ->  a wall, benches and a viewer over a
-#   drop to a lake  ->  ranges going back into the haze  ->  250 m of spur back
-#   down to a second junction.
+#   a sign 240 m out  ->  a deceleration lane  ->  a hatched gore where a spur
+#   peels away  ->  a long climbing forest road  ->  a ridge  ->  a parking
+#   terrace on a headland above a dark lake  ->  scree to the water, a pass
+#   between fells, haze  ->  the spur back down to a second junction.
+#
+# No hamlet, no campanile, no trees standing in the water. The view is empty
+# country: Wastwater's screes, a Glen Coe pass, a lake that holds the sky.
 #
 # The shape of all of it — where the spur runs, how high it climbs, where the
 # headland falls into the water — belongs to RoadPath, so every chunk agrees.
-# What follows is the surfacing, the furniture and the planting on top.
+# What follows is the surfacing, the furniture and the planting on top. The
+# basin geometry is shared; the view from the platform follows this chunk's
+# biome: country lake and pass, forest gorge, coastal headland, mountain tarn.
 
 
 func _build_spur_ribbon(hard: LowPoly, road: LowPoly, z0: float) -> void:
@@ -2605,6 +3085,8 @@ func _build_spur_ribbon(hard: LowPoly, road: LowPoly, z0: float) -> void:
 				stripe
 			)
 	_build_platform_bays(hard, z0)
+	_build_decel_lane(hard, z0)
+	_build_gore_hatch(hard, z0)
 	_build_spur_barrier(hard, z0)
 
 
@@ -2628,6 +3110,71 @@ func _spur_yaw(z: float) -> float:
 	## crooked once the road it belongs to has turned away from it.
 	var ahead: float = float(_path.spur_offset(z + 2.0)) - float(_path.spur_offset(z - 2.0))
 	return atan2(_vp_side * ahead, 4.0)
+
+
+func _build_decel_lane(hard: LowPoly, z0: float) -> void:
+	## Dashed line along the old carriageway edge while the extra lane is still
+	## bolted on. Without it the mouth is just the road getting wider, which is
+	## how the junction used to vanish into a smear of tarmac.
+	const PROUD := 0.07
+	const LINE := 0.012
+	var stripe: Color = _pal["stripe"]
+	var step := LENGTH / float(STEPS)
+	var edge: float = _vp_side * (HALF_WIDTH + 0.08)
+	for i in STEPS:
+		var za := z0 + float(i) * step
+		var zb := za + step
+		if float(_path.spur_half_width(za)) < 1.4:
+			continue
+		if float(_path.spur_gap(za)) > 2.2:
+			continue
+		if int(floor(za / 4.5)) % 2 == 0:
+			continue
+		hard.add_quad(
+			_p(za, edge - 0.11, -PROUD - LINE),
+			_p(za, edge + 0.11, -PROUD - LINE),
+			_p(zb, edge + 0.11, -PROUD - LINE),
+			_p(zb, edge - 0.11, -PROUD - LINE),
+			stripe
+		)
+
+
+func _build_gore_hatch(hard: LowPoly, z0: float) -> void:
+	## Painted chevrons in the gore, so the fork is a mark on the road rather than
+	## a sudden extra lane of tarmac. Only while the gap is wide enough to hold
+	## paint and narrow enough to still read as a junction.
+	const PROUD := 0.07
+	var stripe: Color = _pal["stripe"]
+	var step := LENGTH / float(STEPS)
+	for i in STEPS:
+		var za := z0 + float(i) * step
+		var zb := za + step
+		var ga: float = float(_path.spur_gap(za))
+		var gb: float = float(_path.spur_gap(zb))
+		if minf(ga, gb) < 1.6 or maxf(ga, gb) > 11.0:
+			continue
+		if int(floor(za / 2.8)) % 2 == 0:
+			continue
+		var inner_a: float = _vp_side * (HALF_WIDTH + 0.35)
+		var inner_b: float = _vp_side * (HALF_WIDTH + 0.35)
+		var outer_a: float = _vp_side * (float(_path.spur_offset(za)) - float(_path.spur_half_width(za)) - 0.35)
+		var outer_b: float = _vp_side * (float(_path.spur_offset(zb)) - float(_path.spur_half_width(zb)) - 0.35)
+		if _vp_side > 0.0:
+			hard.add_quad(
+				_p(za, inner_a, -PROUD),
+				_p(za, outer_a, -PROUD),
+				_p(zb, outer_b, -PROUD),
+				_p(zb, inner_b, -PROUD),
+				stripe
+			)
+		else:
+			hard.add_quad(
+				_p(za, outer_a, -PROUD),
+				_p(za, inner_a, -PROUD),
+				_p(zb, inner_b, -PROUD),
+				_p(zb, outer_b, -PROUD),
+				stripe
+			)
 
 
 func _build_spur_barrier(hard: LowPoly, z0: float) -> void:
@@ -2661,6 +3208,10 @@ func _build_spur_barrier(hard: LowPoly, z0: float) -> void:
 		# there and a barrier would be standing in the road.
 		if float(_path.spur_half_width(za)) < 2.2 or float(_path.spur_half_width(zb)) < 2.2:
 			continue
+		# The platform owns a stone parapet; a steel rail here would sit on top of
+		# the belvedere and read as scaffolding.
+		if float(_path.platform_blend(za)) > 0.55 and float(_path.platform_blend(zb)) > 0.55:
+			continue
 		var la: float = _vp_side * _spur_barrier_out(za)
 		var lb: float = _vp_side * _spur_barrier_out(zb)
 		var foot_a: float = lerpf(FOOT, RAIL_FOOT, float(_path.platform_blend(za)))
@@ -2678,7 +3229,7 @@ func _build_spur_barrier(hard: LowPoly, z0: float) -> void:
 		hard.add_quad(b_foot + out, a_foot + out, a_top + out, b_top + out, segment_rail.darkened(0.14))
 		hard.add_quad(a_top - out, b_top - out, b_top + out, a_top + out, segment_rail)
 		if fposmod(za, 4.0) < step:
-			_cube(za, la, Vector3(0.13, head_a, 0.13), segment_rail.darkened(0.22), _spur_yaw(za), 0.0, true)
+			_deck_cube(za, la, Vector3(0.13, head_a, 0.13), segment_rail.darkened(0.22), _spur_yaw(za), 0.0)
 
 
 func _spur_span(z: float) -> Vector2:
@@ -2774,20 +3325,24 @@ func _build_junction() -> void:
 	## it is not legible at 180 km/h the rider never takes the detour.
 	var z0 := float(chunk_index) * LENGTH
 	var entry := _vp_centre - RoadPathGD.SPUR_HALF_SPAN
-	for advance in [entry - 150.0, entry - 12.0]:
-		if advance >= z0 and advance < z0 + LENGTH:
-			_build_viewpoint_sign(advance, _vp_side, advance < entry - 60.0)
+	# Both boards stand on the main-road verge *before* the extra lane exists, so
+	# the rider is not asked to read a sign standing in the tarmac they just
+	# opened. The far one is a distance plate; the near one is the P.
+	for pair in [[entry - 240.0, true], [entry - 90.0, false]]:
+		var at: float = float(pair[0])
+		if at >= z0 and at < z0 + LENGTH:
+			_build_viewpoint_sign(at, _vp_side, bool(pair[1]))
 	# Chevron board at the nose of the gore — where the gore is actually wide
 	# enough to stand a board in. Placed at a fixed distance into the mouth it
 	# stood on tarmac the rider is invited to ride across, and they rode through
 	# it every time.
 	var nose := _spur_nose()
 	if nose >= z0 and nose < z0 + LENGTH:
-		var lateral: float = _vp_side * (float(_path.spur_offset(nose)) - float(_path.spur_half_width(nose)) - 1.5)
+		var lateral: float = _vp_side * (float(_path.spur_offset(nose)) - float(_path.spur_half_width(nose)) - 1.8)
 		var yaw := _spur_yaw(nose) * 0.5  # splits the angle between the two roads
-		_cube(nose, lateral, Vector3(0.16, 1.5, 0.16), Color("626a70"), yaw, 0.0, true)
-		_cube(nose, lateral, Vector3(1.9, 0.85, 0.14), Color("f0b33b"), yaw, 1.5, true)
-		_cube(nose, lateral, Vector3(1.9, 0.12, 0.16), Color("2b2f36"), yaw, 1.9, true)
+		_cube(nose, lateral, Vector3(0.18, 1.7, 0.18), Color("626a70"), yaw, 0.0, true)
+		_cube(nose, lateral, Vector3(2.3, 1.05, 0.16), Color("f0b33b"), yaw, 1.7, true)
+		_cube(nose, lateral, Vector3(2.3, 0.14, 0.18), Color("2b2f36"), yaw, 2.2, true)
 
 
 func _spur_nose() -> float:
@@ -2824,120 +3379,285 @@ func _build_lake_basin() -> void:
 func _build_lake_distance() -> void:
 	_build_view_range()
 	_build_far_shore()
-	_build_far_settlement()
-	_build_waterfall()
+	_build_far_cliffs()
 
 
 func _build_lake_dressing() -> void:
 	_build_lake_edges()
-	_build_islands()
 	_build_view_frame()
+	_dress_vista()
 
 
-## Wooded islands, placed from the overlook centre so they are the same three
-## islands however the chunks around them stream. Nothing else in the view does
-## as much: a lake with nothing floating in it has no middle distance at all, so
-## the far shore reads as a painted edge and the water as a flat blue card. An
-## island is a known size at a known place, and everything between the rail and
-## the mountains falls into order behind it.
-const VIEW_ISLANDS := [
-	{"z": 76.0, "out": 520.0, "radius": 48.0, "rise": 10.0, "trees": 21},
-	{"z": 330.0, "out": 322.0, "radius": 22.0, "rise": 5.5, "trees": 7},
-	{"z": -54.0, "out": 650.0, "radius": 16.0, "rise": 4.0, "trees": 5},
+## The framing stand, written as (angle off the view axis, distance out from the
+## eye, height).
+##
+## The angle is measured horizontally and has to be judged against the *hori-
+## zontal* field of view, which on a 16:9 frame is far wider than the number on
+## the camera: at the seated 62° vertical it is about 94° across, so the edge of
+## the picture is 47° off the axis, not 31°. Sized against the vertical figure
+## the whole stand landed inside 38° — which is halfway to the middle of the
+## frame, standing in the view rather than framing it.
+##
+## Distance matters as much as angle. The headland falls away steeply, so a tree
+## a hundred metres out has its feet forty metres below the eye and its top still
+## under the horizon, where it reads as scrub on a far bank. Close and tall is
+## what puts a dark edge against the sky.
+const FRAME_CLUMP := [
+	[34.0, 30.0, 24.0], [39.0, 42.0, 30.0], [36.0, 55.0, 27.0],
+	[43.0, 36.0, 22.0], [41.0, 64.0, 29.0], [45.0, 50.0, 25.0],
+	[33.0, 72.0, 32.0], [47.0, 44.0, 23.0],
 ]
 
 
 func _build_view_frame() -> void:
-	## A few near, dark pines at the extreme sides turn the lake into a composed
-	## vista. The centre remains completely open; these only give the eye a near
-	## silhouette to measure the islands, shore and ranges against.
-	const FRAME_TREES := [
-		[-304.0, 20.0], [-262.0, 16.0], [-224.0, 12.0],
-		[226.0, 13.0], [266.0, 17.0], [308.0, 21.0],
-	]
+	## The dark mass that makes the view a picture instead of a panorama.
+	##
+	## This used to plant its pines at the *bench's own lateral*, a metre and a
+	## half outboard of where the rider sits, spaced along the route. From a seat
+	## looking square out across the valley that is ninety degrees off the axis:
+	## the entire framing stand stood directly to the viewer's left and right,
+	## outside the lens, and every overlook was an unframed panorama with its
+	## horizon running uninterrupted from one edge of the screen to the other.
+	##
+	## Placed by angle instead, on the drop side where the bike cannot reach, and
+	## tall enough that the tops break the skyline and overlap the far range —
+	## which is what makes the distance read as distance.
+	##
+	## One side only, chosen from the seed. A stand on both is a proscenium arch;
+	## the asymmetry is what stops the composition being a diagram.
+	if _vp_theme == Env.COAST:
+		# A cliff view wants open sky and open water. Pines in it are a lie about
+		# what a coast is, and they would hide the one thing worth looking at.
+		return
 	var z0 := float(chunk_index) * LENGTH
-	for spec in FRAME_TREES:
-		var z: float = _vp_centre + float(spec[0])
-		if z < z0 or z >= z0 + LENGTH:
-			continue
-		var out: float = float(_path.viewpoint_near_shore(z)) - 10.0
-		var tint: Color = (_pal["prop_c"] as Color).darkened(0.28)
-		_tree(Flora.CONIFER, z, _vp_side * out, float(spec[1]), tint, true)
-
-
-func _build_islands() -> void:
-	var z0 := float(chunk_index) * LENGTH
-	for spec in VIEW_ISLANDS:
-		var z: float = _vp_centre + float(spec["z"])
-		if z < z0 or z >= z0 + LENGTH:
-			continue
-		_island(z, float(spec["out"]), float(spec["radius"]), float(spec["rise"]), int(spec["trees"]))
-
-
-func _island(z: float, out: float, radius: float, rise: float, trees: int) -> void:
-	## A dome standing out of the water with a few conifers on it. The terrain
-	## under it is the lake bed, so everything here is lifted to the water line
-	## first — `_height_above_water` is negative out there and lifting by its
-	## negation is exactly the surface.
-	var lateral: float = _vp_side * out
-	if _height_above_water(z, out) > -1.0:
-		return  # a shoal that is already dry land; nothing to stand up out of it
-	# Country prop_c is sunlit sandstone.  At island scale it became a set of
-	# floating gold lozenges in the water, so the lake owns a slate-and-moss rock
-	# family independent of the roadside palette.
-	var rock: Color = Color("344f4b").lerp(Color("506052"), _rng.randf() * 0.28)
-	var island_center := _far_point(z, lateral, _vp_water_y)
-	# Placed at an absolute height rather than on the ground beneath it. Grounded
-	# the ordinary way, a prop this wide takes the *lowest* of nine terrain
-	# samples so its far side cannot float — under a lake that is the bed, four
-	# metres down, and the island quietly drowned.
-	# A low wooded dome, not a boulder.  The old 2.4 multiplier left twice the
-	# named rise above the surface and exposed a huge bare oval under every tree.
-	var shore_size := Vector3(radius * 2.5, maxf(rise * 0.38, 2.2), radius * 2.3)
-	var shore_spin := Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(shore_size)
-	_blobs.append(
-		Transform3D(shore_spin, island_center + Vector3.UP * shore_size.y * 0.40)
+	var hand: float = (
+		1.0
+		if posmod(hash(Vector2i(int(round(_vp_centre)), int(_path.world_seed) ^ 0x5f3a)), 2) == 0
+		else -1.0
 	)
-	_blob_cols.append(Color("718078").lerp(rock, 0.32))
-	var size := Vector3(radius * 2.0, rise * 1.2, radius * 2.0)
-	var seat: Vector3 = island_center
-	_blobs.append(Transform3D(Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(size), seat + Vector3(0.0, size.y * 0.42, 0.0)))
-	_blob_cols.append(rock)
-	for i in trees:
-		var angle: float = _rng.randf_range(0.0, TAU)
-		var spread: float = radius * 0.48 * sqrt(_rng.randf())
-		var offset := Vector3(cos(angle) * spread, 0.0, sin(angle) * spread * 0.82)
-		var edge: float = sqrt(
-			maxf(1.0 - pow(offset.x / radius, 2.0) - pow(offset.z / radius, 2.0), 0.0)
+	# Where the eye actually is, so the angles below mean what they say.
+	var eye_out: float = float(_path.spur_offset(_vp_centre)) + RoadPathGD.PLATFORM_BENCH_OUT
+	for spec in FRAME_CLUMP:
+		var angle: float = deg_to_rad(float(spec[0]))
+		var out: float = float(spec[1])
+		# Jittered off the overlook's own phase so the eight specs do not read as
+		# eight trees planted on a surveyor's arc.
+		var wobble: float = sin(_vp_phase + float(spec[1]) * 0.11)
+		var z: float = _vp_centre + hand * (out * tan(angle) + wobble * 7.0)
+		if z < z0 or z >= z0 + LENGTH:
+			continue
+		var lateral: float = _vp_side * (eye_out + out + wobble * 5.0)
+		if _on_tarmac(z, lateral, 1.6):
+			continue
+		# Never below the waterline: the stand sits on the face of the headland,
+		# and past the near shore it would be standing in the lake.
+		if _height_above_water(z, absf(lateral)) < 3.0:
+			continue
+		var height: float = float(spec[2]) * (0.86 + 0.22 * absf(wobble))
+		var species: int = Flora.CONIFER
+		var tint := Color("14261f")
+		if _vp_theme == Env.MOUNTAIN:
+			# A pass at this altitude is above the tree line. What stands on the
+			# shoulder is dead wood and rock, and less of it.
+			if absf(wobble) < 0.35:
+				continue
+			species = Flora.BARE
+			height *= 0.52
+			tint = Color("22282a")
+		elif _vp_theme == Env.FOREST and absf(wobble) > 0.6:
+			species = Flora.BROADLEAF
+			tint = Color("12241c")
+		_tree(species, z, lateral, height, tint, true)
+	# Talus at the foot of the stand, tying it to the slope. Without this the
+	# trees read as posts stuck into a smooth hillside.
+	if _vp_theme != Env.MOUNTAIN:
+		return
+	for spec in FRAME_CLUMP:
+		var angle: float = deg_to_rad(float(spec[0]) * 0.92)
+		var out: float = float(spec[1]) * 1.06
+		var z: float = _vp_centre + hand * out * tan(angle)
+		if z < z0 or z >= z0 + LENGTH:
+			continue
+		var lateral: float = _vp_side * (eye_out + out)
+		if _height_above_water(z, absf(lateral)) < 3.0:
+			continue
+		_vista_rock(z, lateral, _rng.randf_range(5.5, 11.0), -1.2)
+
+
+func _dress_vista() -> void:
+	## Each overlook is a different place. Shared basin, then a dedicated pass
+	## that pours the biome: Art of Rally / Firewatch country, Big Sur coast,
+	## Mononoke gorge, Glen Coe tarn. Kenney rocks are the only imported mass.
+	match _vp_theme:
+		Env.FOREST:
+			_dress_vista_forest()
+		Env.COAST:
+			_dress_vista_coast()
+		Env.MOUNTAIN:
+			_dress_vista_mountain()
+		_:
+			_dress_vista_country()
+
+
+func _dress_vista_forest() -> void:
+	## Yakushima / Ghost of Tsushima shrine forest: the gorge is a dark slot,
+	## water a long way down, cedar walls you cannot see the top of until you
+	## sit. The reveal is depth, not a postcard lake.
+	var z0 := float(chunk_index) * LENGTH
+	for _i in 28:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		if absf(z - _vp_centre) < 18.0:
+			continue
+		var out: float = float(_path.viewpoint_far_shore(z, _vp_centre)) + _rng.randf_range(8.0, 55.0)
+		if _height_above_water(z, out) < 6.0:
+			continue
+		_tree(
+			Flora.CONIFER if _rng.randf() < 0.75 else Flora.BROADLEAF,
+			z,
+			_vp_side * out,
+			_rng.randf_range(18.0, 34.0),
+			Color("0e1c16").lerp(Color("1c3328"), _rng.randf()),
+			true
 		)
-		var dome_height := size.y * (0.42 + 0.5 * edge)
-		var tree_height := _rng.randf_range(10.0, 22.0) * (0.55 + 0.45 * edge)
-		var tree_color := (_pal["prop_a"] as Color).darkened(0.12 + _rng.randf() * 0.32).lerp(
-			Color("375968"), 0.14
+	for _i in 14:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var out: float = RoadPathGD.HEADLAND_CREST + 8.0 + _rng.randf_range(0.0, 40.0)
+		if _height_above_water(z, out) < 10.0:
+			continue
+		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.1:
+			continue
+		_tree(
+			Flora.CONIFER,
+			z,
+			_vp_side * out,
+			_rng.randf_range(14.0, 24.0),
+			Color("14241c"),
+			true
 		)
-		var frame := Transform3D(
-			Basis(Vector3.UP, _rng.randf_range(0.0, TAU)),
-			island_center + offset + Vector3.UP * (dome_height - 0.35)
+	for _i in 6:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var out: float = float(_path.viewpoint_near_shore(z)) + _rng.randf_range(-6.0, 14.0)
+		_vista_rock(z, _vp_side * out, _rng.randf_range(2.4, 5.5), _rng.randf_range(-0.4, 0.8))
+
+
+func _dress_vista_coast() -> void:
+	## Big Sur / Cliffs of Moher / Death Stranding west: a drop, a glittering
+	## sea, stacks standing in it, a faint headland twenty minutes away. No
+	## second mountain range in the water.
+	var z0 := float(chunk_index) * LENGTH
+	# One stack per few chunks, and big. Four per forty metres over the whole
+	# twenty-chunk span put eighty of them in the bay, each nine to eighteen
+	# metres across — at that count and that size they stopped being sea stacks
+	# and became a gravel bed strewn over the water, and the one thing the Big Sur
+	# view is *for* is an unbroken plane of sea with a couple of verticals in it.
+	var stacks: int = 1 if posmod(hash(Vector2i(chunk_index, int(_path.world_seed) ^ 0x2b19)), 3) == 0 else 0
+	for _i in stacks:
+		var z := z0 + _rng.randf_range(4.0, LENGTH - 4.0)
+		if absf(z - _vp_centre) < 30.0:
+			continue
+		var out: float = float(_path.viewpoint_near_shore(z)) + _rng.randf_range(40.0, 220.0)
+		var ground: Vector3 = _terrain_surface_at(z, _vp_side * out)
+		var emerge: float = _vp_water_y - ground.y
+		var scale: float = _rng.randf_range(24.0, 48.0)
+		# Proud of the water, not level with it. Sunk to the waterline these were
+		# discs lying flat on the sea rather than stacks standing in it, and a
+		# stack that never breaks the horizon adds no vertical at all to a
+		# composition which is otherwise entirely horizontal.
+		_vista_rock(z, _vp_side * out, scale, emerge + scale * 0.30, true)
+	for _i in 8:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var out: float = RoadPathGD.HEADLAND_CREST + 6.0 + _rng.randf_range(0.0, 36.0)
+		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.12:
+			continue
+		_vista_rock(z, _vp_side * out, _rng.randf_range(3.2, 7.5), _rng.randf_range(-0.6, 0.4))
+
+
+func _dress_vista_mountain() -> void:
+	## Glen Coe from the pass: a small tarn, scree to the water, peaks that
+	## actually fill the sky. A few snags. Kenney talus on the face so the
+	## drop reads as rock, not a shader ramp.
+	var z0 := float(chunk_index) * LENGTH
+	for _i in 10:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var out: float = RoadPathGD.HEADLAND_CREST + 4.0 + _rng.randf_range(0.0, 70.0)
+		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.12:
+			continue
+		_vista_rock(z, _vp_side * out, _rng.randf_range(2.8, 6.8), _rng.randf_range(-0.5, 0.6))
+	for _i in 7:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		if absf(z - _vp_centre) < 80.0:
+			continue
+		var out: float = float(_path.viewpoint_far_shore(z, _vp_centre)) + _rng.randf_range(22.0, 70.0)
+		if _height_above_water(z, out) < 10.0:
+			continue
+		_tree(
+			Flora.BARE if _rng.randf() < 0.65 else Flora.CONIFER,
+			z,
+			_vp_side * out,
+			_rng.randf_range(8.0, 14.0),
+			Color("2a322c"),
+			true
 		)
-		if _rng.randf() < 0.85:
-			_grow_conifer(frame, tree_height, tree_color)
-		else:
-			_grow_broadleaf(frame, tree_height, tree_color)
+
+
+func _dress_vista_country() -> void:
+	## Wastwater / Art of Rally Wales: dark water, a sun path, screes, a pass
+	## between fells you look *through*. Heather on the near face, Kenney
+	## boulders as talus, trees only on the side folds.
+	var z0 := float(chunk_index) * LENGTH
+	for _i in 9:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var out: float = RoadPathGD.HEADLAND_CREST + 5.0 + _rng.randf_range(0.0, 55.0)
+		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.12:
+			continue
+		_vista_rock(z, _vp_side * out, _rng.randf_range(2.2, 5.8), _rng.randf_range(-0.4, 0.5))
+	for _i in 16:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var out: float = RoadPathGD.HEADLAND_CREST + 10.0 + _rng.randf_range(0.0, 48.0)
+		if _height_above_water(z, out) < 8.0:
+			continue
+		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.1:
+			continue
+		_blob(
+			z,
+			_vp_side * out,
+			Vector3(_rng.randf_range(1.4, 2.8), _rng.randf_range(0.5, 1.0), _rng.randf_range(1.2, 2.2)),
+			Color("3a4a30").lerp(Color("5a4638"), _rng.randf()),
+			0.0,
+			true,
+			true
+		)
+	for _i in 10:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		if absf(z - _vp_centre) < 90.0:
+			continue
+		var out: float = float(_path.viewpoint_far_shore(z, _vp_centre)) + _rng.randf_range(20.0, 64.0)
+		if _height_above_water(z, out) < 8.0:
+			continue
+		_tree(
+			Flora.CONIFER,
+			z,
+			_vp_side * out,
+			_rng.randf_range(11.0, 18.0),
+			Color("1a3026"),
+			true
+		)
 
 
 func _water_color() -> Color:
-	## Deep, because this is an albedo under a 1.5 sun and a lake fills a third of
-	## the frame. At the old values the blue channel alone came out past 1.0 and
-	## the whole surface clipped to pale cyan — a bright sheet where the darkest,
-	## calmest mass in the composition ought to be.
-	match theme:
+	## Deep and frankly teal. This is an albedo under a 1.5 sun and the lake fills
+	## a third of the frame, so it has to be dark enough to stay the calmest mass
+	## in the composition — but the desaturated slate it used to be gave the middle
+	## of the picture no colour to hold against the ochre of the fells around it.
+	## The whole warm-land / cool-water opposition is what the view is built on.
+	match _vp_theme:
 		Env.MOUNTAIN:
-			return Color("17475a")
+			return Color("103f52")
 		Env.COAST:
-			return Color("17596a")
+			return Color("0f5f75")
 		Env.FOREST:
-			return Color("174d58")
-	return Color("1b5060")
+			return Color("0c3742")
+	return Color("104350")
 
 
 func _far_point(z: float, lateral: float, y: float) -> Vector3:
@@ -2957,8 +3677,15 @@ func _build_lake_water() -> void:
 	## rectangle laid on the grass that a fitted quad gives you.
 	const ZS := 8
 	const LS := 16
-	const INNER := 215.0
-	const OUT := 860.0
+	# Started well inside the near shore so the sheet's own inner edge is always
+	# buried under the headland face. At 40 m it surfaced wherever the bank ran
+	# shallow and drew a dead straight line across the bottom of the view — the
+	# one edge in a lake that must never be visible, because the shoreline is
+	# supposed to be wherever the terrain happens to cross the water.
+	var inner: float = float(_path.viewpoint_near_shore(_vp_centre)) - 140.0
+	var outer: float = float(_path.viewpoint_far_shore(_vp_centre, _vp_centre)) + (
+		980.0 if _vp_theme == Env.COAST else 520.0
+	)
 	var z0 := float(chunk_index) * LENGTH
 	var surface := _water_color()
 	var b := LowPoly.new()
@@ -2967,8 +3694,8 @@ func _build_lake_water() -> void:
 		var za := z0 + LENGTH * float(i) / float(ZS)
 		var zb := z0 + LENGTH * float(i + 1) / float(ZS)
 		for j in LS:
-			var out_a: float = lerpf(INNER, OUT, float(j) / float(LS))
-			var out_b: float = lerpf(INNER, OUT, float(j + 1) / float(LS))
+			var out_a: float = lerpf(inner, outer, float(j) / float(LS))
+			var out_b: float = lerpf(inner, outer, float(j + 1) / float(LS))
 			var col_aa := _water_shade(surface, out_a, za)
 			var col_ab := _water_shade(surface, out_b, za)
 			var col_ba := _water_shade(surface, out_a, zb)
@@ -3002,40 +3729,63 @@ func _build_lake_water() -> void:
 
 
 func _water_shade(surface: Color, out: float, z: float) -> Color:
-	## Shallows read lighter than open water. A single flat colour looks like
-	## coloured glass laid over the valley.
-	## Deep water is dark. The sheet is metallic enough to pick up the sky, and
-	## with a pale albedo on top of that it stops reading as water at all.
-	## The gradient is also depth cue: a lake that is one colour edge to edge has
-	## no distance in it, and this is the largest single surface in the view.
-	var deep: float = smoothstep(RoadPathGD.LAKE_NEAR - 30.0, RoadPathGD.LAKE_NEAR + 330.0, out)
-	var color := surface.lightened(0.07).lerp(surface.darkened(0.22), deep)
+	## Depth, and nothing else.
+	##
+	## This used to lerp the middle of the lake up to 38% toward a pale mint, on
+	## the theory that a sun path gives the water a centre and leads the eye to the
+	## far shore. Both true, and neither achievable here: the path was pinned to
+	## the geometric middle of the basin rather than to the sun, so it sat wherever
+	## the lake happened to be widest and pointed at nothing. What it reliably did
+	## was wash the largest surface in the frame out to a flat lavender — brighter
+	## than the sky it was supposed to be reflecting, and the reason the lake read
+	## as a slab of frosted glass.
+	##
+	## The path now lives in the water shader's light(), where it can sit on the
+	## actual line between the eye and the sun. Vertex colour keeps the one job it
+	## can do honestly: shallow near the shore, deep out in the middle, which is
+	## the only distance cue the surface has of its own.
+	var deep: float = smoothstep(RoadPathGD.LAKE_NEAR - 30.0, RoadPathGD.LAKE_NEAR + 220.0, out)
+	var color := surface.lightened(0.16).lerp(surface.darkened(0.14), deep)
 	# Very broad horizontal variations catch the sky as painted planes. Kept
 	# below four percent so the water gains facets without becoming stripy.
-	color = color.lightened((0.5 + 0.5 * sin(out * 0.043 + z * 0.018)) * 0.035)
-	# A restrained path of sky light gives the lake a centre and leads the eye to
-	# the far shore. It is vertex colour, not another shader or reflection pass.
-	var across: float = 1.0 - smoothstep(24.0, 105.0, absf(z - _vp_centre))
-	var along: float = smoothstep(RoadPathGD.LAKE_NEAR, 360.0, out) * (1.0 - smoothstep(690.0, 840.0, out))
-	return color.lerp(Color("a5bcb0"), across * along * 0.24)
+	return color.lightened((0.5 + 0.5 * sin(out * 0.043 + z * 0.018)) * 0.035)
 
 
 func _build_far_ground() -> void:
-	## The drawn terrain stops at 370 m, which is fine from a saddle at road
-	## level and not fine from a platform thirteen metres up: from there the eye
-	## clears the edge and sees sky under the mountains. This skirt carries the
-	## far bank out to where the range stands on it.
+	## Skirt from the far waterline out under the range. Dark fell, not a sunlit
+	## sand table: it climbs off the shore in folds so the ridgelines have a floor.
 	var z0 := float(chunk_index) * LENGTH
 	var b := LowPoly.new()
-	b.smooth = true
-	var far_y := _vp_water_y + RoadPathGD.FAR_BANK_RISE
-	var color: Color = (_pal["ground_alt"] as Color).lerp(Color("7d8ab0"), 0.35)
-	for i in 4:
-		var za := z0 + LENGTH * float(i) / 4.0
-		var zb := z0 + LENGTH * float(i + 1) / 4.0
-		for j in 3:
-			var out_a: float = lerpf(780.0, 1720.0, float(j) / 3.0)
-			var out_b: float = lerpf(780.0, 1720.0, float(j + 1) / 3.0)
+	# Faceted, not smoothed. This is the mass the far shore stands on and the
+	# floor the ridgelines rise out of; averaging its normals turns every fold
+	# into the same soft gradient and the whole far side reads as one sanded
+	# lump. Hard normals give each fold a plane of its own to catch the light,
+	# which is the entire reason the game is built out of flat polygons.
+	b.smooth = false
+	var color := Color("3a4a44")
+	match _vp_theme:
+		Env.COAST:
+			color = Color("55503f")
+		Env.FOREST:
+			color = Color("2e4036")
+		Env.MOUNTAIN:
+			color = Color("453c36")
+		Env.COUNTRY:
+			color = Color("56492e")
+	var inner: float = float(_path.viewpoint_far_shore(_vp_centre, _vp_centre)) + 50.0
+	var outer: float = inner + 720.0
+	# 180 m across by 10 m along is a sliver, and a sliver split into two hard-
+	# normalled triangles shades as a herringbone rather than as a fold. Finer
+	# across the slope — where the height actually changes — squares the quads up
+	# enough that each one reads as a plane.
+	const FAR_ZS := 6
+	const FAR_LS := 10
+	for i in FAR_ZS:
+		var za := z0 + LENGTH * float(i) / float(FAR_ZS)
+		var zb := z0 + LENGTH * float(i + 1) / float(FAR_ZS)
+		for j in FAR_LS:
+			var out_a: float = lerpf(inner, outer, float(j) / float(FAR_LS))
+			var out_b: float = lerpf(inner, outer, float(j + 1) / float(FAR_LS))
 			var lat_a := _vp_side * out_a
 			var lat_b := _vp_side * out_b
 			if lat_a > lat_b:
@@ -3043,10 +3793,10 @@ func _build_far_ground() -> void:
 				lat_a = lat_b
 				lat_b = swap
 			b.add_quad(
-				_far_point(za, lat_a, far_y),
-				_far_point(za, lat_b, far_y),
-				_far_point(zb, lat_b, far_y),
-				_far_point(zb, lat_a, far_y),
+				_far_point(za, lat_a, _far_ground_y(za, out_a)),
+				_far_point(za, lat_b, _far_ground_y(za, out_b)),
+				_far_point(zb, lat_b, _far_ground_y(zb, out_b)),
+				_far_point(zb, lat_a, _far_ground_y(zb, out_a)),
 				color
 			)
 	var mesh: MeshInstance3D = b.commit_to(self, "ViewpointFarGround")
@@ -3056,10 +3806,44 @@ func _build_far_ground() -> void:
 		mesh.visibility_range_end = 0.0
 
 
+func _far_ground_y(z: float, out: float) -> float:
+	## Rises under the side peaks and stays down in the col, so the pass is sky
+	## rather than a sunlit table. Coast barely rises: the sea is the view.
+	var far: float = float(_path.viewpoint_far_shore(_vp_centre, _vp_centre))
+	var bank: float = 24.0
+	var col: float = 1.0 - 0.88 * exp(-pow((z - _vp_centre) / 300.0, 2.0))
+	match _vp_theme:
+		Env.FOREST:
+			bank = 48.0
+			col = 1.0 - 0.18 * exp(-pow((z - _vp_centre) / 220.0, 2.0))
+		Env.COAST:
+			bank = 7.0
+			col = 0.22 + 0.18 * (1.0 - exp(-pow((z - _vp_centre) / 400.0, 2.0)))
+		Env.MOUNTAIN:
+			bank = 52.0
+			col = 1.0 - 0.90 * exp(-pow((z - _vp_centre) / 260.0, 2.0))
+		Env.COUNTRY:
+			bank = 24.0
+	var rise: float = bank * smoothstep(far + 40.0, far + 480.0, out)
+	var fold: float = 18.0 * sin((z - _vp_centre) * 0.007 + out * 0.0034)
+	var roll: float = (10.0 * sin(z * 0.011 + out * 0.0048) + fold) * smoothstep(
+		far + 60.0, far + 540.0, out
+	)
+	return _vp_water_y + (rise + roll) * col
+
+
 func _height_above_water(z: float, out: float) -> float:
-	## Cheap height query for shore dressing: out here the ground is simply the
-	## centreline height less its drop, so this needs no transform.
-	return float(_path.height_at(z)) - float(_path.terrain_drop(_vp_side * out, z)) - _vp_water_y
+	## How far the ground stands above the water at this distance out, measured
+	## against the surface everything is actually *placed* on.
+	##
+	## This used to reconstruct the height itself — centreline height less a
+	## profile drop — on the grounds that it was cheaper than a transform. It is,
+	## and it also disagrees with `_terrain_surface_at` precisely where the
+	## headland face falls away, which is the only place any of its callers ever
+	## ask. Every shore-dressing guard in the overlook was therefore passing on
+	## rock the sampled terrain put several metres under the lake, and the talus,
+	## the boulders and the framing stand all came up standing on the water.
+	return _terrain_surface_at(z, _vp_side * out).y - _vp_water_y
 
 
 func _build_lake_edges() -> void:
@@ -3067,22 +3851,53 @@ func _build_lake_edges() -> void:
 	## headland. All of it sits below the platform, dressing the drop without
 	## ever standing in the view from it.
 	var z0 := float(chunk_index) * LENGTH
-	for _i in 7:
-		var z := z0 + _rng.randf_range(0.0, LENGTH)
-		var out: float = float(_path.viewpoint_near_shore(z)) + _rng.randf_range(-12.0, 6.0)
-		if _height_above_water(z, out) > 3.0:
-			continue
-		var s := _rng.randf_range(1.0, 3.0)
-		_blob(
-			z,
-			_vp_side * out,
-			Vector3(s * 2.0, s * 1.1, s * 1.7),
-			Color("69736f").lightened(_rng.randf() * 0.08),
-			0.0,
-			false,
-			true
-		)
-	for _i in 10:
+	# Boulders at and just under the waterline, in groups, and big enough to
+	# matter at a hundred and forty metres. The whole near shore sits in the
+	# bottom of the seated frame; at the old two-to-six metres, evenly sprinkled,
+	# it contributed nothing but noise and the foreground read as empty water.
+	# Not on a coast. A boulder field standing in the surf a hundred metres out
+	# is a lake shore, not a sea: the whole point of the Big Sur view is an
+	# unbroken plane of water running to the horizon with the stacks as the only
+	# things interrupting it, and strewing it with rocks turned that plane into
+	# gravel spread over glass.
+	var groups: int = 0 if _vp_theme == Env.COAST else 4
+	for group in groups:
+		var head_z: float = z0 + _rng.randf_range(0.0, LENGTH)
+		var head_out: float = float(_path.viewpoint_near_shore(head_z)) + _rng.randf_range(-14.0, 2.0)
+		for _i in 5:
+			var z: float = head_z + _rng.randf_range(-9.0, 9.0)
+			var out: float = head_out + _rng.randf_range(-7.0, 7.0)
+			if _height_above_water(z, out) > 3.0:
+				continue
+			# Big enough to read at a hundred and forty metres, small enough to still
+			# be a boulder. At 5.2 the blob is ten metres across — a third the height
+			# of the pines framing the shot — and the shore came out as a heap of
+			# eggs. Wet stone is also dark: a mid grey albedo under a raking warm key
+			# turns cream, which is what put a string of highlights along the one
+			# edge of the picture that should be settling into shadow.
+			var s := _rng.randf_range(1.2, 3.2)
+			_blob(
+				z,
+				_vp_side * out,
+				Vector3(s * 2.0, s * 1.1, s * 1.7),
+				Color("4f554f").lightened(_rng.randf() * 0.10),
+				# Sunk a little, so the ones nearest the water stand *in* it rather
+				# than balancing on a line. A boulder half in a lake is the cheapest
+				# thing there is that says the water has a depth.
+				-s * _rng.randf_range(0.0, 0.45),
+				false,
+				true
+			)
+	# Talus first, and unconditionally: it is the surface of the drop, not
+	# dressing on top of it, and every theme has one.
+	_build_face_scree()
+	# Reeds, where reeds actually grow. A mountain tarn sits above the line where
+	# anything roots in its margins, and a sea cliff has surf at the bottom of it
+	# — on both, these were half a dozen saturated green chips lying flat on a
+	# dark bank, reading as litter rather than as planting.
+	if _vp_theme == Env.MOUNTAIN or _vp_theme == Env.COAST:
+		return
+	for _i in 18:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.viewpoint_near_shore(z)) + _rng.randf_range(-3.0, 8.0)
 		if _height_above_water(z, out) > 1.2:
@@ -3092,264 +3907,412 @@ func _build_lake_edges() -> void:
 			z,
 			_vp_side * out,
 			Vector3(s * 1.9, s * 1.5, s * 1.6),
-			Color("355647").darkened(_rng.randf() * 0.18),
+			Color("22382e").darkened(_rng.randf() * 0.18),
 			0.0,
 			true,
 			true
 		)
-	# Scree and scrub clinging to the face under the platform.
-	for _i in 14:
-		var z := z0 + _rng.randf_range(0.0, LENGTH)
-		# Starts just outside the crest, never inside it. Reaching back a few
-		# metres put waist-high scrub on the terrace itself — standing at the
-		# parking edge, the two nearest things to the rider were a pair of bushes
-		# with the view behind them.
-		var out: float = RoadPathGD.HEADLAND_CREST + 3.0 + _rng.randf_range(0.0, 42.0)
-		var above := _height_above_water(z, out)
-		if above < 1.0 or float(_path.spur_deck_blend(z, _vp_side * out)) > 0.15:
-			continue
-		var s := _rng.randf_range(0.8, 2.4)
-		if _rng.randf() < 0.5:
+
+
+## How many separate runs of talus a chunk's worth of face carries, and how
+## tightly each one gathers. Scree comes off a crag in fans with bare rock
+## between them; scattered at an even density over the whole slope it reads as
+## gravel spread by hand, which is exactly what the old uniform pass produced —
+## the same size of stone at the same spacing from the lip to the waterline.
+const SCREE_FANS := 3
+const SCREE_PER_FAN := 11
+
+
+func _build_face_scree() -> void:
+	## Talus on the face under the platform, in fans rather than in a wash.
+	##
+	## Two things separate scree from confetti, and neither is the number of
+	## stones. The first is clustering: a fan has a source high on the face and
+	## spreads as it falls, so the stones bunch and there are bare runs between.
+	## The second is grading — big blocks end up at the bottom because they carry
+	## furthest, fines stay high — and it is the size gradient down the slope that
+	## tells the eye how big the slope is. A field of identically-sized pebbles
+	## has no scale in it at all, which is why the drop used to read as a low bank
+	## with gravel on it however deep it actually was.
+	var z0 := float(chunk_index) * LENGTH
+	var face_run: float = maxf(
+		float(_path.viewpoint_near_shore(_vp_centre)) - RoadPathGD.HEADLAND_CREST - 8.0, 24.0
+	)
+	for fan in SCREE_FANS:
+		# Source of the fan: a point high on the face, in this chunk.
+		var head_z: float = z0 + _rng.randf_range(0.0, LENGTH)
+		var head_out: float = RoadPathGD.HEADLAND_CREST + 3.0 + _rng.randf_range(0.0, face_run * 0.35)
+		var spread: float = _rng.randf_range(9.0, 22.0)
+		for _i in SCREE_PER_FAN:
+			# Fall line, biased downslope, spreading as it goes.
+			var run: float = _rng.randf() * _rng.randf()  # bunched near the head
+			var out: float = head_out + run * (face_run - (head_out - RoadPathGD.HEADLAND_CREST))
+			var z: float = head_z + _rng.randf_range(-1.0, 1.0) * spread * (0.35 + run)
+			var above := _height_above_water(z, out)
+			if above < 1.0 or float(_path.spur_deck_blend(z, _vp_side * out)) > 0.15:
+				continue
+			# Graded: fines at the head of the fan, blocks at the foot.
+			var s: float = lerpf(0.55, 3.1, run * run) * _rng.randf_range(0.82, 1.24)
+			# And graded in value the same way. A stone lying in the shade of the
+			# lip is not the same colour as one out on the open apron below it, and
+			# a single pale grey for all of them is what made them read as popcorn
+			# scattered over a dark slope.
+			var stone := Color("4c463c").lerp(Color("6b6357"), run)
 			_blob(
 				z,
 				_vp_side * out,
 				Vector3(s * 1.7, s * 1.1, s * 1.5),
-				Color("666b67").darkened(_rng.randf() * 0.16),
+				stone.darkened(_rng.randf() * 0.20),
 				0.0,
 				false,
 				true
 			)
-		else:
-			_tree(
-				Flora.CONIFER if _rng.randf() < 0.7 else Flora.BARE,
-				z,
-				_vp_side * out,
-				_rng.randf_range(3.5, 8.0),
-				(_pal["prop_a"] as Color).darkened(_rng.randf() * 0.35),
-				true
-			)
 
 
-## A handful of roofs and a jetty on the far bank, around 120 m of shoreline
-## either side of the overlook. This is the scale reference the whole view hangs
-## on: a treeline can be any distance away, but a house is four metres tall and
-## everybody knows it, so the moment there is one across the water the lake has
-## a width and the mountains behind it have a size.
-const FAR_HAMLET_Z := [-104.0, -72.0, -58.0, -18.0, 6.0, 34.0, 63.0]
-
-
-func _build_far_settlement() -> void:
-	var z0 := float(chunk_index) * LENGTH
-	var wall: Color = (_pal["prop_c"] as Color).lerp(Color("d8d2c4"), 0.55)
-	var roof := Color("7a4a3e")
-	for index in FAR_HAMLET_Z.size():
-		var z: float = _vp_centre + float(FAR_HAMLET_Z[index]) * 1.6
-		if z < z0 or z >= z0 + LENGTH:
-			continue
-		# Set back from the water by a few metres, and only where the bank is
-		# actually dry — the shoreline wanders, and a cottage standing in the
-		# lake is worse than no cottage at all.
-		var out: float = float(_path.viewpoint_far_shore(z, _vp_centre)) + 6.0 + float(index % 3) * 9.0
-		if _height_above_water(z, out) < 1.4:
-			continue
-		var wide: float = 5.0 + float(index % 2) * 2.4
-		var tall: float = 3.6 + float((index + 1) % 3) * 1.1
-		var lateral: float = _vp_side * out
-		_cube(z, lateral, Vector3(wide, tall, wide * 0.72), wall, 0.0, 0.0, true)
-		_cube(z, lateral, Vector3(wide * 1.12, 0.9, wide * 0.84), roof.darkened(float(index % 3) * 0.08), 0.0, tall, true)
-	# The jetty, and two boats tied up along it. A straight line of anything
-	# man-made on a shore is the one shape a landscape never makes on its own.
-	var jetty_z: float = _vp_centre + 18.0
-	if jetty_z < z0 or jetty_z >= z0 + LENGTH:
+func _build_far_cliffs() -> void:
+	## Continuous far-shore scree with a pass in the middle of the view. Two
+	## parabolic "noses" near the centre read as ice-cream hills in the lake;
+	## Wastwater and Glen Coe put the mass on the *sides* and leave the col open.
+	## Coast skips this: a cliff wall across the sea is the old blob-hills problem.
+	if _vp_theme == Env.COAST:
 		return
-	var shore: float = float(_path.viewpoint_far_shore(jetty_z, _vp_centre))
-	var timber := Color("6d5744")
-	for plank in 9:
-		var out: float = shore - float(plank) * 2.6
-		var above := _height_above_water(jetty_z, out)
-		if above > 1.2:
-			continue
-		_cube(
-			jetty_z,
-			_vp_side * out,
-			Vector3(2.7, 0.34, 2.2),
-			timber,
-			0.0,
-			-above + 0.5,
-			true
-		)
-	for boat in 2:
-		var out: float = shore - 9.0 - float(boat) * 7.0
-		var bz: float = jetty_z + (3.4 if boat == 0 else -3.6)
-		_blob(
-			bz,
-			_vp_side * out,
-			Vector3(1.6, 0.7, 4.6),
-			Color("e6e2d8") if boat == 0 else Color("bcc7cf"),
-			-_height_above_water(bz, out) - 0.1,
-			false,
-			true
-		)
-
-
-func _build_waterfall() -> void:
-	## One bright vertical accent across the lake. The layered ranges give scale,
-	## but without a focal landmark the eye has nowhere to settle. This is twelve
-	## triangles total and only exists in the chunk containing its route position.
 	var z0 := float(chunk_index) * LENGTH
-	var falls_z: float = _vp_centre - 92.0
-	if falls_z < z0 or falls_z >= z0 + LENGTH:
-		return
-	var out: float = float(_path.viewpoint_far_shore(falls_z, _vp_centre)) + 26.0
-	var lateral: float = _vp_side * out
-	var bottom_y: float = _vp_water_y + 1.0
-	var top_y: float = _vp_water_y + 42.0
-	var width := 7.0
 	var b := LowPoly.new()
-	var pale := Color("a8d9df")
-	var bright := Color("e0f4ed")
-	var a := _far_point(falls_z - width, lateral, bottom_y)
-	var c := _far_point(falls_z + width, lateral, bottom_y)
-	var d := _far_point(falls_z + width * 0.55, lateral, top_y)
-	var e := _far_point(falls_z - width * 0.55, lateral, top_y)
-	b.add_quad_shaded(a, c, d, e, pale, pale, bright, bright)
-	b.add_quad_shaded(c, a, e, d, pale, pale, bright, bright)
-	var mesh: MeshInstance3D = b.commit_to(self, "ViewpointWaterfall")
+	var face := Color("4a453c")
+	var lip := Color("6a6458")
+	var pass_rise := 10.0
+	var fell_rise := 58.0
+	match _vp_theme:
+		Env.FOREST:
+			face = Color("2e3a2c")
+			lip = Color("44503c")
+			pass_rise = 36.0
+			fell_rise = 88.0
+		Env.MOUNTAIN:
+			face = Color("52463a")
+			lip = Color("7a6a54")
+			pass_rise = 22.0
+			fell_rise = 140.0
+		Env.COUNTRY:
+			# Ochre, not grey. This wall is the mid-ground the lake is read against,
+			# and the whole composition rests on warm land against cool water.
+			face = Color("6a5334")
+			lip = Color("937a4e")
+			pass_rise = 16.0
+			fell_rise = 96.0
+	var built := false
+	var t := z0
+	while t < z0 + LENGTH - 0.4:
+		var t1: float = minf(t + 13.0, z0 + LENGTH)
+		_cliff_span(b, t, t1, _far_scree_rise(t, pass_rise, fell_rise), _far_scree_rise(t1, pass_rise, fell_rise), face, lip)
+		built = true
+		t = t1
+	if not built:
+		return
+	var mesh: MeshInstance3D = b.commit_to(self, "ViewpointCliffs")
 	if mesh:
+		mesh.material_override = LowPoly.terrain_material()
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	for i in 5:
-		var spread := (float(i) - 2.0) * 2.1
-		var p: Vector3 = _far_point(falls_z + spread, lateral - _vp_side * 2.0, bottom_y)
-		var size := Vector3(6.4 - absf(spread) * 0.35, 1.5, 4.2)
-		_blobs.append(Transform3D(Basis.IDENTITY.scaled(size), p - _origin))
-		_blob_cols.append(Color("a9c8cb").lightened(float(i % 2) * 0.08))
+		mesh.visibility_range_end = 0.0
+
+
+func _far_scree_rise(z: float, pass_rise: float, fell_rise: float) -> float:
+	## Low through the middle third of the view, climbing toward the ends of the
+	## lake. A pair of gaussians parked at ±100 m is what made the two blobs.
+	##
+	## Undulated along its length as well. A shore wall whose height is a pure
+	## function of distance from the axis is a perfectly smooth ramp on both
+	## sides, and against a bright sky that reads as a flat-topped dam wall — the
+	## hard horizontal edge that used to run the width of the frame.
+	var dist: float = absf(z - _vp_centre)
+	var base: float = lerpf(pass_rise, fell_rise, smoothstep(180.0, 380.0, dist))
+	var local: float = z - _vp_centre
+	var fold: float = (
+		0.20 * sin(local * 0.0091 + _vp_phase)
+		+ 0.12 * sin(local * 0.0173 + _vp_phase * 1.7)
+		+ 0.07 * sin(local * 0.0339 + _vp_phase * 0.6)
+	)
+	return maxf(base * (1.0 + fold), pass_rise * 0.5)
+
+
+func _cliff_span(
+	b: LowPoly,
+	za: float,
+	zb: float,
+	h_a: float,
+	h_b: float,
+	face: Color,
+	lip: Color
+) -> void:
+	var shore_a: float = float(_path.viewpoint_far_shore(za, _vp_centre))
+	var shore_b: float = float(_path.viewpoint_far_shore(zb, _vp_centre))
+	var water_a := _far_point(za, _vp_side * (shore_a - 3.0), _vp_water_y)
+	var water_b := _far_point(zb, _vp_side * (shore_b - 3.0), _vp_water_y)
+	var ledge_a := _far_point(za, _vp_side * (shore_a + 6.0), _vp_water_y + h_a * 0.58)
+	var ledge_b := _far_point(zb, _vp_side * (shore_b + 6.0), _vp_water_y + h_b * 0.58)
+	var crown_a := _far_point(za, _vp_side * (shore_a + 22.0), _vp_water_y + h_a)
+	var crown_b := _far_point(zb, _vp_side * (shore_b + 22.0), _vp_water_y + h_b)
+	var back_a := _far_point(za, _vp_side * (shore_a + 48.0), _vp_water_y + h_a * 0.42)
+	var back_b := _far_point(zb, _vp_side * (shore_b + 48.0), _vp_water_y + h_b * 0.42)
+	var scarp := face.darkened(0.1)
+	if _vp_side > 0.0:
+		b.add_quad_shaded(water_a, ledge_a, ledge_b, water_b, scarp, face, face, scarp)
+		b.add_quad_shaded(ledge_a, crown_a, crown_b, ledge_b, face, lip, lip, face)
+		b.add_quad_shaded(crown_a, back_a, back_b, crown_b, lip, scarp, scarp, lip)
+	else:
+		b.add_quad_shaded(water_b, ledge_b, ledge_a, water_a, scarp, face, face, scarp)
+		b.add_quad_shaded(ledge_b, crown_b, crown_a, ledge_a, face, lip, lip, face)
+		b.add_quad_shaded(crown_b, back_b, back_a, crown_a, lip, scarp, scarp, lip)
 
 
 func _build_far_shore() -> void:
-	## Forest on the far bank. This band is what gives the lake its scale:
-	## without something of known size across the water, the range behind it
-	## reads as a painted backdrop a hundred metres away.
+	## Banks well above the water. Forest is a wooded terrace; coast is rock and
+	## sky; mountain is scree; country keeps a few side-fold conifers. Nothing
+	## stands in the lake; the pass stays open.
 	var z0 := float(chunk_index) * LENGTH
-	for _i in 30:
+	if _vp_theme != Env.COAST:
+		var tree_count := 8
+		var min_height := 4.0
+		var keep_out := 70.0
+		if _vp_theme == Env.FOREST:
+			tree_count = 20
+			min_height = 3.0
+			keep_out = 48.0
+		elif _vp_theme == Env.MOUNTAIN:
+			tree_count = 5
+			min_height = 6.0
+			keep_out = 90.0
+		for _i in tree_count:
+			var z := z0 + _rng.randf_range(0.0, LENGTH)
+			if absf(z - _vp_centre) < keep_out:
+				continue
+			var out: float = float(_path.viewpoint_far_shore(z, _vp_centre)) + _rng.randf_range(18.0, 70.0)
+			if _height_above_water(z, out) < min_height:
+				continue
+			var tint := Color("162820").lerp(Color("24362c"), _rng.randf() * 0.3)
+			var species: int = Flora.CONIFER
+			if _vp_theme == Env.FOREST and _rng.randf() < 0.35:
+				species = Flora.BROADLEAF
+			elif _vp_theme == Env.MOUNTAIN and _rng.randf() < 0.5:
+				species = Flora.BARE
+			var tall: float = _rng.randf_range(16.0, 28.0) if _vp_theme == Env.FOREST else _rng.randf_range(10.0, 16.0)
+			_tree(species, z, _vp_side * out, tall, tint, true)
+	for _i in 7:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
-		var out: float = float(_path.viewpoint_far_shore(z, _vp_centre)) + _rng.randf_range(4.0, 90.0)
-		if _height_above_water(z, out) < 0.4:
+		var out: float = float(_path.viewpoint_far_shore(z, _vp_centre)) + _rng.randf_range(8.0, 28.0)
+		if _height_above_water(z, out) < 4.0:
 			continue
-		var tint: Color = (_pal["prop_a"] as Color).darkened(0.12 + _rng.randf() * 0.32).lerp(Color("506872"), 0.15)
-		var species: int = Flora.CONIFER if _rng.randf() < 0.8 else Flora.BROADLEAF
-		_tree(species, z, _vp_side * out, _rng.randf_range(11.0, 23.0), tint, true)
-	for _i in 3:
-		var z := z0 + _rng.randf_range(0.0, LENGTH)
-		var out: float = float(_path.viewpoint_far_shore(z, _vp_centre)) + _rng.randf_range(10.0, 70.0)
-		if _height_above_water(z, out) < 1.0:
-			continue
-		var s := _rng.randf_range(5.0, 13.0)
+		var s := _rng.randf_range(1.8, 4.0)
 		_blob(
 			z,
 			_vp_side * out,
-			Vector3(s * 1.6, s, s * 1.4),
-			Color("586663").lerp(Color("71808a"), _rng.randf() * 0.28),
+			Vector3(s * 2.2, s * 0.8, s * 1.7),
+			Color("4a453c").lerp(Color("5c564c"), _rng.randf() * 0.2),
 			0.0,
 			false,
 			true
 		)
 
 
-## Three ranges going back into the haze. Each is a folded crest rather than a
-## row of cones: overlapping cones show every one of their outlines and read as
-## a bag of pyramids, which is what the old overlook put across the water.
-## A fourth, low, dark layer sits closest: hills on the far bank rather than
-## mountains behind it. Three layers all read as "far away" together, and a view
-## made only of far away has no depth in it — the near one is what the eye
-## measures the rest against.
-## `snow` is the fraction of a layer's own height the snowline sits at, and it
-## used to sit low enough that most of every mountain came out white. A range
-## with snow halfway down it has no mass: it reads as cloud, and four layers of
-## cloud behind a pale lake is the whole reason this view had nothing in it. Only
-## the peaks are capped now, and the rock under them is dark enough to be rock.
-## `haze` mixes each layer's colour toward the sky before it is ever lit, and it
-## used to carry the whole aerial perspective on its own — the far layer's albedo
-## came out at 0.65 and the sun then multiplied it to 1.2, so the mountains
-## clipped to white and the range that should recede furthest was the brightest
-## thing in the frame. Distance is the engine's fog to draw. This only tints.
+## A country range, not one central lump. Each layer is two offset peaks with a
+## pass between them, so the middle of the view is a col you look through rather
+## than a blob you look down onto. Every layer sits *behind* the lake; the far
+## shore's own scree owns the waterline.
+## No snow cap. A pale lid on a round hill is how the last version read as a
+## cheap primitive under the dusk sun. Form light lives in the vertex colour.
+## `haze` only tints; distance is the engine's fog to draw.
+## Four stacked ranges so the view has a near fell, a pass, and two blue
+## distances behind it — Art of Rally / Firewatch composition, not one lump.
+## Heights are what the seated 78° lens can actually read: 110 m at a kilometre
+## was a bump on the horizon.
+##
+## `haze` is only a tint toward the layer's haze colour. The real depth cue is
+## the engine's aerial perspective, which the overlook mood turns *up* — see
+## `Main._protect_scenic_visibility`.
+## `left` and `right` are where this layer's two shoulders stand, as an offset
+## along the route from the centre of the view. They are not decoration: the
+## composition is a col you look *through*, and a col is only legible if it has
+## a defined summit on either side of it. Leaving the shoulders to the general
+## run of tents meant whether the pass read at all came down to which way the
+## per-layer phase happened to fall, and on most seeds it did not read.
 const RANGE_LAYERS := [
-	{"lateral": 900.0, "height": 58.0, "spread": 38.0, "width": 104.0, "haze": 0.0, "snow": 2.0, "peak": -210.0},
-	{"lateral": 1120.0, "height": 102.0, "spread": 52.0, "width": 132.0, "haze": 0.13, "snow": 2.0, "peak": 245.0},
-	{"lateral": 1370.0, "height": 166.0, "spread": 66.0, "width": 172.0, "haze": 0.29, "snow": 0.90, "peak": -145.0},
-	{"lateral": 1640.0, "height": 228.0, "spread": 78.0, "width": 214.0, "haze": 0.47, "snow": 0.82, "peak": 130.0},
+	{"lateral": 860.0, "height": 240.0, "spread": 36.0, "width": 160.0, "haze": 0.05, "pass_width": 360.0, "left": -383.0, "right": 383.0, "cliff": false},
+	{"lateral": 1380.0, "height": 380.0, "spread": 48.0, "width": 200.0, "haze": 0.22, "pass_width": 400.0, "left": -383.0, "right": 383.0, "cliff": false},
+	{"lateral": 2100.0, "height": 520.0, "spread": 64.0, "width": 260.0, "haze": 0.40, "pass_width": 460.0, "left": -383.0, "right": 383.0, "cliff": false},
+	{"lateral": 3100.0, "height": 680.0, "spread": 80.0, "width": 320.0, "haze": 0.58, "pass_width": 520.0, "left": -383.0, "right": 383.0, "cliff": false},
 ]
-const RANGE_STEP := 10.0  # enough facets for folded crests without a dense mesh
+## Facet size along the crest. At 10 m a ridge a kilometre away is subdivided
+## far below the eye's ability to read it as anything but corduroy — a mountain
+## made of a hundred near-identical strips. Twenty gives the flanks planes big
+## enough to take a definite side of the light, which is the point of building
+## the world out of polygons in the first place.
+const RANGE_STEP := 20.0
 
 
 func _build_view_range() -> void:
+	## Coast keeps only the far headlands: water and sky in the near field, a
+	## Big Sur peninsula on the horizon. Forest/mountain/country get the lot.
 	var z0 := float(chunk_index) * LENGTH
 	var b := LowPoly.new()
-	# Blue, not grey. Distance reads as blue because the air between is blue, and
-	# a range mixed from neutral slate comes out the colour of concrete however
-	# dark it is made — which reads as a wall behind the lake rather than as
-	# something twenty minutes' ride away.
-	var haze := Color("526e82")
-	var rock := Color("182f43")
-	if theme == Env.COAST:
-		rock = Color("20394e")
-	elif theme == Env.COUNTRY:
-		rock = Color("213847")
-	# Not white. This is an albedo, and the sun multiplies it: snow painted at
-	# full white renders past 1.0 and clips, which put the least important part of
-	# the view — the tops of the furthest mountains — in charge of the frame.
-	var snow := Color("cbbfa9")
+	# Warm rock, cool haze, and the layers walk from one to the other.
+	#
+	# Distance in a landscape is carried by hue as much as by value: the near
+	# fells hold their own warm colour and each range behind them gives more of it
+	# up to the air, so a stack of ridges reads as ochre, then dusty violet, then
+	# nearly sky. Both ends used to sit in the same desaturated blue-grey family,
+	# which is why four layers of mountain arrived as one silhouette — there was
+	# nothing for the `haze` mix to actually move *between*.
+	var haze := Color("6f7ba6")
+	var rock := Color("243830")
+	if _vp_theme == Env.COUNTRY:
+		rock = Color("3a3324")
+		haze = Color("7f7fae")
+	elif _vp_theme == Env.FOREST:
+		rock = Color("36503f")
+		haze = Color("4a6e86")
+	elif _vp_theme == Env.MOUNTAIN:
+		rock = Color("46403a")
+		haze = Color("6f7ba6")
+	elif _vp_theme == Env.COAST:
+		rock = Color("243844")
+		haze = Color("8fa6c6")
 	var base_y := _vp_water_y - 4.0
-	for index in RANGE_LAYERS.size():
+	var first_layer := 0
+	var height_mul := 1.15
+	var lateral_mul := 1.0
+	if _vp_theme == Env.COAST:
+		first_layer = 2
+		height_mul = 0.72
+		lateral_mul = 1.12
+	elif _vp_theme == Env.FOREST:
+		height_mul = 1.05
+		lateral_mul = 0.70
+	elif _vp_theme == Env.MOUNTAIN:
+		# 1.55 on top of the 1.15 base put the near layer's crest twenty-six
+		# degrees up at eight hundred metres out — not a mountain but a wall
+		# across two thirds of the frame, with no sky left above it to give it a
+		# scale. Height comes down and the whole stack moves back instead.
+		height_mul = 1.18
+		lateral_mul = 1.04
+	elif _vp_theme == Env.COUNTRY:
+		height_mul = 1.22
+		lateral_mul = 1.0
+	for index in range(first_layer, RANGE_LAYERS.size()):
 		var layer: Dictionary = RANGE_LAYERS[index]
 		var phase: float = float(posmod(hash(Vector2i(index, int(_path.world_seed))), 1000)) * 0.00628
 		var fade: float = layer["haze"]
-		var body: Color = rock.darkened(0.16 - float(index) * 0.05).lerp(haze, fade)
-		var foot: Color = rock.darkened(0.34).lerp(haze, fade * 0.85)
-		var cap: Color = snow.lerp(haze, fade * 0.7)
+		var body: Color = rock.darkened(0.10 - float(index) * 0.04).lerp(haze, fade)
+		var foot: Color = rock.darkened(0.28).lerp(haze, fade * 0.85)
 		var steps := int(LENGTH / RANGE_STEP)
 		for i in steps:
 			var za := z0 + RANGE_STEP * float(i)
 			var zb := za + RANGE_STEP
+			var sample_a: Vector2 = _range_sample(za, layer, phase)
+			var sample_b: Vector2 = _range_sample(zb, layer, phase)
+			sample_a.x *= height_mul
+			sample_b.x *= height_mul
+			sample_a.y *= lateral_mul
+			sample_b.y *= lateral_mul
 			_range_face(
 				b,
 				za,
 				zb,
-				_range_sample(za, layer, phase),
-				_range_sample(zb, layer, phase),
+				sample_a,
+				sample_b,
 				layer,
 				base_y,
 				body,
-				foot,
-				cap
+				foot
 			)
 	var mesh: MeshInstance3D = b.commit_to(self, "ViewpointRange")
 	if mesh:
+		mesh.material_override = LowPoly.terrain_material()
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		# The skyline never culls: blinking a mountain range out at the prop
 		# distance would be the most obvious pop in the game.
 		mesh.visibility_range_end = 0.0
 
 
+## How far along the route the skyline is actually built. The range is drawn by
+## the same chunks that carry the lake, so it exists over this half-window and
+## nowhere else — and a crest still at full height when the mesh runs out is a
+## vertical wall standing in the sky. Everything below is distributed inside this
+## window and tapered to nothing at the edge of it.
+const RANGE_REACH := RoadPathGD.LAKE_SPAN + 60.0
+## Roughly how far apart summits sit, as a fraction of how far away the layer is
+## — so every range reads at about the same angular rhythm instead of the distant
+## ones dissolving into corduroy.
+const RANGE_PEAK_PITCH := 0.30
+const RANGE_PEAKS_MAX := 9
+
+
 func _range_sample(z: float, layer: Dictionary, phase: float) -> Vector2:
 	## x = crest height above the base, y = how far out the crest line runs.
-	## Broad swells establish a calm silhouette; one asymmetric summit per layer
-	## gives the eye somewhere to land.  The previous equal-weight high-frequency
-	## sines repeatedly crashed from maximum height to the twelve-metre clamp and
-	## produced a saw blade of isolated triangular walls.
+	##
+	## The crest is the upper envelope of a row of overlapping tents, not a sum of
+	## gaussians. Gaussians added together do two things a mountain never does:
+	## where they overlap they stack past the top of the layer and clamp flat,
+	## giving a mesa, and where they do not they fall to the floor term and leave
+	## an isolated spike standing on it. Both were on screen — a flat-topped wall
+	## with paper shark fins cut out of it.
+	##
+	## A tent has straight flanks and a definite summit, which is what a mountain
+	## seen from ten kilometres actually shows, and taking the *maximum* means
+	## overlapping tents merge into a shoulder and a subsidiary top instead of
+	## adding into a plateau. The slight convexity below rounds the flank just
+	## enough that it reads as rock under scree rather than as a triangle.
 	var local: float = z - _vp_centre
-	var peak_distance: float = (local - float(layer["peak"])) / 150.0
-	var summit: float = exp(-peak_distance * peak_distance)
-	var shoulder: float = exp(-pow((local + float(layer["peak"]) * 0.55) / 260.0, 2.0))
-	var n := (
-		0.34
-		+ 0.14 * sin(local * 0.0091 + phase)
-		+ 0.08 * sin(local * 0.0183 + phase * 1.7)
-		+ 0.34 * summit
-		+ 0.16 * shoulder
-	)
-	var height: float = float(layer["height"]) * clampf(n, 0.18, 1.0)
-	var out: float = float(layer["lateral"]) + float(layer["spread"]) * sin(local * 0.0068 + phase * 1.6)
-	return Vector2(maxf(height, 12.0), out)
+	# Summits spread across the window the mesh actually occupies, spaced by
+	# angle rather than by metres: a layer three kilometres out shows the same
+	# ±560 m of route as the near one, so the same metre pitch would pack nine
+	# tops into eleven degrees and come out as corduroy.
+	var pitch: float = maxf(float(layer["lateral"]) * RANGE_PEAK_PITCH, 150.0)
+	var count: int = clampi(int(ceil(2.0 * RANGE_REACH / pitch)) + 1, 2, RANGE_PEAKS_MAX)
+	var spacing: float = 2.0 * RANGE_REACH / float(count - 1)
+	var crest := 0.16  # a continuous foothill line, so the range never breaks up
+	for k in count:
+		var f := float(k)
+		# Evenly spread, then jittered off the layer's own phase so no two layers
+		# put a summit at the same bearing and the ridges interlock with depth.
+		var centre: float = (f - float(count - 1) * 0.5) * spacing + sin(phase + f * 2.399) * spacing * 0.30
+		# Always wider than the gap to the next summit, so neighbours merge into a
+		# shoulder. Tents narrower than their spacing stand alone, which is the
+		# isolated-spike failure this replaced.
+		var width: float = spacing * (1.78 + 0.34 * sin(phase * 1.7 + f * 1.111))
+		var peak: float = 0.52 + 0.48 * sin(phase * 0.9 + f * 2.713)
+		var t: float = 1.0 - clampf(absf(local - centre) / width, 0.0, 1.0)
+		crest = maxf(crest, peak * t * (1.30 - 0.30 * t))
+	# The two shoulders of the pass, planted rather than left to chance. Their
+	# summits sit at full layer height so the col between them always has
+	# something to be a col *of*; only their flanks vary with the phase, which is
+	# enough to stop the pair reading as a mirrored pair of pyramids.
+	for side in [-1.0, 1.0]:
+		var at: float = float(layer["right" if side > 0.0 else "left"])
+		# Never narrower than the layer's own summit spacing. Sized off the pass
+		# width alone, a far layer got a shoulder a hundred and eighty metres wide
+		# carrying seven hundred metres of height — a four-to-one spire standing
+		# in the col, which is the one silhouette this landscape must not grow.
+		var flank: float = maxf(
+			float(layer["pass_width"]) * (0.62 + 0.26 * sin(phase * 1.3 + side)), spacing * 1.2
+		)
+		var st: float = 1.0 - clampf(absf(local - at) / flank, 0.0, 1.0)
+		crest = maxf(crest, st * (1.30 - 0.30 * st))
+	# Fine relief on the flanks: gullies and buttresses, small enough that they
+	# never invent a summit of their own.
+	# Scaled by how far *down* the flank we are, not by the crest height. Scaling
+	# by the crest put the largest relief exactly on the summits, which is what
+	# sharpened an ordinary top into a needle; gullies belong on the sides.
+	var flank_weight: float = crest * (1.0 - crest)
+	crest += (0.09 * sin(local * 0.021 + phase * 0.7) + 0.07 * sin(local * 0.043 + phase * 1.9)) * flank_weight
+	# The pass. The middle of the view is a col you look *through* — the reason
+	# the platform is aimed where it is — so every layer drops across the axis.
+	var saddle: float = 1.0 - 0.55 * exp(-pow(local / float(layer["pass_width"]), 2.0))
+	# Down to nothing where the mesh stops, so the range sinks behind the near
+	# ground at the edges of the frame instead of being sliced off vertically.
+	var ends: float = 1.0 - smoothstep(RANGE_REACH * 0.72, RANGE_REACH, absf(local))
+	var height: float = float(layer["height"]) * clampf(crest * saddle, 0.0, 1.0) * ends
+	var out: float = float(layer["lateral"]) + float(layer["spread"]) * sin(local * 0.0074 + phase * 1.4)
+	return Vector2(height, out)
 
 
 func _range_face(
@@ -3361,32 +4324,65 @@ func _range_face(
 	layer: Dictionary,
 	base_y: float,
 	body: Color,
-	foot: Color,
-	cap: Color
+	foot: Color
 ) -> void:
 	var width: float = layer["width"]
-	var snowline: float = float(layer["height"]) * float(layer["snow"])
+	var cliff: bool = bool(layer.get("cliff", false))
+	var lift_a: float = clampf(a.x / maxf(float(layer["height"]), 1.0), 0.0, 1.0)
+	var lift_b: float = clampf(c.x / maxf(float(layer["height"]), 1.0), 0.0, 1.0)
+	# Form, not snow. A few percent of height-based lift is enough to read a
+	# ridge; a beige cap is how the old hill got its pale-yellow lid.
+	var top_a: Color = foot.lerp(body, 0.50 + 0.50 * lift_a)
+	var top_b: Color = foot.lerp(body, 0.50 + 0.50 * lift_b)
 	var crest_a := _far_point(za, _vp_side * a.y, base_y + a.x)
 	var crest_b := _far_point(zb, _vp_side * c.y, base_y + c.x)
-	var front_a := _far_point(za, _vp_side * (a.y - width), base_y)
-	var front_b := _far_point(zb, _vp_side * (c.y - width), base_y)
+	if cliff:
+		var face_a := _far_point(za, _vp_side * (a.y - width * 0.22), base_y)
+		var face_b := _far_point(zb, _vp_side * (c.y - width * 0.22), base_y)
+		var ledge_a := _far_point(za, _vp_side * (a.y - width * 0.06), base_y + a.x * 0.70)
+		var ledge_b := _far_point(zb, _vp_side * (c.y - width * 0.06), base_y + c.x * 0.70)
+		var back_a := _far_point(za, _vp_side * (a.y + width * 1.35), base_y)
+		var back_b := _far_point(zb, _vp_side * (c.y + width * 1.35), base_y)
+		var scarp := foot.darkened(0.14)
+		var turf := body.lerp(Color("3a5244"), 0.40)
+		_range_quad(b, face_a, ledge_a, ledge_b, face_b, scarp, foot, foot, scarp)
+		_range_quad(b, ledge_a, crest_a, crest_b, ledge_b, foot, turf, turf, foot)
+		_range_quad(b, crest_a, back_a, back_b, crest_b, turf, scarp, scarp, turf)
+		return
+	# Folded crest, front steeper than the back so the silhouette is a ridge
+	# rather than a mound you can see the top of.
+	var front_a := _far_point(za, _vp_side * (a.y - width * 0.55), base_y)
+	var front_b := _far_point(zb, _vp_side * (c.y - width * 0.55), base_y)
 	var back_a := _far_point(za, _vp_side * (a.y + width), base_y)
 	var back_b := _far_point(zb, _vp_side * (c.y + width), base_y)
-	var top_a: Color = body.lerp(cap, smoothstep(snowline, snowline + 18.0, a.x))
-	var top_b: Color = body.lerp(cap, smoothstep(snowline, snowline + 18.0, c.x))
+	_range_quad(b, front_a, crest_a, crest_b, front_b, foot, top_a, top_b, foot)
+	_range_quad(b, crest_a, back_a, back_b, crest_b, top_a, foot, foot, top_b)
+
+
+func _range_quad(
+	b: LowPoly,
+	q0: Vector3,
+	q1: Vector3,
+	q2: Vector3,
+	q3: Vector3,
+	c0: Color,
+	c1: Color,
+	c2: Color,
+	c3: Color
+) -> void:
 	# Winding is written for a range on the rider's right. Mirrored, the same
 	# vertex order faces away, so the pair order flips with the side.
 	if _vp_side > 0.0:
-		b.add_quad_shaded(front_a, crest_a, crest_b, front_b, foot, top_a, top_b, foot)
-		b.add_quad_shaded(crest_a, back_a, back_b, crest_b, top_a, foot, foot, top_b)
+		b.add_quad_shaded(q0, q1, q2, q3, c0, c1, c2, c3)
 	else:
-		b.add_quad_shaded(front_b, crest_b, crest_a, front_a, foot, top_b, top_a, foot)
-		b.add_quad_shaded(crest_b, back_b, back_a, crest_a, top_b, foot, foot, top_a)
+		b.add_quad_shaded(q3, q2, q1, q0, c3, c2, c1, c0)
 
 
-func _platform_lateral(out: float) -> float:
-	## Lateral of a point `out` metres from the platform's own centreline.
-	return _vp_side * (RoadPathGD.SPUR_OUT + out)
+func _platform_lateral(out: float, z: float = -1.0e12) -> float:
+	## Lateral of a point `out` metres from the spur centreline at z.
+	if z < -1.0e11:
+		z = _vp_centre
+	return _vp_side * (float(_path.spur_offset(z)) + out)
 
 
 func _set_piece_platform() -> void:
@@ -3396,32 +4392,22 @@ func _set_piece_platform() -> void:
 	var side := _vp_side
 	# Out on the terrace, clear of anything the bike can reach.
 	var edge: float = RoadPathGD.PLATFORM_HALF_WIDTH + 6.2
-	var stone: Color = (_pal["prop_c"] as Color).lerp(Color("8d8b84"), 0.45)
 	var timber := Color("6d4f38")
 
-	# The edge is a kerb and an open post-and-rail, not a parapet.
-	#
-	# That is a sight-line decision before it is a scenic one. A waist-high wall
-	# two metres in front of a seated rider blocks everything more than five
-	# degrees below the horizon, which is the entire lake: the first version of
-	# this platform had one, and sitting on the bench showed nothing but the far
-	# shore and some sky.
-	#
-	# The rail itself is the spur's barrier, which runs out along the terrace and
-	# back — see _build_spur_barrier(). A second fence built here, from boxes
-	# spaced along the route, is where most of the gaps in the platform edge came
-	# from: seventy metres off the centreline, two metres of route is nearer three
-	# metres of terrace, so every box fell short of the next.
-	_build_platform_kerbs(stone)
+	# Stone terrace, parapet, retaining wall. The rail along the climb is still
+	# the spur barrier; across the platform the belvedere owns the edge.
+	_build_belvedere()
 
-	# Benches square on to the water, close enough to the edge that the terrace
-	# floor does not crop the water out either.
+	# Benches square on to the water, planted on the terrace rather than hovering
+	# a world-up offset above a pitched deck.
 	for offset in RoadPathGD.PLATFORM_BENCH_Z:
 		_viewpoint_bench(centre + float(offset), side, RoadPathGD.PLATFORM_BENCH_OUT)
 	_viewpoint_board(centre + 14.0, side, RoadPathGD.PLATFORM_HALF_WIDTH + 1.6, timber)
 	_viewpoint_telescope(centre - 0.2, side, edge - 1.4)
-	_cube(centre + 17.5, _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 1.4), Vector3(0.62, 0.92, 0.62), timber.darkened(0.2), 0.0, 0.0, true)
-	_cube(centre + 17.5, _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 1.4), Vector3(0.76, 0.1, 0.76), timber.lightened(0.15), 0.0, 0.92, true)
+	var bin_z := centre + 17.5
+	var bin_lat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 1.4, bin_z)
+	_deck_cube(bin_z, bin_lat, Vector3(0.62, 0.92, 0.62), timber.darkened(0.2), 0.0, -0.04)
+	_deck_cube(bin_z, bin_lat, Vector3(0.76, 0.1, 0.76), timber.lightened(0.15), 0.0, 0.88)
 
 	# Three tiny amber bollards make the terrace feel cared for after sunset and
 	# give the foreground a warm depth layer against blue water.  Only the outer
@@ -3429,136 +4415,244 @@ func _set_piece_platform() -> void:
 	for offset in [-19.0, 0.0, 19.0]:
 		var lamp_z: float = centre + offset
 		var lamp_out: float = edge - 0.65
-		var lamp_lateral: float = _platform_lateral(lamp_out)
-		_cube(lamp_z, lamp_lateral, Vector3(0.12, 0.62, 0.12), Color("343b3a"), 0.0, 0.0, true)
-		_lamp(lamp_z, lamp_lateral, Vector3(0.22, 0.18, 0.22), LAMP_WARM, 0.56, true)
+		var lamp_lateral: float = _platform_lateral(lamp_out, lamp_z)
+		_deck_cube(lamp_z, lamp_lateral, Vector3(0.12, 0.62, 0.12), Color("343b3a"), 0.0, -0.04)
+		_deck_lamp(lamp_z, lamp_lateral, Vector3(0.22, 0.18, 0.22), LAMP_WARM, 0.56)
 		if absf(offset) > 1.0:
-			_glow_light(lamp_z, lamp_lateral, 0.68, LAMP_LIGHT, 7.5, 0.72)
+			_deck_light(lamp_z, lamp_lateral, 0.68, LAMP_LIGHT, 7.5, 0.72)
 
-	# Trees along the back of the platform, screening the carriageway the rider
-	# came off so the place feels away from it.
+	# Pines along the back of the platform, screening the carriageway.
+	# Coast keeps the sky; mountain is a couple of snags; forest and country
+	# keep the wooded backstop.
 	var reach: float = RoadPathGD.PLATFORM_HALF_LENGTH + 8.0
-	for _i in 9:
-		var z := centre + _rng.randf_range(-reach, reach)
-		_tree(
-			Flora.CONIFER,
-			z,
-			_platform_lateral(-RoadPathGD.PLATFORM_HALF_WIDTH - _rng.randf_range(3.0, 14.0)),
-			_rng.randf_range(6.0, 12.0),
-			(_pal["prop_a"] as Color).darkened(_rng.randf() * 0.25),
+	if _vp_theme != Env.COAST:
+		for _i in (10 if _vp_theme == Env.FOREST else 7):
+			var z := centre + _rng.randf_range(-reach, reach)
+			var species: int = Flora.CONIFER
+			if _vp_theme == Env.MOUNTAIN and _rng.randf() < 0.4:
+				species = Flora.BARE
+			var back_lat: float = _platform_lateral(-RoadPathGD.PLATFORM_HALF_WIDTH - _rng.randf_range(2.0, 10.0), z)
+			if _on_tarmac(z, back_lat, 1.4):
+				continue
+			_tree(
+				species,
+				z,
+				back_lat,
+				_rng.randf_range(8.0, 14.0),
+				Color("1c3328").lerp(Color("2a4232"), _rng.randf()),
+				true
+			)
+	# Two sentinel pines at the terrace ends — the silhouette that says this
+	# is a belvedere and not a lay-by. Coast and mountain leave the view open.
+	if _vp_theme == Env.FOREST or _vp_theme == Env.COUNTRY:
+		for end in [-1.0, 1.0]:
+			var cz: float = centre + end * (RoadPathGD.PLATFORM_HALF_LENGTH - 1.6)
+			var sentinel_lat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 2.4, cz)
+			if _on_tarmac(cz, sentinel_lat, 1.4):
+				continue
+			_tree(
+				Flora.CONIFER,
+				cz,
+				sentinel_lat,
+				15.0 + end * 1.2,
+				Color("182e26"),
+				true
+			)
+
+	# A couple of stone planters at the ends, not a hedge across the view.
+	for end in [-1.0, 1.0]:
+		var pz: float = centre + end * 16.5
+		var plat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 1.8, pz)
+		_deck_cube(pz, plat, Vector3(0.85, 0.42, 0.85), Color("c4b7a4"), 0.0, -0.04)
+		_deck_blob(
+			pz,
+			plat,
+			Vector3(0.9, 0.35, 0.9),
+			Color("3a5c3c").darkened(_rng.randf() * 0.15),
+			0.38,
 			true
 		)
-
-	# Boulders and scrub between the kerb and the lip. Without them the terrace
-	# is a clean grey band running the length of the frame, and a clean band is
-	# what makes a built place read as a car park rather than as a headland
-	# somebody put a bench on.
+	# Boulders and scrub on the back of the platform, screening the road.
 	for _i in 11:
 		var z := centre + _rng.randf_range(-reach, reach)
-		var out: float = (
-			RoadPathGD.PLATFORM_HALF_WIDTH + _rng.randf_range(1.4, 5.6)
-			if _rng.randf() < 0.62
-			else -RoadPathGD.PLATFORM_HALF_WIDTH - _rng.randf_range(1.0, 4.0)
-		)
-		# Keep the foreground beside each bench clean. A perfectly reasonable
-		# two-metre boulder becomes half the frame when it is one metre from the
-		# seated camera, turning the reward view into a close-up of a rock.
-		var near_seat := false
-		for offset in RoadPathGD.PLATFORM_BENCH_Z:
-			near_seat = near_seat or absf(z - (centre + float(offset))) < 10.0
-		if out > 0.0 and near_seat:
-			continue
+		var out: float = -RoadPathGD.PLATFORM_HALF_WIDTH - _rng.randf_range(1.0, 4.0)
 		var s := _rng.randf_range(0.7, 2.1)
 		if _rng.randf() < 0.45:
-			_prism(
+			_deck_blob(
 				z,
-				_platform_lateral(out),
+				_platform_lateral(out, z),
 				Vector3(s * 1.5, s * 0.9, s * 1.4),
 				_face_color().darkened(_rng.randf() * 0.2),
-				0.0,
-				true
+				-0.08,
+				false
 			)
 		else:
-			_blob(
+			_deck_blob(
 				z,
-				_platform_lateral(out),
+				_platform_lateral(out, z),
 				Vector3(s * 1.7, s * 0.6, s * 1.5),
 				(_pal["verge"] as Color).darkened(_rng.randf() * 0.28),
-				0.0,
-				true,
+				-0.06,
 				true
 			)
 
 
-func _build_platform_kerbs(stone: Color) -> void:
-	## The two lines that make the platform read as a built place: a kerb along
-	## the front of the parking, and one along the lip of the terrace.
-	##
-	## Both are ribbon geometry for the same reason the barrier is. They sit
-	## seventy metres off the route, where the platform's own length and the
-	## route's disagree by half a metre every two metres, and a run of boxes
-	## stepped along z came out as a dashed line of blocks.
+func _build_belvedere() -> void:
+	## A limestone terrace with a wall under it. The old platform was a paper
+	## shelf: furniture sat on a grass band and the lake showed through under
+	## the legs. This is a built place — paving, a parapet you can lean on, and
+	## four metres of masonry holding the drop.
 	var b := LowPoly.new()
-	var top: Color = stone.lightened(0.3)
-	var lip: Color = stone.darkened(0.06)
-	var step := 1.5
+	var limestone := Color("9a8b76")
+	var mortar := Color("7e7364")
+	var shadow := Color("4f4a43")
+	var step := 2.4
 	var half: float = RoadPathGD.PLATFORM_HALF_LENGTH
 	var z := _vp_centre - half
 	while z < _vp_centre + half:
 		var next: float = minf(z + step, _vp_centre + half)
-		_kerb_run(b, z, next, RoadPathGD.PLATFORM_HALF_WIDTH + 0.35, 0.5, 0.14, top)
-		_kerb_run(b, z, next, RoadPathGD.PLATFORM_HALF_WIDTH + 6.2, 0.54, 0.16, lip)
+		_kerb_run(b, z, next, RoadPathGD.PLATFORM_HALF_WIDTH + 0.32, 0.46, 0.12, limestone.lightened(0.08))
+		_belvedere_pave(b, z, next, limestone)
+		_belvedere_wall(b, z, next, limestone, mortar, shadow)
 		z = next
+	_belvedere_ends(b, limestone, shadow)
 	var mesh: MeshInstance3D = b.commit_to(self, "PlatformKerbs")
 	if mesh:
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Short stone piers at the corners, so the parapet has something to end on.
+	for end in [-1.0, 1.0]:
+		var pz: float = _vp_centre + end * (half - 0.4)
+		var lat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 6.15, pz)
+		_deck_cube(pz, lat, Vector3(0.48, 0.72, 0.48), limestone.darkened(0.06), 0.0, -0.04)
+
+
+func _belvedere_pave(b: LowPoly, za: float, zb: float, color: Color) -> void:
+	## Stone deck from the parking kerb out to the parapet.
+	var inner := RoadPathGD.PLATFORM_HALF_WIDTH + 0.55
+	var outer := RoadPathGD.PLATFORM_HALF_WIDTH + 6.05
+	var a0: float = _platform_lateral(inner, za)
+	var a1: float = _platform_lateral(outer, za)
+	var b0: float = _platform_lateral(inner, zb)
+	var b1: float = _platform_lateral(outer, zb)
+	var a_in := minf(a0, a1)
+	var a_out := maxf(a0, a1)
+	var b_in := minf(b0, b1)
+	var b_out := maxf(b0, b1)
+	b.add_quad(
+		_p(za, a_in, -0.05), _p(za, a_out, -0.05), _p(zb, b_out, -0.05), _p(zb, b_in, -0.05), color
+	)
+
+
+func _belvedere_wall(b: LowPoly, za: float, zb: float, limestone: Color, mortar: Color, shadow: Color) -> void:
+	## A masonry box under the lip, not a single face. A plane at the edge is
+	## invisible from the parking and a white line from below; thickness is
+	## what makes the terrace a place the benches can stand on.
+	const LIP := 6.05
+	const FACE := 6.85
+	const CAP := 0.52
+	const WALL := 9.5
+	var lip_a: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + LIP, za)
+	var lip_b: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + LIP, zb)
+	var face_a: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + FACE, za)
+	var face_b: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + FACE, zb)
+	var in_a := minf(lip_a, face_a)
+	var out_a := maxf(lip_a, face_a)
+	var in_b := minf(lip_b, face_b)
+	var out_b := maxf(lip_b, face_b)
+	# Cap you can lean on.
+	b.add_quad(
+		_p(za, in_a, -CAP), _p(za, out_a, -CAP), _p(zb, out_b, -CAP), _p(zb, in_b, -CAP), limestone.lightened(0.12)
+	)
+	# Inner face, toward the parking.
+	_wall_face(b, za, zb, lip_a, lip_b, 0.0, -CAP, mortar)
+	_wall_face(b, za, zb, face_a, face_b, -CAP, 2.4, limestone)
+	_wall_face(b, za, zb, face_a, face_b, 2.4, WALL, shadow)
+	# Underside, so the shelf has a bottom when seen from the drop.
+	b.add_quad(
+		_p(za, in_a, WALL), _p(zb, in_b, WALL), _p(zb, out_b, WALL), _p(za, out_a, WALL), shadow.darkened(0.15)
+	)
+
+
+func _wall_face(
+	b: LowPoly, za: float, zb: float, la: float, lb: float, drop_top: float, drop_bot: float, color: Color
+) -> void:
+	b.add_quad(
+		_p(za, la, drop_top), _p(zb, lb, drop_top), _p(zb, lb, drop_bot), _p(za, la, drop_bot), color
+	)
+	b.add_quad(
+		_p(za, la, drop_bot), _p(zb, lb, drop_bot), _p(zb, lb, drop_top), _p(za, la, drop_top), color.darkened(0.06)
+	)
+
+
+func _belvedere_ends(b: LowPoly, limestone: Color, shadow: Color) -> void:
+	## Close the short ends of the terrace so it is a box of masonry, not a
+	## ribbon that stops in mid-air.
+	var half: float = RoadPathGD.PLATFORM_HALF_LENGTH
+	var inner := RoadPathGD.PLATFORM_HALF_WIDTH + 0.55
+	var face := RoadPathGD.PLATFORM_HALF_WIDTH + 6.45
+	for end in [-1.0, 1.0]:
+		var z: float = _vp_centre + end * half
+		var la: float = _platform_lateral(inner, z)
+		var lb: float = _platform_lateral(face, z)
+		var a := minf(la, lb)
+		var c := maxf(la, lb)
+		b.add_quad(_p(z, a, -0.52), _p(z, c, -0.52), _p(z, c, 9.5), _p(z, a, 9.5), limestone.lerp(shadow, 0.35))
 
 
 func _kerb_run(b: LowPoly, za: float, zb: float, out: float, width: float, height: float, color: Color) -> void:
 	## One length of kerb between two points on its own line: a top face and the
 	## face that shows toward the parking.
-	var la: float = _platform_lateral(out - width * 0.5)
-	var lb: float = _platform_lateral(out + width * 0.5)
-	var inner: float = minf(la, lb)
-	var outer: float = maxf(la, lb)
+	var half := width * 0.5
+	var a0: float = _platform_lateral(out - half, za)
+	var a1: float = _platform_lateral(out + half, za)
+	var b0: float = _platform_lateral(out - half, zb)
+	var b1: float = _platform_lateral(out + half, zb)
+	var a_in := minf(a0, a1)
+	var a_out := maxf(a0, a1)
+	var b_in := minf(b0, b1)
+	var b_out := maxf(b0, b1)
 	b.add_quad(
-		_p(za, inner, -height), _p(za, outer, -height), _p(zb, outer, -height), _p(zb, inner, -height), color
+		_p(za, a_in, -height), _p(za, a_out, -height), _p(zb, b_out, -height), _p(zb, b_in, -height), color
 	)
-	var near: float = inner if _vp_side > 0.0 else outer
+	var a_near: float = a_in if _vp_side > 0.0 else a_out
+	var b_near: float = b_in if _vp_side > 0.0 else b_out
 	b.add_quad(
-		_p(za, near, 0.0), _p(zb, near, 0.0), _p(zb, near, -height), _p(za, near, -height), color.darkened(0.12)
+		_p(za, a_near, 0.0), _p(zb, b_near, 0.0), _p(zb, b_near, -height), _p(za, a_near, -height), color.darkened(0.12)
 	)
 
 
 func _viewpoint_bench(z: float, side: float, out: float) -> void:
-	## Slatted timber bench square on to the water, on legs, with a back. The
-	## facing matters: a bench parallel to the road at a viewpoint is a joke.
-	var timber := Color("795b3f")
-	var frame: Color = (_pal["rail"] as Color).darkened(0.45)
-	var lateral := _platform_lateral(out)
+	## Slatted timber on a stone plinth, square on to the water. The plinth is
+	## what stops the legs reading as hovering: they stand in masonry, not on a
+	## grass shelf over the drop.
+	var timber := Color("6a4a32")
+	var iron := Color("3a3d42")
+	var lateral := _platform_lateral(out, z)
+	_deck_cube(z, lateral, Vector3(1.15, 0.16, 2.15), Color("8e8270"), 0.0, -0.05)
+	const SINK := 0.08
 	for leg in [-0.72, 0.72]:
-		_cube(z + leg, lateral - side * 0.5, Vector3(0.12, 0.44, 0.12), frame, 0.0, 0.0, true)
-		_cube(z + leg, lateral + side * 0.5, Vector3(0.12, 0.44, 0.12), frame, 0.0, 0.0, true)
+		_deck_cube(z + leg, lateral - side * 0.5, Vector3(0.12, 0.38, 0.12), iron, 0.0, SINK)
+		_deck_cube(z + leg, lateral + side * 0.5, Vector3(0.12, 0.38, 0.12), iron, 0.0, SINK)
+	var seat := 0.38 + SINK
 	for slat in [-0.42, -0.14, 0.14, 0.42]:
-		_cube(z, lateral + side * slat, Vector3(0.26, 0.07, 1.9), timber.darkened(_rng.randf() * 0.12), 0.0, 0.44, true)
-	# Backrest on the road side, so you sit looking out over the water.
+		_deck_cube(z, lateral + side * slat, Vector3(0.26, 0.07, 1.9), timber.darkened(_rng.randf() * 0.12), 0.0, seat)
 	for post_z in [z - 0.72, z + 0.72]:
-		_cube(post_z, lateral - side * 0.46, Vector3(0.1, 0.52, 0.1), frame, 0.0, 0.44, true)
+		_deck_cube(post_z, lateral - side * 0.46, Vector3(0.1, 0.52, 0.1), iron, 0.0, seat)
 	for rail in [0.62, 0.86]:
-		_cube(z, lateral - side * 0.46, Vector3(0.09, 0.16, 1.9), timber, 0.0, 0.3 + rail, true)
+		_deck_cube(z, lateral - side * 0.46, Vector3(0.09, 0.16, 1.9), timber, 0.0, 0.3 + rail + SINK - 0.08)
 
 
 func _viewpoint_board(z: float, side: float, out: float, timber: Color) -> void:
 	## Angled interpretation panel on two legs — the thing every real overlook
 	## has, naming what you are looking at.
-	var lateral := _platform_lateral(out)
+	var lateral := _platform_lateral(out, z)
 	for leg in [-0.85, 0.85]:
-		_cube(z + leg, lateral, Vector3(0.12, 1.06, 0.12), timber.darkened(0.25), 0.0, 0.0, true)
-	_cube(z, lateral, Vector3(0.18, 0.1, 2.1), timber.darkened(0.1), 0.0, 1.06, true)
+		_deck_cube(z + leg, lateral, Vector3(0.12, 1.06, 0.12), timber.darkened(0.25), 0.0, -0.04)
+	_deck_cube(z, lateral, Vector3(0.18, 0.1, 2.1), timber.darkened(0.1), 0.0, 1.02)
 	# The panel leans back toward the reader; flat on its legs it would show only
 	# its edge from the saddle.
 	var flat: Basis = _path.frame_flat_at(z)
-	var base: Vector3 = _terrain_surface_at(z, lateral) - _origin + Vector3(0, 1.16, 0)
+	var base: Vector3 = _p(z, lateral, -1.12)
 	var lean := Basis(flat.z, side * deg_to_rad(36.0))
 	_cubes.append(Transform3D(lean * Basis(flat.x * 0.78, flat.y * 0.07, flat.z * 2.0), base))
 	_cube_cols.append(Color("d9d6c8"))
@@ -3570,12 +4664,13 @@ func _viewpoint_telescope(z: float, side: float, out: float) -> void:
 	## Coin viewer on a post, aimed across the water. Small, but it is the prop
 	## that tells the rider this place is meant to be looked *from*.
 	var body: Color = (_pal["rail"] as Color).darkened(0.15)
-	var lateral := _platform_lateral(out)
-	_cube(z, lateral, Vector3(0.16, 1.3, 0.16), body.darkened(0.35), 0.0, 0.0, true)
-	_cube(z, lateral, Vector3(0.42, 0.16, 0.42), body.darkened(0.2), 0.0, 1.3, true)
+	var lateral := _platform_lateral(out, z)
+	_deck_cube(z, lateral, Vector3(0.55, 0.18, 0.55), Color("cfc3b0"), 0.0, -0.04)
+	_deck_cube(z, lateral, Vector3(0.16, 1.16, 0.16), Color("3a3d42"), 0.0, 0.14)
+	_deck_cube(z, lateral, Vector3(0.42, 0.16, 0.42), body.darkened(0.2), 0.0, 1.26)
 	# Barrel across the road axis, tipped down toward the water.
 	var flat: Basis = _path.frame_flat_at(z)
-	var base: Vector3 = _terrain_surface_at(z, lateral) - _origin + Vector3(0, 1.52, 0)
+	var base: Vector3 = _p(z, lateral, -1.48)
 	var barrel := Basis(flat.z, side * deg_to_rad(-18.0)) * Basis(flat.x * 1.1, flat.y * 0.21, flat.z * 0.21)
 	_cubes.append(Transform3D(barrel, base + flat.x * side * 0.25))
 	_cube_cols.append(Color("2f3339"))
@@ -3583,8 +4678,8 @@ func _viewpoint_telescope(z: float, side: float, out: float) -> void:
 
 func _build_viewpoint_sign(z: float, side: float, advance: bool) -> void:
 	## A brown tourist board over a blue parking board — the pair a rider
-	## recognises at 180 km/h. The advance sign stands 150 m before the junction
-	## with a distance plate; the second marks the junction itself.
+	## recognises at 180 km/h. The advance sign stands 240 m before the junction
+	## with a distance plate; the second marks the start of the deceleration lane.
 	var lateral := side * (HALF_WIDTH + 2.6)
 	var blue := Color("1769aa")
 	var brown := Color("6b4630")
@@ -3592,7 +4687,7 @@ func _build_viewpoint_sign(z: float, side: float, advance: bool) -> void:
 	_cube(z, lateral, Vector3(0.18, 4.2, 0.18), Color("626a70"), 0.0, 0.0, true)
 	_cube(z, lateral, Vector3(2.5, 1.15, 0.16), brown, 0.0, 3.2, true)
 	_cube(z, lateral, Vector3(2.2, 1.5, 0.18), blue, 0.0, 1.7, true)
-	_sign_label(z, lateral, "150 m" if advance else "P", 2.45, 0.0075 if advance else 0.0095, white)
+	_sign_label(z, lateral, "200 m" if advance else "P", 2.45, 0.0075 if advance else 0.0095, white)
 	_sign_label(z, lateral, "VIEWPOINT", 3.78, 0.0038, white)
 	if advance:
 		_cube(z, lateral, Vector3(2.65, 0.16, 0.22), Color("f0b33b"), 0.0, 4.35, true)
@@ -3777,50 +4872,62 @@ static func palette(t: int) -> Dictionary:
 				"glow": Color(2.2, 2.4, 1.5),
 			}
 		Env.COAST:
+			# Pale sand against grey-green marram, and driftwood against dune
+			# fencing. Every one of these used to sit inside twenty degrees of the
+			# same warm grey, so the whole biome arrived as one undifferentiated
+			# beige field however the light fell on it — the ground/ground_alt pair
+			# in particular had nothing to blend *between*.
 			return {
 				"road": ROAD_TARMAC,
 				"stripe": Color("fff4cc"),
-				"shoulder": Color("8f846d"),
+				"shoulder": Color("8f8371"),
 				"curb": Color("a2957f"),
-				"verge": Color("aa9b68"),
-				"ground": Color("bca56f"),
-				"ground_alt": Color("987d58"),
-				"rail": Color("d8cfc0"),
+				"verge": Color("94a06e"),
+				"ground": Color("c9ae74"),  # open sand
+				"ground_alt": Color("7c9483"),  # scrub holding the dune
+				"rail": Color("c9c0ae"),
 				"prop_a": Color("39715b"),
-				"prop_b": Color("948b7c"),
-				"prop_c": Color("7d766c"),
+				"prop_b": Color("6f7f86"),  # weathered driftwood, cool
+				"prop_c": Color("b8895a"),  # dune fencing, warm
 				"accent": Color("277b89"),
 				"glow": Color(2.6, 2.2, 1.4),
 			}
 		Env.MOUNTAIN:
+			# The mountain reads as green *or* as rock, and the interest is in the
+			# alternation between them — a hillside is moss where water sits and
+			# bare scree where it does not. Blending green into a slightly bluer
+			# green, as this did, cannot produce that; it only produces mush.
 			return {
 				"road": ROAD_TARMAC,
 				"stripe": Color("e6ddb8"),
-				"shoulder": Color("64666a"),
-				"curb": Color("6e6a64"),
-				"verge": Color("68704a"),
-				"ground": Color("555f48"),
-				"ground_alt": Color("394b45"),
-				"rail": Color("9aa0a4"),
-				"prop_a": Color("2b5140"),
-				"prop_b": Color("654436"),
-				"prop_c": Color("656a72"),
+				"shoulder": Color("6b6560"),
+				"curb": Color("7c7168"),
+				"verge": Color("5c6b3f"),
+				"ground": Color("4a5940"),  # moss and alpine turf
+				"ground_alt": Color("6a5e4e"),  # bare scree breaking through
+				"rail": Color("a8afb4"),
+				"prop_a": Color("2b5140"),  # spruce
+				"prop_b": Color("8a5a34"),  # larch and rust
+				"prop_c": Color("7d8794"),  # cold granite
 				"accent": Color("d45a36"),
 				"glow": Color(2.4, 1.8, 1.2),
 			}
 		Env.COUNTRY:
+			# Ripe crop against pasture. The two ground tones were both olive and
+			# eleven points apart in value, which is a stain rather than a patchwork
+			# — and the patchwork is the entire reason to ride through farmland.
 			return {
 				"road": ROAD_TARMAC,
 				"stripe": Color("efe6bc"),
-				"shoulder": Color("817764"),
+				"shoulder": Color("8a7d63"),
 				"curb": Color("857a66"),
-				"verge": Color("8b873d"),
-				"ground": Color("9c8842"),
-				"ground_alt": Color("6f7139"),
+				"verge": Color("7d8a3c"),
+				"ground": Color("b39a4a"),  # standing corn
+				"ground_alt": Color("5c6b34"),  # grazed pasture
 				"rail": Color("b9ac8e"),
 				"prop_a": Color("425e32"),
-				"prop_b": Color("a74e32"),
-				"prop_c": Color("c7a85f"),
+				"prop_b": Color("a74e32"),  # brick and rust
+				"prop_c": Color("d8b96a"),  # cut hay
 				"accent": Color("ead4a2"),
 				"glow": Color(2.6, 2.2, 1.5),
 			}

@@ -32,13 +32,89 @@ var _terrain_phase: float = 0.0
 var _shape_scale: float = 1.0
 func _ready() -> void:
 	randomize_world()
-## RoadChunk.Env.COUNTRY. The ride has one coherent English-countryside identity;
-## world seeds vary the road and planting, never the biome.
-const ENGLISH_COUNTRYSIDE_THEME := 4
+
+## RoadChunk.Env: FOREST, COAST, MOUNTAIN, COUNTRY. CITY stays unused.
+const THEME_POOL: Array[int] = [1, 2, 3, 4]
+## ~12 km at riding speed: several minutes in one world before the next.
+const BIOME_LENGTH := 12000.0
+## How far the *road* eases from one biome's shape into the next. Scenery can
+## cut on the region boundary; the ribbon must not, or the bike hits a kink.
+## 2.8 km is about a minute at a hundred and sixty — slow enough to feel as a
+## change of country rather than as a scripted event.
+const BIOME_BLEND := 2800.0
+## wander, twist, long-hill, short-hill. Same sine waves everywhere; only the
+## mix changes, so the path stays C1 across a region cut.
+## Forest: enclosed and twisty. Coast: long sweepers, quieter hills. Mountain:
+## tighter radius and more pitch. Country: the rolling baseline.
+const SHAPE_FOREST := Vector4(0.72, 1.55, 0.90, 0.85)
+const SHAPE_COAST := Vector4(1.38, 0.38, 0.68, 0.42)
+const SHAPE_MOUNTAIN := Vector4(0.82, 1.82, 1.20, 1.12)
+const SHAPE_COUNTRY := Vector4(1.00, 1.00, 1.00, 1.00)
+var _biome_order: Array[int] = [1, 2, 3, 4]
 
 
-func theme_for_chunk(_index: int) -> int:
-	return ENGLISH_COUNTRYSIDE_THEME
+func theme_for_chunk(index: int) -> int:
+	var region := int(floor((float(index) * CHUNK_LENGTH) / BIOME_LENGTH))
+	return _theme_for_region(region)
+
+
+func _theme_for_region(region: int) -> int:
+	if _biome_order.is_empty():
+		return THEME_POOL[0]
+	return _biome_order[posmod(region, _biome_order.size())]
+
+
+func _shape_for_theme(theme_id: int) -> Vector4:
+	match theme_id:
+		1:
+			return SHAPE_FOREST
+		2:
+			return SHAPE_COAST
+		3:
+			return SHAPE_MOUNTAIN
+		_:
+			return SHAPE_COUNTRY
+
+
+func shape_at(z: float) -> Vector4:
+	## Biome mix at this point on the route. Public so tests can check the blend
+	## without re-deriving it from centreline samples.
+	return _shape_at(z)
+
+
+func _shape_at(z: float) -> Vector4:
+	## Ease across a region cut, centred on the boundary: half the blend is still
+	## the old country, half is already the new one. The first biome has no
+	## previous world to ease from, so the run starts settled.
+	##
+	## Negative z is clamped: pitch_at(0) samples z-DZ, and treating that as the
+	## wrapped last region put a sixty-degree kink on the start line.
+	var z_on := maxf(z, 0.0)
+	var region := int(floor(z_on / BIOME_LENGTH))
+	var local := z_on - float(region) * BIOME_LENGTH
+	var here := _shape_for_theme(_theme_for_region(region))
+	if local < BIOME_BLEND:
+		if region == 0:
+			return here
+		var prev := _shape_for_theme(_theme_for_region(region - 1))
+		var t := smoothstep(0.0, 1.0, 0.5 + 0.5 * (local / BIOME_BLEND))
+		return prev.lerp(here, t)
+	if local > BIOME_LENGTH - BIOME_BLEND:
+		var next := _shape_for_theme(_theme_for_region(region + 1))
+		var t := smoothstep(0.0, 1.0, 0.5 * ((local - (BIOME_LENGTH - BIOME_BLEND)) / BIOME_BLEND))
+		return here.lerp(next, t)
+	return here
+
+
+func theme_at(z: float) -> int:
+	return theme_for_chunk(int(floor(z / CHUNK_LENGTH)))
+
+
+func biome_order() -> Array:
+	var copy: Array = []
+	for theme_id in _biome_order:
+		copy.append(theme_id)
+	return copy
 
 
 func randomize_world() -> void:
@@ -50,12 +126,25 @@ func set_world_seed(value: int) -> void:
 	_water_y_cache.clear()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = value
+	_rebuild_biome_order(rng)
 	_height_phase_a = rng.randf_range(0.0, TAU)
 	_height_phase_b = rng.randf_range(0.0, TAU)
 	_curve_phase_a = rng.randf_range(0.0, TAU)
 	_curve_phase_b = rng.randf_range(0.0, TAU)
 	_terrain_phase = rng.randf_range(0.0, TAU)
 	_shape_scale = rng.randf_range(0.82, 1.12)
+
+
+func _rebuild_biome_order(rng: RandomNumberGenerator) -> void:
+	## A permutation of the four rural biomes, then that order repeats forever.
+	_biome_order.clear()
+	for theme_id in THEME_POOL:
+		_biome_order.append(theme_id)
+	for i in range(_biome_order.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var swap: int = _biome_order[i]
+		_biome_order[i] = _biome_order[j]
+		_biome_order[j] = swap
 
 
 func lane_x(lane: int) -> float:
@@ -66,10 +155,10 @@ func lane_x(lane: int) -> float:
 # ------------------------------------------------------------ scenic overlooks
 #
 # An overlook is a real detour, not a wide bit of shoulder: a spur road leaves
-# the carriageway as a lane on its outside edge, swings away and climbs a
-# headland over half a kilometre, opens out into a parking platform above a
-# lake, and rejoins the carriageway well over a kilometre after it left. Riding it is a choice
-# that costs the rider time, which is the whole point.
+# the carriageway as a lane on its outside edge, climbs a wooded headland for
+# more than a kilometre, rides a ridge, opens onto a parking platform above a
+# lake, and rejoins well after it left. Riding it is a choice that costs the
+# rider time, which is the whole point.
 #
 # It is a loop rather than a dead end because the bike only travels forward:
 # an out-and-back would need a reverse gear the game does not have, and every
@@ -84,12 +173,10 @@ func lane_x(lane: int) -> float:
 #   height:   0        0    rising    +13      +11  falling  -14      rising
 #
 const CHUNK_LENGTH := 40.0
-## One overlook every 1400 m. They are set pieces: frequent enough to meet a few
-## on a long run, rare enough that taking one is an event. The period has to
-## cover the whole detour twice over with plain carriageway left between two of
-## them, which is what sets it — a slip road long enough to be ridden is most of
-## a kilometre on its own.
-const VIEWPOINT_PERIOD := 4600.0
+## One overlook every few kilometres. They are set pieces: rare enough that
+## taking one is an event. The period has to cover the whole detour twice over
+## with plain carriageway left between two of them (period > 2 * SPUR_HALF_SPAN).
+const VIEWPOINT_PERIOD := 4200.0
 const VIEWPOINT_FIRST := 2800.0
 
 ## The spur road.
@@ -102,8 +189,8 @@ const VIEWPOINT_FIRST := 2800.0
 ## and the rider was dragged along its edge losing speed. Held to an eighth of
 ## a metre per metre it is a 7.5° divergence: one lean, held, the way a real
 ## exit is taken.
-const SPUR_HALF_SPAN := 1160.0  # a 2.32 km forest road, junction to junction
-const SPUR_RAMP := 1160.0  # long enough to move far away without an impossible lean
+const SPUR_HALF_SPAN := 1680.0  # a 3.36 km forest road, junction to junction
+const SPUR_RAMP := 1480.0  # climb and peel; the last stretch each side rides the ridge
 ## Fraction of the ramp ridden straight, alongside the carriageway, before the
 ## spur peels away at all. This is the deceleration lane: time to notice the
 ## sign, come off the throttle and move across before the gore opens.
@@ -111,10 +198,10 @@ const SPUR_HOLD := 0.08
 ## Fraction of the swing spent easing into and out of the lean. The rest is
 ## ridden at one constant angle.
 const SPUR_EASE := 0.14
-const SPUR_OUT := 156.0  # far enough that the main road disappears behind woodland
-const SPUR_LIFT := 30.0  # a real climb before the lake-and-range reveal
+const SPUR_OUT := 168.0  # far enough that the main road disappears behind woodland
+const SPUR_LIFT := 42.0  # a real climb before the lake-and-range reveal
 const SPUR_HALF_WIDTH := 4.6
-const SPUR_MOUTH := 34.0  # junction taper, where the spur is still part of the road
+const SPUR_MOUTH := 160.0  # junction taper; long enough to read at speed
 const SPUR_SHOULDER := 2.2  # surfaced shoulder beyond the rideable edge
 ## The parking platform at the top. The rideable apron is what the bike can
 ## reach; the terrace beyond it is made ground the bike cannot enter, which is
@@ -137,28 +224,29 @@ const PLATFORM_HALF_LENGTH := 23.0
 const PLATFORM_TAPER := 44.0
 
 ## The landscape the platform exists to look at.
-const HEADLAND_RISE := 25.0  # natural ground under the platform, above road level
+const HEADLAND_RISE := 32.0  # natural ground under the platform, above road level
 const HEADLAND_INNER := 48.0  # where the hillside starts to climb
 ## Where the headland tips over into the drop. It sits just past the outer lip
 ## of the terrace, so the ground the rider is parked on ends where the view
 ## starts. Left further out than the platform reaches, the overlook looks over a
 ## field that slopes gently to a pond.
 const HEADLAND_CREST := 176.0
-## Lake surface below the carriageway. With the platform thirteen metres above
+## Lake surface below the carriageway. With the platform forty-odd metres above
 ## the road, this is the other half of how far down the water is — and how far
 ## down it is, over how short a run, is the whole difference between a belvedere
 ## and a picnic table beside a pond.
-const WATER_DROP := 34.0
-## The near shore is close in on purpose: 27 m of fall over 28 m of ground is a
-## bluff you are standing on top of. Put the water 60 m further out and the same
-## drop becomes a lawn running down to a lake, which is what this was.
-const LAKE_NEAR := 252.0
-const LAKE_FAR := 760.0
-const LAKE_BED := 9.0
+const WATER_DROP := 40.0
+## Close enough that the face reads as a drop, far enough that a 70° seated
+## lens can actually see the water. At 248 m the lake sat 50° below the eye and
+## the whole basin fell out of the bottom of the frame — leaving two far-shore
+## lumps against the sky, which is what the overlooks looked like.
+const LAKE_NEAR := 320.0
+const LAKE_FAR := 700.0
+const LAKE_BED := 11.0
 const LAKE_SPAN := 520.0  # half length of the water along the route
-const FAR_BANK := 95.0
-const FAR_BANK_RISE := 38.0
-const VIEWPOINT_OUTER := 1040.0
+const FAR_BANK := 140.0
+const FAR_BANK_RISE := 24.0
+const VIEWPOINT_OUTER := 1480.0
 
 var _water_y_cache: Dictionary = {}
 
@@ -167,7 +255,33 @@ func viewpoint_centre_for(z: float) -> float:
 	## Route distance of the overlook nearest z. Everything else keys off this.
 	## Never earlier than the first one: a run starts at z = 0 and an overlook
 	## rounded to a negative centre would hang its spur off the start line.
-	return maxf(VIEWPOINT_FIRST + VIEWPOINT_PERIOD * roundf((z - VIEWPOINT_FIRST) / VIEWPOINT_PERIOD), VIEWPOINT_FIRST)
+	return viewpoint_centre_static(z)
+
+
+static func viewpoint_centre_static(z: float) -> float:
+	var k := roundf((z - VIEWPOINT_FIRST) / VIEWPOINT_PERIOD)
+	var candidate := VIEWPOINT_FIRST + VIEWPOINT_PERIOD * k
+	if candidate < VIEWPOINT_FIRST:
+		return VIEWPOINT_FIRST
+	if _viewpoint_fits_biome(candidate):
+		return candidate
+	var best := VIEWPOINT_FIRST
+	var best_dist := INF
+	for delta in range(-6, 7):
+		var alt := VIEWPOINT_FIRST + VIEWPOINT_PERIOD * (k + float(delta))
+		if alt < VIEWPOINT_FIRST or not _viewpoint_fits_biome(alt):
+			continue
+		var d := absf(alt - z)
+		if d < best_dist or (is_equal_approx(d, best_dist) and alt < best):
+			best_dist = d
+			best = alt
+	return best
+
+
+static func _viewpoint_fits_biome(centre: float) -> bool:
+	## Keep a detour inside one biome so the spur does not cross a region cut.
+	var start := floorf(centre / BIOME_LENGTH) * BIOME_LENGTH
+	return centre - SPUR_HALF_SPAN >= start and centre + SPUR_HALF_SPAN <= start + BIOME_LENGTH
 
 
 func viewpoint_side_for(centre_z: float) -> float:
@@ -306,7 +420,12 @@ const SEAT_EYE := 1.24
 ## two thirds sky; much past this and it is two thirds the terrace they are
 ## sitting on, because a bench set back from a cliff edge cannot see the cliff.
 ## This is the angle that fills the frame with water and the far side.
-const SEAT_TILT := deg_to_rad(4.0)
+## Raised with the seated lens. Dropping the field of view from 78° to 62° took
+## sixteen degrees out of the bottom of the frame, and the near shore — which is
+## about twenty-eight degrees below the eye — was the first thing to fall out of
+## it on the themes whose basin sits deepest. The tilt has to come down by
+## roughly half of what the lens gave up.
+const SEAT_TILT := deg_to_rad(15.0)
 
 
 func viewpoint_seat(z: float) -> Transform3D:
@@ -319,7 +438,16 @@ func viewpoint_seat(z: float) -> Transform3D:
 	var side := viewpoint_side_for(centre)
 	var lateral := side * (spur_offset(best) + PLATFORM_BENCH_OUT)
 	var flat := frame_flat_at(best)
-	var eye := point_at(best, lateral) + flat.y * SEAT_EYE - flat.x * side * 0.15
+	# Outboard of the bench centre, not inboard of it.
+	#
+	# The bench is 1.15 m across and its top sits 0.78 m below the eye. Set back
+	# behind the middle of it, the outer edge of the seat is 0.72 m away and
+	# therefore 47° below the horizon — and a 78° lens pitched down 12° sees to
+	# 51°, so the last four degrees of frame were a slab of bench timber running
+	# the full width of the picture. Nobody sitting on a bench sees the bench.
+	# Half a metre forward puts its edge at 70° and out of shot, and buys a little
+	# more of the drop at the same time.
+	var eye := point_at(best, lateral) + flat.y * SEAT_EYE + flat.x * side * 0.30
 	# Looking out over the water: away from the road, along the seat's own axis,
 	# and tilted down.
 	#
@@ -418,9 +546,59 @@ func viewpoint_water_y(centre_z: float) -> float:
 	var lowest := INF
 	for i in 13:
 		lowest = minf(lowest, height_at(centre_z + LAKE_SPAN * (float(i) / 6.0 - 1.0)))
-	var level: float = lowest - WATER_DROP
+	var level: float = lowest - _basin_drop(theme_at(centre_z))
 	_water_y_cache[key] = level
 	return level
+
+
+func _basin_near(theme_id: int) -> float:
+	## Distance from the carriageway to the near shore. Forest is a gorge you
+	## almost cannot see until the terrace; coast drops sooner onto open water.
+	match theme_id:
+		1:
+			return 228.0
+		2:
+			return 268.0
+		3:
+			return 292.0
+		_:
+			return LAKE_NEAR
+
+
+func _basin_far(theme_id: int) -> float:
+	match theme_id:
+		1:
+			return 410.0
+		2:
+			return 1180.0
+		3:
+			return 495.0
+		_:
+			return LAKE_FAR
+
+
+func _basin_drop(theme_id: int) -> float:
+	match theme_id:
+		1:
+			return 48.0
+		2:
+			return 56.0
+		3:
+			return 36.0
+		_:
+			return WATER_DROP
+
+
+func _basin_far_rise(theme_id: int) -> float:
+	match theme_id:
+		1:
+			return 52.0
+		2:
+			return 8.0
+		3:
+			return 58.0
+		_:
+			return FAR_BANK_RISE
 
 
 func viewpoint_near_shore(z: float) -> float:
@@ -431,7 +609,8 @@ func viewpoint_near_shore(z: float) -> float:
 	## half a kilometre, and the short one puts a point and a bay every couple of
 	## hundred metres. A single sine is a shore that curves, which from a fixed
 	## viewpoint is indistinguishable from a straight one.
-	return LAKE_NEAR + 11.0 * sin(z * 0.0125 + _terrain_phase) + 7.0 * sin(z * 0.0268 + _terrain_phase * 1.9)
+	var near := _basin_near(theme_at(viewpoint_centre_for(z)))
+	return near + 11.0 * sin(z * 0.0125 + _terrain_phase) + 7.0 * sin(z * 0.0268 + _terrain_phase * 1.9)
 
 
 func viewpoint_far_shore(z: float, centre_z: float) -> float:
@@ -440,7 +619,8 @@ func viewpoint_far_shore(z: float, centre_z: float) -> float:
 	var u := clampf(absf(z - centre_z) / LAKE_SPAN, 0.0, 1.0)
 	var lens := sqrt(maxf(1.0 - u * u, 0.0))
 	var near := viewpoint_near_shore(z)
-	return near + (LAKE_FAR - LAKE_NEAR) * (0.25 + 0.75 * lens) + 26.0 * sin(z * 0.0085 + _terrain_phase * 1.7)
+	var far := _basin_far(theme_at(centre_z))
+	return near + (far - near) * (0.25 + 0.75 * lens) + 26.0 * sin(z * 0.0085 + _terrain_phase * 1.7)
 
 
 func viewpoint_reserves(z: float, lateral: float) -> bool:
@@ -500,6 +680,7 @@ func _viewpoint_land_drop(z: float, out: float, centre_z: float) -> float:
 	## Absolute-height shaping written as a drop below the carriageway plane, so
 	## the lake bed stays under one level water surface however the road rolls.
 	## Negative is above the road: the headland is high ground.
+	var theme_id := theme_at(centre_z)
 	var water := height_at(z) - viewpoint_water_y(centre_z)
 	var near := viewpoint_near_shore(z)
 	var far := viewpoint_far_shore(z, centre_z)
@@ -516,11 +697,15 @@ func _viewpoint_land_drop(z: float, out: float, centre_z: float) -> float:
 		# the crest instead put a shoulder of gentle grass between the platform
 		# and anything worth looking at.
 		var t := clampf((out - HEADLAND_CREST) / maxf(near - HEADLAND_CREST, 1.0), 0.0, 1.0)
-		# Eased, but not so much that the foot of it flattens out: run the last
-		# third of a drop into the water at a shallow angle and what the rider is
-		# looking down at is twenty metres of beach, which is the one thing a
-		# clifftop view must not have at the bottom of it.
-		var fall := 1.0 - pow(1.0 - t, 1.5)
+		# Coast and forest fall faster so the water is a drop, not a beach. Country
+		# keeps the Wastwater talus. Mountain is a tarn: steep, then a shelf.
+		var fall_exp := 1.5
+		match theme_id:
+			1, 2:
+				fall_exp = 1.18
+			3:
+				fall_exp = 1.32
+		var fall := 1.0 - pow(1.0 - t, fall_exp)
 		# A ledge two thirds of the way down: one break in the face reads as rock
 		# rather than as a ramp, and it catches light differently from the slope
 		# above and below it.
@@ -528,12 +713,25 @@ func _viewpoint_land_drop(z: float, out: float, centre_z: float) -> float:
 		# The face carries on under the surface rather than stopping at it, so the
 		# waterline lands on the steep part of the slope instead of on the shelf
 		# at the end of it.
-		return lerpf(crest, water + 4.5, fall)
+		return lerpf(crest, water + 0.4, fall)
 	if out <= far:
 		var s := (out - near) / maxf(far - near, 1.0)
 		return water + 1.6 + LAKE_BED * sin(PI * s)
 	var r := clampf((out - far) / FAR_BANK, 0.0, 1.0)
-	return water + 1.6 - (FAR_BANK_RISE + 1.6) * smoothstep(0.0, 1.0, r)
+	# Country and mountain: mass on the sides, a pass in the middle. Forest: the
+	# gorge walls stay up. Coast: the far shore barely exists, so the sea meets
+	# the sky instead of a second range of hills.
+	var col := 1.0
+	match theme_id:
+		1:
+			col = 1.0 - 0.10 * exp(-pow((z - centre_z) / 220.0, 2.0))
+		2:
+			col = 0.16 + 0.20 * (1.0 - exp(-pow((z - centre_z) / 420.0, 2.0)))
+		3:
+			col = 1.0 - 0.58 * exp(-pow((z - centre_z) / 260.0, 2.0))
+		_:
+			col = 1.0 - 0.40 * exp(-pow((z - centre_z) / 320.0, 2.0))
+	return water + 1.6 - (_basin_far_rise(theme_id) + 1.6) * smoothstep(0.0, 1.0, r) * col
 
 
 func road_bounds_at(
@@ -613,20 +811,24 @@ func hilliness_at(z: float) -> float:
 
 func height_at(z: float) -> float:
 	var h := hilliness_at(z)
+	var s := _shape_at(z)
 	# Two long wavelengths only. Layering short waves onto hills is mathematically
 	# smooth but creates repeated sharp-looking crests at riding speed. These broad
 	# grades keep the horizon readable in the same way Café Racer's roads do.
+	# Biomes scale the same waves rather than introducing new ones: a new
+	# frequency would kink the ribbon wherever its amplitude left zero.
 	return _shape_scale * (
-		sin(z * 0.0024 + _height_phase_a) * 7.5
-		+ sin(z * 0.0065 + _height_phase_b) * 2.8 * h
+		sin(z * 0.0024 + _height_phase_a) * 7.5 * s.z
+		+ sin(z * 0.0065 + _height_phase_b) * 2.8 * h * s.w
 	)
 
 
 func center_x_at(z: float) -> float:
 	var t := twistiness_at(z)
+	var s := _shape_at(z)
 	return _shape_scale * (
-		sin(z * 0.0038 + _curve_phase_a) * 24.0
-		+ sin(z * 0.010 + _curve_phase_b) * 5.0 * t
+		sin(z * 0.0038 + _curve_phase_a) * 24.0 * s.x
+		+ sin(z * 0.010 + _curve_phase_b) * 5.0 * t * s.y
 	)
 
 

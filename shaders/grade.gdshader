@@ -19,7 +19,7 @@ uniform float vignette_start : hint_range(0.1, 1.0) = 0.52;
 // Per-pixel noise. At this amplitude it is invisible as grain and works as
 // dithering: flat-coloured sky and ground are exactly where 8-bit output bands,
 // and the bands are the most obvious cheap-render tell in the whole frame.
-uniform float grain : hint_range(0.0, 0.1) = 0.010;
+uniform float grain : hint_range(0.0, 0.1) = 0.014;
 uniform float seed = 0.0;
 // Warm the centre, cool the edges. This is the light falling off round a lens
 // rather than a colour choice, and it stops the vignette reading as a grey mask

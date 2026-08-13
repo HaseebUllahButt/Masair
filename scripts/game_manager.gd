@@ -12,7 +12,7 @@ signal garage_changed
 const BikeCatalog := preload("res://scripts/bike_catalog.gd")
 const SAVE_PATH := "user://masair_save.cfg"
 const COMBO_WINDOW := 2.6
-const CREDIT_DISTANCE := 25.0
+const CREDIT_DISTANCE := 70.0
 
 var distance_m: float = 0.0
 var best_m: float = 0.0
@@ -29,6 +29,7 @@ var _player: Node3D
 var _combo_timer: float = 0.0
 var _next_credit_distance: float = CREDIT_DISTANCE
 var _unbanked_credits: int = 0
+var persist_progress: bool = true
 
 
 func _ready() -> void:
@@ -70,7 +71,7 @@ func register_near_miss() -> void:
 	_combo_timer = COMBO_WINDOW
 	var bonus := 5.0 * float(combo) * score_multiplier
 	bonus_m += bonus
-	_award_credits(combo * 2)
+	_award_credits(1)
 	near_miss.emit(bonus, combo)
 
 
@@ -99,8 +100,14 @@ func restart() -> void:
 	distance_changed.emit(0.0)
 	if _player and _player.has_method("reset_run"):
 		_player.call("reset_run")
+	var path := get_node_or_null("/root/RoadPath")
+	if path and path.has_method("randomize_world"):
+		path.call("randomize_world")
 	var scene := get_tree().current_scene
 	if scene:
+		var streamer := scene.get_node_or_null("RoadStreamer")
+		if streamer and streamer.has_method("reset_world"):
+			streamer.call("reset_world")
 		var traffic := scene.get_node_or_null("TrafficManager")
 		if traffic and traffic.has_method("reset_world"):
 			traffic.call("reset_world")
@@ -193,8 +200,8 @@ func _award_credits(amount: int) -> void:
 	credits += amount
 	_unbanked_credits += amount
 	currency_changed.emit(credits)
-	# Save every 100 metres' worth. The UI updates every award, but normal riding
-	# does not hammer the save file twice a second at top speed.
+	# Save every few hundred metres' worth. The UI updates every award, but
+	# normal riding does not hammer the save file twice a second at top speed.
 	if _unbanked_credits >= 4:
 		_save_progress()
 		_unbanked_credits = 0
@@ -264,6 +271,8 @@ func _load_progress() -> void:
 
 
 func _save_progress() -> void:
+	if not persist_progress:
+		return
 	var cfg := ConfigFile.new()
 	cfg.load(SAVE_PATH)
 	cfg.set_value("score", "best_m", best_m)

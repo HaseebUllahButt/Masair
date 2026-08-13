@@ -4,8 +4,11 @@ extends Node3D
 ## One tubular chassis: every part hangs off a joint. Forks run to the front
 ## axle, the swingarm runs to the rear, the tank sits on the top tube. That is
 ## what stops it reading as a pile of primitives parked next to each other.
+## Every garage bike is the same kind of motorcycle: round lamp, clip-ons,
+## teardrop tank, hump tail. Paint, tank, seat and pipes change. Fairings do not.
 
 const LowPoly := preload("res://scripts/low_poly.gd")
+const BikeCatalog := preload("res://scripts/bike_catalog.gd")
 const CONTACT_SHADOW_SHADER: Shader = preload("res://shaders/contact_shadow.gdshader")
 
 const BLACK := Color("141418")
@@ -31,11 +34,15 @@ const BLUE := Color("2f6aa0")
 const BLUE_D := Color("1e4a74")
 const GOLD := Color("c9a24a")
 const GOLD_D := Color("8a6a28")
+const GREEN := Color("1e4a32")
+const GREEN_D := Color("123224")
+const INK := Color("1c1c22")
+const INK_D := Color("101014")
 const MIRROR := Color("9fb2c4")
 const SHELL := Color("3b4450")
 
 const METALS: Array[Color] = [ALUM, ALUM_D, CHROME, COPPER, COPPER_D]
-const PAINTED: Array[Color] = [PAINT, PAINT_D, CREAM, BLUE, BLUE_D, GOLD, GOLD_D]
+const PAINTED: Array[Color] = [PAINT, PAINT_D, CREAM, BLUE, BLUE_D, GOLD, GOLD_D, GREEN, GREEN_D, INK, INK_D]
 
 const HEADLIGHT_AT := Vector3(0, 0.82, 0.64)
 const WHEEL_R := 0.33
@@ -64,8 +71,7 @@ var _hero_view: bool = false
 var _hero_yaw0: float = deg_to_rad(18.0)
 var _hero_t: float = 0.0
 var _bike_style: int = 0
-var _body_shell: MeshInstance3D
-var _kit_parts: Array = [[], []]
+var _kits: Array[Node3D] = []
 var _fenders: Array[MeshInstance3D] = []
 var _dial_top_speed: float = DIAL_TOP_SPEED
 
@@ -124,179 +130,357 @@ func set_hero_view(on: bool) -> void:
 
 
 func set_bike_style(style: int) -> void:
-	_bike_style = clampi(style, 0, 2)
-	_dial_top_speed = [62.0, 68.0, 76.0][_bike_style]
-	if _body_shell:
-		_body_shell.visible = _bike_style == 0
-	for i in _kit_parts.size():
-		for node in _kit_parts[i]:
-			(node as Node3D).visible = i == _bike_style - 1
+	var n := _kits.size()
+	if n == 0:
+		return
+	_bike_style = clampi(style, 0, n - 1)
+	_dial_top_speed = float(BikeCatalog.BIKES[_bike_style]["top_speed"])
+	for i in n:
+		_kits[i].visible = i == _bike_style
 	for i in _fenders.size():
 		_fenders[i].visible = i == _bike_style
 
 
 func _build_bike_variants() -> void:
-	## Same café: round lamp, clip-ons, teardrop tank, hump tail. The unlocked
-	## bikes change the tank and the tail, not the kind of motorcycle.
-	_build_sabre()
-	_build_tempest()
+	## Five cafés, one family. The diamond frame, twin and wheels stay; tank,
+	## seat, tail and pipes are rebuilt so the picker changes the machine.
+	_make_kit("MesaKit", _mesa_spec())
+	_make_kit("SabreKit", _sabre_spec())
+	_make_kit("HalcyonKit", _halcyon_spec())
+	_make_kit("TempestKit", _tempest_spec())
+	_make_kit("RavenKit", _raven_spec())
 
 
-func _build_sabre() -> void:
-	## Longer café. Slimmer tank, tucked seat, stretched hump.
-	var kit := Node3D.new()
-	kit.name = "SabreKit"
-	add_child(kit)
-	_kit_parts[0].append(kit)
+func _mesa_spec() -> Dictionary:
+	## Classic red café. Honest teardrop, cream belly, one megaphone.
+	return {
+		"paint": PAINT,
+		"belly": CREAM,
+		"stripe": CREAM,
+		"pipe": CHROME,
+		"tip": ALUM_D,
+		"exhaust": "single",
+		"knee": 0.178,
+		"filler_z": -0.12,
+		"stripe_len": 0.62,
+		"tank_c": [
+			Vector3(0, 0.86, 0.58),
+			Vector3(0, 0.84, 0.42),
+			Vector3(0, 0.82, 0.22),
+			Vector3(0, 0.81, 0.02),
+			Vector3(0, 0.82, -0.16),
+			Vector3(0, 0.84, -0.28),
+		],
+		"tank_r": [
+			Vector2(0.070, 0.052),
+			Vector2(0.120, 0.082),
+			Vector2(0.175, 0.110),
+			Vector2(0.185, 0.112),
+			Vector2(0.140, 0.090),
+			Vector2(0.090, 0.065),
+		],
+		"belly_c": [
+			Vector3(0, 0.76, 0.42),
+			Vector3(0, 0.74, 0.18),
+			Vector3(0, 0.735, -0.02),
+			Vector3(0, 0.75, -0.18),
+		],
+		"belly_r": [Vector2(0.090, 0.042), Vector2(0.145, 0.050), Vector2(0.150, 0.048), Vector2(0.100, 0.038)],
+		"seat_c": [Vector3(0, 0.78, -0.18), Vector3(0, 0.76, -0.34), Vector3(0, 0.78, -0.48)],
+		"seat_r": [Vector2(0.092, 0.034), Vector2(0.086, 0.030), Vector2(0.070, 0.026)],
+		"tail_c": [
+			Vector3(0, 0.84, -0.46),
+			Vector3(0, 0.88, -0.60),
+			Vector3(0, 0.90, -0.74),
+			Vector3(0, 0.86, -0.86),
+		],
+		"tail_r": [Vector2(0.095, 0.050), Vector2(0.082, 0.046), Vector2(0.062, 0.038), Vector2(0.038, 0.028)],
+	}
 
-	var body := LowPoly.new()
-	body.smooth = true
-	_loft(
-		body,
-		[
-			Vector3(0, 0.87, 0.62),
+
+func _sabre_spec() -> Dictionary:
+	## Longer café. Slimmer tank, tucked seat, stretched hump, twin pipes.
+	return {
+		"paint": BLUE,
+		"belly": CREAM,
+		"stripe": CREAM,
+		"pipe": CHROME,
+		"tip": ALUM_D,
+		"exhaust": "twin",
+		"knee": 0.162,
+		"filler_z": -0.16,
+		"stripe_len": 0.70,
+		"tank_c": [
+			Vector3(0, 0.87, 0.64),
 			Vector3(0, 0.85, 0.44),
-			Vector3(0, 0.83, 0.22),
-			Vector3(0, 0.82, 0.00),
-			Vector3(0, 0.83, -0.20),
-			Vector3(0, 0.85, -0.36),
+			Vector3(0, 0.83, 0.20),
+			Vector3(0, 0.82, -0.02),
+			Vector3(0, 0.83, -0.22),
+			Vector3(0, 0.85, -0.38),
 		],
-		[
-			Vector2(0.062, 0.048),
-			Vector2(0.108, 0.076),
-			Vector2(0.158, 0.100),
-			Vector2(0.168, 0.102),
-			Vector2(0.128, 0.082),
-			Vector2(0.080, 0.056),
+		"tank_r": [
+			Vector2(0.058, 0.046),
+			Vector2(0.100, 0.072),
+			Vector2(0.148, 0.096),
+			Vector2(0.158, 0.098),
+			Vector2(0.118, 0.078),
+			Vector2(0.072, 0.052),
 		],
-		BLUE
-	)
-	_sphere(body, Vector3(0, 0.87, 0.64), 0.048, BLUE)
-	_loft(
-		body,
-		[
+		"belly_c": [
 			Vector3(0, 0.76, 0.44),
 			Vector3(0, 0.74, 0.18),
 			Vector3(0, 0.735, -0.04),
 			Vector3(0, 0.75, -0.22),
 		],
-		[Vector2(0.082, 0.038), Vector2(0.132, 0.046), Vector2(0.138, 0.044), Vector2(0.090, 0.034)],
-		CREAM,
-		12
-	)
-	_capsule(body, Vector3(0, 0.930, 0.10), 0.013, 0.70, CREAM, Vector3(90, 0, 0))
-	for s in [-1.0, 1.0]:
-		_capsule(body, Vector3(s * 0.028, 0.928, 0.10), 0.005, 0.72, COPPER, Vector3(90, 0, 0))
-		_cyl(body, Vector3(s * 0.162, 0.812, 0.06), 0.024, 0.008, CHROME, Vector3(0, 0, 90))
-	_cyl(body, Vector3(0, 0.942, -0.16), 0.036, 0.020, ALUM, Vector3(0, 0, 0))
-	_cyl(body, Vector3(0, 0.956, -0.16), 0.024, 0.010, CHROME, Vector3(0, 0, 0))
-	_capsule(body, Vector3(0, 0.78, -0.40), 0.062, 0.30, LEATHER, Vector3(90, 0, 0))
-	_sphere(body, Vector3(0, 0.80, -0.26), 0.054, LEATHER)
-	_loft(
-		body,
-		[
-			Vector3(0, 0.82, -0.50),
-			Vector3(0, 0.86, -0.66),
+		"belly_r": [Vector2(0.082, 0.038), Vector2(0.132, 0.046), Vector2(0.138, 0.044), Vector2(0.090, 0.034)],
+		"seat_c": [Vector3(0, 0.78, -0.24), Vector3(0, 0.76, -0.42), Vector3(0, 0.78, -0.56)],
+		"seat_r": [Vector2(0.080, 0.030), Vector2(0.074, 0.026), Vector2(0.058, 0.022)],
+		"tail_c": [
+			Vector3(0, 0.82, -0.52),
+			Vector3(0, 0.86, -0.68),
+			Vector3(0, 0.88, -0.84),
+			Vector3(0, 0.84, -0.98),
+		],
+		"tail_r": [Vector2(0.084, 0.044), Vector2(0.070, 0.038), Vector2(0.050, 0.030), Vector2(0.030, 0.020)],
+	}
+
+
+func _halcyon_spec() -> Dictionary:
+	## Thruxton peanut. British racing green, gold pinstripe, twin reverse-cones.
+	return {
+		"paint": GREEN,
+		"tail_paint": GOLD,
+		"belly": GOLD,
+		"stripe": GOLD,
+		"pipe": CHROME,
+		"tip": CHROME,
+		"exhaust": "twin",
+		"knee": 0.198,
+		"filler_z": -0.08,
+		"stripe_len": 0.56,
+		"tank_c": [
+			Vector3(0, 0.88, 0.52),
+			Vector3(0, 0.87, 0.36),
+			Vector3(0, 0.85, 0.16),
+			Vector3(0, 0.84, -0.02),
+			Vector3(0, 0.85, -0.16),
+			Vector3(0, 0.86, -0.26),
+		],
+		"tank_r": [
+			Vector2(0.078, 0.058),
+			Vector2(0.138, 0.092),
+			Vector2(0.198, 0.122),
+			Vector2(0.208, 0.126),
+			Vector2(0.150, 0.096),
+			Vector2(0.095, 0.068),
+		],
+		"belly_c": [
+			Vector3(0, 0.76, 0.36),
+			Vector3(0, 0.73, 0.14),
+			Vector3(0, 0.725, -0.04),
+			Vector3(0, 0.75, -0.16),
+		],
+		"belly_r": [Vector2(0.100, 0.044), Vector2(0.162, 0.054), Vector2(0.168, 0.052), Vector2(0.112, 0.040)],
+		"seat_c": [Vector3(0, 0.80, -0.16), Vector3(0, 0.78, -0.30), Vector3(0, 0.80, -0.42)],
+		"seat_r": [Vector2(0.100, 0.036), Vector2(0.094, 0.032), Vector2(0.078, 0.028)],
+		"tail_c": [
+			Vector3(0, 0.86, -0.40),
+			Vector3(0, 0.92, -0.54),
+			Vector3(0, 0.94, -0.68),
 			Vector3(0, 0.88, -0.82),
-			Vector3(0, 0.84, -0.96),
 		],
-		[
-			Vector2(0.088, 0.046),
-			Vector2(0.074, 0.040),
-			Vector2(0.054, 0.032),
-			Vector2(0.032, 0.022),
-		],
-		BLUE
-	)
-	_sphere(body, Vector3(0, 0.84, -0.98), 0.030, BLUE)
-	_sphere(body, Vector3(0, 0.80, -1.00), 0.024, TAIL, true)
-	_bone(body, SEAT_J, Vector3(0, 0.84, -0.54), 0.012, BLACK_S)
-	_attach(kit, body, "SabreBody")
+		"tail_r": [Vector2(0.108, 0.054), Vector2(0.092, 0.050), Vector2(0.070, 0.042), Vector2(0.042, 0.030)],
+	}
 
 
-func _build_tempest() -> void:
-	## Big-tank café. Fatter teardrop, cream and gold, taller hump.
+func _tempest_spec() -> Dictionary:
+	## Italian round-case café. Fat cream tank, gold hump, upswept megaphones.
+	return {
+		"paint": CREAM,
+		"tail_paint": GOLD,
+		"belly": GOLD,
+		"stripe": GOLD,
+		"pipe": CHROME,
+		"tip": COPPER,
+		"exhaust": "high",
+		"knee": 0.208,
+		"filler_z": -0.10,
+		"stripe_len": 0.58,
+		"tank_c": [
+			Vector3(0, 0.90, 0.54),
+			Vector3(0, 0.88, 0.38),
+			Vector3(0, 0.86, 0.16),
+			Vector3(0, 0.85, -0.04),
+			Vector3(0, 0.86, -0.18),
+			Vector3(0, 0.88, -0.30),
+		],
+		"tank_r": [
+			Vector2(0.090, 0.064),
+			Vector2(0.150, 0.100),
+			Vector2(0.210, 0.130),
+			Vector2(0.220, 0.132),
+			Vector2(0.165, 0.102),
+			Vector2(0.102, 0.072),
+		],
+		"belly_c": [
+			Vector3(0, 0.76, 0.38),
+			Vector3(0, 0.73, 0.14),
+			Vector3(0, 0.725, -0.04),
+			Vector3(0, 0.75, -0.16),
+		],
+		"belly_r": [Vector2(0.108, 0.046), Vector2(0.168, 0.056), Vector2(0.174, 0.054), Vector2(0.116, 0.042)],
+		"seat_c": [Vector3(0, 0.82, -0.18), Vector3(0, 0.80, -0.32), Vector3(0, 0.82, -0.44)],
+		"seat_r": [Vector2(0.108, 0.038), Vector2(0.100, 0.034), Vector2(0.082, 0.030)],
+		"tail_c": [
+			Vector3(0, 0.88, -0.42),
+			Vector3(0, 0.96, -0.56),
+			Vector3(0, 1.00, -0.70),
+			Vector3(0, 0.92, -0.86),
+		],
+		"tail_r": [Vector2(0.112, 0.056), Vector2(0.096, 0.052), Vector2(0.072, 0.044), Vector2(0.042, 0.032)],
+	}
+
+
+func _raven_spec() -> Dictionary:
+	## Black bomber. Long tank, copper pipes, short tail, almost no brightwork.
+	return {
+		"paint": INK,
+		"belly": COPPER_D,
+		"stripe": COPPER,
+		"pipe": COPPER,
+		"tip": BLACK_S,
+		"exhaust": "twin",
+		"knee": 0.170,
+		"filler_z": -0.18,
+		"stripe_len": 0.74,
+		"tank_c": [
+			Vector3(0, 0.84, 0.66),
+			Vector3(0, 0.83, 0.46),
+			Vector3(0, 0.81, 0.22),
+			Vector3(0, 0.80, 0.00),
+			Vector3(0, 0.81, -0.22),
+			Vector3(0, 0.83, -0.40),
+		],
+		"tank_r": [
+			Vector2(0.064, 0.048),
+			Vector2(0.112, 0.078),
+			Vector2(0.168, 0.104),
+			Vector2(0.176, 0.106),
+			Vector2(0.130, 0.084),
+			Vector2(0.078, 0.056),
+		],
+		"belly_c": [
+			Vector3(0, 0.74, 0.46),
+			Vector3(0, 0.72, 0.20),
+			Vector3(0, 0.715, -0.04),
+			Vector3(0, 0.73, -0.24),
+		],
+		"belly_r": [Vector2(0.086, 0.040), Vector2(0.138, 0.048), Vector2(0.144, 0.046), Vector2(0.094, 0.036)],
+		"seat_c": [Vector3(0, 0.76, -0.26), Vector3(0, 0.74, -0.44), Vector3(0, 0.76, -0.58)],
+		"seat_r": [Vector2(0.084, 0.030), Vector2(0.078, 0.026), Vector2(0.060, 0.022)],
+		"tail_c": [
+			Vector3(0, 0.80, -0.54),
+			Vector3(0, 0.84, -0.70),
+			Vector3(0, 0.86, -0.86),
+			Vector3(0, 0.82, -1.00),
+		],
+		"tail_r": [Vector2(0.078, 0.040), Vector2(0.064, 0.034), Vector2(0.046, 0.026), Vector2(0.028, 0.018)],
+	}
+
+
+func _make_kit(node_name: String, spec: Dictionary) -> Node3D:
 	var kit := Node3D.new()
-	kit.name = "TempestKit"
+	kit.name = node_name
 	add_child(kit)
-	_kit_parts[1].append(kit)
-
 	var body := LowPoly.new()
 	body.smooth = true
-	_loft(
-		body,
-		[
-			Vector3(0, 0.88, 0.56),
-			Vector3(0, 0.86, 0.40),
-			Vector3(0, 0.84, 0.18),
-			Vector3(0, 0.83, -0.02),
-			Vector3(0, 0.84, -0.18),
-			Vector3(0, 0.86, -0.30),
-		],
-		[
-			Vector2(0.085, 0.060),
-			Vector2(0.145, 0.095),
-			Vector2(0.205, 0.125),
-			Vector2(0.215, 0.128),
-			Vector2(0.160, 0.100),
-			Vector2(0.100, 0.070),
-		],
-		CREAM
-	)
-	_sphere(body, Vector3(0, 0.88, 0.58), 0.058, CREAM)
-	_loft(
-		body,
-		[
-			Vector3(0, 0.76, 0.40),
-			Vector3(0, 0.73, 0.16),
-			Vector3(0, 0.725, -0.04),
-			Vector3(0, 0.75, -0.18),
-		],
-		[Vector2(0.100, 0.044), Vector2(0.160, 0.054), Vector2(0.168, 0.052), Vector2(0.110, 0.040)],
-		GOLD,
-		12
-	)
-	_capsule(body, Vector3(0, 0.948, 0.12), 0.016, 0.58, GOLD, Vector3(90, 0, 0))
+	_spec_tank(body, spec)
+	_spec_seat(body, spec)
+	_spec_hardware(body, spec)
+	_spec_exhaust(body, spec)
+	_attach(kit, body, node_name + "Body")
+	_kits.append(kit)
+	return kit
+
+
+func _spec_tank(b: LowPoly, spec: Dictionary) -> void:
+	var paint: Color = spec["paint"]
+	var tank_c: Array = spec["tank_c"]
+	_loft(b, tank_c, spec["tank_r"], paint)
+	_sphere(b, tank_c[0] + Vector3(0, 0.00, 0.02), float((spec["tank_r"] as Array)[0].x) * 0.78, paint)
+	_loft(b, spec["belly_c"], spec["belly_r"], spec["belly"], 12)
+	_capsule(b, Vector3(0, 0.928, 0.10), 0.014, float(spec["stripe_len"]), spec["stripe"], Vector3(90, 0, 0))
 	for s in [-1.0, 1.0]:
-		_capsule(body, Vector3(s * 0.032, 0.945, 0.12), 0.005, 0.60, COPPER, Vector3(90, 0, 0))
-		_cyl(body, Vector3(s * 0.208, 0.825, 0.08), 0.028, 0.008, CHROME, Vector3(0, 0, 90))
-	_cyl(body, Vector3(0, 0.958, -0.10), 0.042, 0.024, ALUM, Vector3(0, 0, 0))
-	_cyl(body, Vector3(0, 0.974, -0.10), 0.028, 0.012, CHROME, Vector3(0, 0, 0))
-	_capsule(body, Vector3(0, 0.82, -0.32), 0.074, 0.26, LEATHER, Vector3(90, 0, 0))
-	_sphere(body, Vector3(0, 0.84, -0.22), 0.062, LEATHER)
-	_loft(
-		body,
-		[
-			Vector3(0, 0.86, -0.44),
-			Vector3(0, 0.92, -0.58),
-			Vector3(0, 0.96, -0.72),
-			Vector3(0, 0.90, -0.86),
-		],
-		[
-			Vector2(0.105, 0.054),
-			Vector2(0.090, 0.050),
-			Vector2(0.068, 0.042),
-			Vector2(0.040, 0.030),
-		],
-		GOLD
-	)
-	_sphere(body, Vector3(0, 0.90, -0.88), 0.034, GOLD)
-	_sphere(body, Vector3(0, 0.86, -0.90), 0.026, TAIL, true)
-	_bone(body, SEAT_J, Vector3(0, 0.86, -0.50), 0.012, BLACK_S)
-	_attach(kit, body, "TempestBody")
+		_capsule(b, Vector3(s * 0.030, 0.924, 0.10), 0.005, float(spec["stripe_len"]) + 0.02, COPPER, Vector3(90, 0, 0))
+		_cyl(b, Vector3(s * float(spec["knee"]), 0.818, 0.06), 0.026, 0.008, CHROME, Vector3(0, 0, 90))
+	var filler_z: float = float(spec["filler_z"])
+	_cyl(b, Vector3(0, 0.942, filler_z), 0.038, 0.022, ALUM, Vector3(0, 0, 0))
+	_cyl(b, Vector3(0, 0.956, filler_z), 0.026, 0.012, CHROME, Vector3(0, 0, 0))
+
+
+func _spec_seat(b: LowPoly, spec: Dictionary) -> void:
+	var paint: Color = spec.get("tail_paint", spec["paint"])
+	var tail: Array = spec["tail_c"]
+	_loft(b, spec["seat_c"], spec["seat_r"], LEATHER, 12)
+	_loft(b, tail, spec["tail_r"], paint, 12)
+	var tip: Vector3 = tail[tail.size() - 1]
+	_sphere(b, tip + Vector3(0, 0.00, -0.02), 0.032, paint.lightened(0.04))
+	_sphere(b, tip + Vector3(0, -0.04, -0.04), 0.024, TAIL, true)
+	_bone(b, SEAT_J, Vector3(0, tip.y - 0.02, tail[0].z), 0.012, BLACK_S)
+
+
+func _spec_hardware(b: LowPoly, spec: Dictionary) -> void:
+	var paint: Color = spec["paint"]
+	# Side covers and a small oil tank under the seat so the midriff is finished.
+	for s in [-1.0, 1.0]:
+		_bx(b, Vector3(s * 0.12, 0.58, -0.18), Vector3(0.04, 0.10, 0.18), paint, 0.018)
+		_bx(b, Vector3(s * 0.12, 0.58, -0.18), Vector3(0.018, 0.06, 0.10), BLACK_S, 0.008)
+	_bx(b, Vector3(0, 0.56, -0.16), Vector3(0.16, 0.08, 0.14), ALUM_D, 0.02)
+	# Rear hoop and a cream number plate so the tail is a machine, not a blob.
+	var tail: Array = spec["tail_c"]
+	var tip: Vector3 = tail[tail.size() - 1]
+	_bone(b, Vector3(0, 0.52, REAR_Z), Vector3(0, 0.70, tip.z + 0.08), 0.010, BLACK_S)
+	_bx(b, Vector3(0, 0.58, tip.z + 0.04), Vector3(0.14, 0.10, 0.012), CREAM, 0.006)
+	# A short rear fender over the tyre, painted with the tank.
+	_bx(b, Vector3(0, 0.56, REAR_Z + 0.02), Vector3(0.15, 0.026, 0.28), paint, 0.02)
+	for s in [-1.0, 1.0]:
+		_bone(b, Vector3(s * 0.07, 0.56, REAR_Z + 0.02), Vector3(s * 0.09, WHEEL_R + 0.08, REAR_Z + 0.10), 0.008, ALUM_D)
+
+
+func _spec_exhaust(b: LowPoly, spec: Dictionary) -> void:
+	var kind: String = spec["exhaust"]
+	var pipe: Color = spec["pipe"]
+	var tip: Color = spec["tip"]
+	var head_y := ENGINE.y + 0.18
+	match kind:
+		"single":
+			_exhaust_side(b, -1.0, 0.48, -0.76, pipe, tip, head_y)
+		"high":
+			for s in [-1.0, 1.0]:
+				_exhaust_side(b, s, 0.62, -0.70, pipe, tip, head_y)
+		_:
+			for s in [-1.0, 1.0]:
+				_exhaust_side(b, s, 0.46, -0.78, pipe, tip, head_y)
+
+
+func _exhaust_side(b: LowPoly, side: float, tip_y: float, tip_z: float, pipe: Color, tip: Color, head_y: float) -> void:
+	## Headers leave both heads and run into one megaphone on this flank.
+	var head_a := Vector3(side * 0.08, head_y, ENGINE.z + 0.10)
+	var head_b := Vector3(side * 0.08, head_y, ENGINE.z - 0.10)
+	var join := Vector3(side * 0.20, 0.36, 0.02)
+	var mid := Vector3(side * 0.24, 0.38, -0.34)
+	var end := Vector3(side * 0.26, tip_y, tip_z)
+	_bone(b, head_a, join, 0.020, pipe)
+	_bone(b, head_b, join, 0.020, pipe)
+	_bone(b, join, mid, 0.024, pipe)
+	_bone(b, mid, end, 0.040, tip)
+	_cyl(b, end, 0.048, 0.034, pipe, Vector3(108, side * 6.0, 0))
 
 
 func _build_body() -> void:
-	var shell := LowPoly.new()
-	shell.smooth = true
-	_build_tank(shell)
-	_build_cowl(shell)
-	_body_shell = _commit(shell, "BodyShell")
-
 	var hard := LowPoly.new()
 	_build_chassis(hard)
 	_build_engine(hard)
-	_build_exhaust(hard)
 	_commit(hard, "Body")
 
 
@@ -322,101 +506,25 @@ func _build_chassis(b: LowPoly) -> void:
 		_bone(b, pivot_s, pivot_s + Vector3(s * 0.10, -0.04, 0.02), 0.010, ALUM)
 		_sphere(b, pivot_s + Vector3(s * 0.12, -0.04, 0.02), 0.020, RUBBER)
 	_bone(b, SEAT_J, Vector3(0, 0.52, REAR_Z), 0.012, BLACK_D)
-	_bx(b, Vector3(0, 0.56, REAR_Z + 0.04), Vector3(0.16, 0.03, 0.26), BLACK, 0.02)
-
-
-func _build_tank(b: LowPoly) -> void:
-	## Sits on the top tube. The loft is centred on that bone so the tank and
-	## the frame occupy the same space rather than hovering over it.
-	var centers := PackedVector3Array(
-		[
-			Vector3(0, 0.86, 0.58),
-			Vector3(0, 0.84, 0.42),
-			Vector3(0, 0.82, 0.22),
-			Vector3(0, 0.81, 0.02),
-			Vector3(0, 0.82, -0.16),
-			Vector3(0, 0.84, -0.28),
-		]
-	)
-	var radii := PackedVector2Array(
-		[
-			Vector2(0.070, 0.052),
-			Vector2(0.120, 0.082),
-			Vector2(0.175, 0.110),
-			Vector2(0.185, 0.112),
-			Vector2(0.140, 0.090),
-			Vector2(0.090, 0.065),
-		]
-	)
-	b.channel = LowPoly.PAINT
-	b.add_loft(centers, radii, SIDES, PAINT)
-	_sphere(b, Vector3(0, 0.86, 0.60), 0.052, PAINT)
-	var belly := PackedVector3Array(
-		[
-			Vector3(0, 0.76, 0.42),
-			Vector3(0, 0.74, 0.18),
-			Vector3(0, 0.735, -0.02),
-			Vector3(0, 0.75, -0.18),
-		]
-	)
-	var belly_r := PackedVector2Array(
-		[Vector2(0.090, 0.042), Vector2(0.145, 0.050), Vector2(0.150, 0.048), Vector2(0.100, 0.038)]
-	)
-	b.add_loft(belly, belly_r, 12, CREAM)
-	_capsule(b, Vector3(0, 0.925, 0.12), 0.015, 0.62, CREAM, Vector3(90, 0, 0))
-	for s in [-1.0, 1.0]:
-		_capsule(b, Vector3(s * 0.030, 0.922, 0.12), 0.005, 0.64, COPPER, Vector3(90, 0, 0))
-		_cyl(b, Vector3(s * 0.178, 0.815, 0.08), 0.026, 0.008, CHROME, Vector3(0, 0, 90))
-	_cyl(b, Vector3(0, 0.940, -0.12), 0.038, 0.022, ALUM, Vector3(0, 0, 0))
-	_cyl(b, Vector3(0, 0.954, -0.12), 0.026, 0.012, CHROME, Vector3(0, 0, 0))
-
-
-func _build_cowl(b: LowPoly) -> void:
-	_capsule(b, Vector3(0, 0.80, -0.34), 0.068, 0.28, LEATHER, Vector3(90, 0, 0))
-	_sphere(b, Vector3(0, 0.82, -0.24), 0.058, LEATHER)
-	var tail := PackedVector3Array(
-		[
-			Vector3(0, 0.84, -0.46),
-			Vector3(0, 0.88, -0.60),
-			Vector3(0, 0.90, -0.74),
-			Vector3(0, 0.86, -0.86),
-		]
-	)
-	var tail_r := PackedVector2Array(
-		[Vector2(0.095, 0.050), Vector2(0.082, 0.046), Vector2(0.062, 0.038), Vector2(0.038, 0.028)]
-	)
-	b.channel = LowPoly.PAINT
-	b.add_loft(tail, tail_r, 12, PAINT)
-	_sphere(b, Vector3(0, 0.86, -0.88), 0.032, PAINT.lightened(0.05))
-	_sphere(b, Vector3(0, 0.82, -0.90), 0.026, TAIL, true)
-	_bone(b, SEAT_J, Vector3(0, 0.84, -0.50), 0.012, BLACK_S)
+	# Chain run on the left, the side the title camera looks at.
+	_bx(b, Vector3(-0.11, 0.36, -0.48), Vector3(0.035, 0.028, 0.40), BLACK, 0.008)
 
 
 func _build_engine(b: LowPoly) -> void:
-	## Fills the frame diamond so the cases touch the down tube and the pivot.
-	_bx(b, ENGINE, Vector3(0.28, 0.20, 0.36), ALUM, 0.04)
-	_bx(b, ENGINE + Vector3(0, -0.02, 0), Vector3(0.32, 0.10, 0.30), ALUM_D, 0.025)
+	## Parallel twin filling the frame diamond: cases, two finned barrels,
+	## heads, velocity stacks. The cases touch the down tube and the pivot.
+	_bx(b, ENGINE, Vector3(0.30, 0.18, 0.38), ALUM, 0.04)
+	_bx(b, ENGINE + Vector3(0, -0.08, 0.01), Vector3(0.26, 0.10, 0.32), ALUM_D, 0.03)
 	for i in 2:
-		var z: float = ENGINE.z + 0.10 - float(i) * 0.20
-		for f in 6:
-			_cyl(b, Vector3(0, ENGINE.y + 0.08 + float(f) * 0.015, z), 0.088, 0.011, ALUM_D, Vector3(8, 0, 0))
-		_bx(b, Vector3(0, ENGINE.y + 0.20, z - 0.02), Vector3(0.16, 0.06, 0.14), ALUM, 0.016)
-	for s in [-1.0, 1.0]:
-		_cyl(b, ENGINE + Vector3(s * 0.145, 0, 0), 0.070, 0.032, CHROME, Vector3(0, 0, 90))
-
-
-func _build_exhaust(b: LowPoly) -> void:
-	## Headers leave the heads and run into the megaphones — one continuous pipe.
-	var head_a := Vector3(0.08, ENGINE.y + 0.18, ENGINE.z + 0.10)
-	var head_b := Vector3(0.08, ENGINE.y + 0.18, ENGINE.z - 0.10)
-	var join := Vector3(0.20, 0.36, 0.02)
-	var mid := Vector3(0.24, 0.38, -0.36)
-	var tip := Vector3(0.26, 0.50, -0.72)
-	_bone(b, head_a, join, 0.022, CHROME)
-	_bone(b, head_b, join, 0.022, CHROME)
-	_bone(b, join, mid, 0.026, CHROME)
-	_bone(b, mid, tip, 0.042, ALUM_D)
-	_cyl(b, tip, 0.050, 0.036, CHROME, Vector3(108, 6, 0))
+		var z: float = ENGINE.z + 0.09 - float(i) * 0.18
+		var barrel := Vector3(0, ENGINE.y + 0.12, z)
+		_cyl(b, barrel, 0.072, 0.14, ALUM_D, Vector3(10, 0, 0))
+		for f in 7:
+			_cyl(b, Vector3(0, ENGINE.y + 0.06 + float(f) * 0.016, z), 0.088, 0.009, ALUM, Vector3(10, 0, 0))
+		_bx(b, Vector3(0, ENGINE.y + 0.22, z - 0.01), Vector3(0.17, 0.065, 0.13), ALUM, 0.014)
+		_cyl(b, Vector3(0, ENGINE.y + 0.27, z - 0.02), 0.028, 0.036, CHROME, Vector3(8, 0, 0))
+	_cyl(b, ENGINE + Vector3(0.155, 0.01, 0.02), 0.078, 0.028, CHROME, Vector3(0, 0, 90))
+	_cyl(b, ENGINE + Vector3(-0.155, 0.01, 0.02), 0.062, 0.024, ALUM_D, Vector3(0, 0, 90))
 
 
 func _build_steering() -> Node3D:
@@ -511,7 +619,7 @@ func _build_clocks(b: LowPoly, o: Vector3) -> void:
 
 
 func _build_style_fenders(head: Node3D, o: Vector3) -> void:
-	var colors: Array[Color] = [PAINT, BLUE, GOLD]
+	var colors: Array[Color] = [PAINT, BLUE, GREEN, CREAM, INK]
 	for i in colors.size():
 		var fb := LowPoly.new()
 		_build_fender(fb, o, colors[i])
@@ -569,12 +677,15 @@ func _build_wheel(pos: Vector3, is_front: bool) -> MeshInstance3D:
 	b.add_cylinder(Transform3D(lie, Vector3.ZERO), WHEEL_R * 0.58, width * 1.04, 16, BLACK_S)
 	b.channel = LowPoly.METAL
 	b.add_cylinder(Transform3D(lie, Vector3.ZERO), WHEEL_R * 0.54, width * 1.08, 16, ALUM_D)
+	b.add_cylinder(Transform3D(lie, Vector3.ZERO), WHEEL_R * 0.50, width * 0.22, 16, CHROME)
 	b.add_cylinder(Transform3D(lie, Vector3.ZERO), 0.06, width * 1.12, 10, ALUM)
 	if is_front:
 		b.add_cylinder(Transform3D(lie, Vector3(0.068, 0, 0)), WHEEL_R * 0.64, 0.010, 18, ALUM)
-	for i in 8:
-		var a := TAU * float(i) / 8.0
-		b.add_cylinder(Transform3D(Basis(Vector3.RIGHT, a), Vector3.ZERO), 0.007, WHEEL_R * 1.50, 6, CHROME)
+	else:
+		b.add_cylinder(Transform3D(lie, Vector3(-0.078, 0, 0)), WHEEL_R * 0.42, 0.012, 16, ALUM_D)
+	for i in 12:
+		var a := TAU * float(i) / 12.0
+		b.add_cylinder(Transform3D(Basis(Vector3.RIGHT, a), Vector3.ZERO), 0.005, WHEEL_R * 1.50, 6, CHROME)
 	var mi := MeshInstance3D.new()
 	mi.name = "FrontWheel" if is_front else "RearWheel"
 	mi.mesh = b.commit()
@@ -614,7 +725,7 @@ func _build_hero_camera() -> void:
 	_hero_cam.name = "HeroCamera"
 	_hero_cam.fov = 34.0
 	_hero_cam.near = 0.08
-	_hero_cam.far = 2200.0
+	_hero_cam.far = 5200.0
 	_hero_cam.current = false
 	_hero_rig.add_child(_hero_cam)
 	_hero_cam.position = Vector3(-2.8, 3.6, 3.8)

@@ -6,8 +6,10 @@ extends SceneTree
 const RoadPathGD := preload("res://scripts/road_path.gd")
 const MotorcycleGD := preload("res://scripts/motorcycle.gd")
 const TrafficCarGD := preload("res://scripts/traffic_car.gd")
+const TrafficManagerGD := preload("res://scripts/traffic_manager.gd")
 
 var failures: int = 0
+var _ran := false
 
 
 func check(ok: bool, what: String) -> void:
@@ -17,6 +19,10 @@ func check(ok: bool, what: String) -> void:
 
 
 func _process(_delta: float) -> bool:
+	if _ran:
+		quit(1 if failures > 0 else 0)
+		return true
+	_ran = true
 	var path: Node = root.get_node_or_null("RoadPath")
 	if path == null:
 		path = RoadPathGD.new()
@@ -160,6 +166,93 @@ func _process(_delta: float) -> bool:
 		horn_car.call("_advance_lane_change", 0.1)
 	check(not bool(horn_car.get("_lane_change_active")), "lane change completes in a bounded time")
 	check(is_equal_approx(float(horn_car.lateral), float(horn_car.get("_target_lateral"))), "car settles exactly on its new lane")
+
+	# Traffic weather is a function of (world_seed, z): long bands, not a sprinkle.
+	var traffic: Node = TrafficManagerGD.new()
+	traffic.name = "TrafficManager"
+	root.add_child(traffic)
+	traffic.call("bind_player", bike)
+	path.call("set_world_seed", 72117)
+	traffic.call("reset_world")
+	var mood_a: int = int(traffic.call("mood_at", 4200.0))
+	var mood_a_again: int = int(traffic.call("mood_at", 4200.0))
+	check(mood_a == mood_a_again, "same seed and z always resolve the same traffic mood")
+	path.call("set_world_seed", 72117)
+	check(int(traffic.call("mood_at", 4200.0)) == mood_a, "resetting the same world seed keeps the mood")
+	var seq_a: Array[int] = []
+	var seq_b: Array[int] = []
+	for i in 24:
+		seq_a.append(int(traffic.call("mood_at", float(i) * 1100.0)))
+	path.call("set_world_seed", 88421)
+	traffic.call("reset_world")
+	for i in 24:
+		seq_b.append(int(traffic.call("mood_at", float(i) * 1100.0)))
+	check(seq_a != seq_b, "different world seeds can produce different traffic weather")
+	path.call("set_world_seed", 72117)
+	traffic.call("reset_world")
+	var seen: Dictionary = {}
+	var sample_step := 80.0
+	var scan_end := 36000.0
+	var z := 0.0
+	var run_mood: int = int(traffic.call("mood_at", 0.0))
+	var run_start := 0.0
+	var longest_run := 0.0
+	var shortest_complete := INF
+	while z <= scan_end:
+		var m: int = int(traffic.call("mood_at", z))
+		seen[m] = true
+		if m != run_mood:
+			var run_len := z - run_start
+			longest_run = maxf(longest_run, run_len)
+			if run_start > 0.0 or z > sample_step:
+				shortest_complete = minf(shortest_complete, run_len)
+			run_mood = m
+			run_start = z
+		z += sample_step
+	longest_run = maxf(longest_run, scan_end - run_start)
+	check(seen.size() >= 3, "a long stretch of road contains at least three traffic moods")
+	check(longest_run >= 800.0, "a mood band lasts hundreds of metres (longest %.0f m)" % longest_run)
+	check(
+		shortest_complete >= 700.0,
+		"moods do not flicker every corner (shortest complete band %.0f m)" % shortest_complete
+	)
+	var mood_clear: int = TrafficManagerGD.Mood.CLEAR
+	var mood_flow: int = TrafficManagerGD.Mood.FLOW
+	var mood_crawl: int = TrafficManagerGD.Mood.CRAWL
+	var mood_wall: int = TrafficManagerGD.Mood.WALL
+	check(
+		float(traffic.call("mood_interval_mul", mood_clear))
+		> float(traffic.call("mood_interval_mul", mood_flow)),
+		"CLEAR waits longer between spawns than FLOW"
+	)
+	check(
+		float(traffic.call("mood_min_gap_mul", mood_clear))
+		> float(traffic.call("mood_min_gap_mul", mood_wall)),
+		"CLEAR leaves longer gaps than WALL"
+	)
+	check(
+		int(traffic.call("mood_active_cap", mood_clear))
+		< int(traffic.call("mood_active_cap", mood_wall)),
+		"CLEAR holds fewer cars than WALL at the same difficulty"
+	)
+	var crawl_weights: Array = traffic.call("kind_weights_for", mood_crawl)
+	var flow_weights: Array = traffic.call("kind_weights_for", mood_flow)
+	var clear_weights: Array = traffic.call("kind_weights_for", mood_clear)
+	var crawl_heavy := float(crawl_weights[4]) + float(crawl_weights[5]) + float(crawl_weights[6])
+	var flow_heavy := float(flow_weights[4]) + float(flow_weights[5]) + float(flow_weights[6])
+	var clear_light := float(clear_weights[0]) + float(clear_weights[1]) + float(clear_weights[2])
+	check(crawl_heavy > 0.5, "CRAWL prefers vans, trucks and buses (heavy weight %.2f)" % crawl_heavy)
+	check(crawl_heavy > flow_heavy, "CRAWL is heavier than the default FLOW mix")
+	check(clear_light > 0.75, "CLEAR is mostly light cars (light weight %.2f)" % clear_light)
+	check(
+		float(traffic.call("mood_speed_mul", mood_crawl))
+		< float(traffic.call("mood_speed_mul", mood_flow)),
+		"CRAWL traffic cruises slower than FLOW"
+	)
+	var first_roll: int = int(traffic.get("_rng").randi())
+	traffic.call("reset_world")
+	var second_roll: int = int(traffic.get("_rng").randi())
+	check(first_roll == second_roll, "reset_world re-seeds the traffic RNG from world_seed")
 
 	print("handling/traffic self-check: %d failures" % failures)
 	quit(1 if failures > 0 else 0)
