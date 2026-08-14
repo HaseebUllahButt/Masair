@@ -213,6 +213,8 @@ func _run() -> void:
 	)
 	var on_road_trees := _count_trees_on_tarmac(viewpoint, path, overlook_chunk)
 	check(on_road_trees == 0, "the platform chunk does not plant trees on the scenic road (%d)" % on_road_trees)
+	check(viewpoint.get_node_or_null("Birds") != null, "country overlooks have a small flock over the water")
+	check(viewpoint.is_processing(), "country flock keeps the platform chunk awake")
 	var climb: Node3D = RoadChunkGD.new()
 	climb.name = "SpurWoodlandTest"
 	get_root().add_child(climb)
@@ -289,9 +291,22 @@ func _run() -> void:
 		if env == RoadChunkGD.Env.COAST:
 			check(themed.get_node_or_null("ViewpointRange") != null, "the coast keeps a distant headland on the horizon")
 			check(themed.get_node_or_null("ViewpointCliffs") == null, "the coast overlook has no far-shore wall in the water")
+			check(themed.get_node_or_null("ViewpointHeadland") != null, "the coast overlook has a cliff under the bench")
+			check(themed.get_node_or_null("ViewpointCypress") != null, "the coast view has a lone cypress")
+			check(themed.get_node_or_null("Birds") != null, "gulls circle the coast water")
+			check(themed.is_processing(), "the coast flock keeps the chunk awake")
+		if env == RoadChunkGD.Env.MOUNTAIN:
+			check(themed.get_node_or_null("Birds") != null, "raptors circle the mountain col")
+			check(themed.is_processing(), "the mountain flock keeps the chunk awake")
+		if env == RoadChunkGD.Env.FOREST:
+			check(themed.get_node_or_null("Birds") == null, "the forest gorge does not run a flock")
+			check(not themed.is_processing(), "a forest platform with no clouds or birds does not process")
 		check(not themed.has_method("_build_islands"), "biome %d lake has no wooded islands" % env)
 		check(not themed.has_method("_build_far_settlement"), "biome %d far shore has no hamlet" % env)
 		themed.free()
+
+	var sea: ShaderMaterial = RoadChunkGD.water_material_sea()
+	check(float(sea.get_shader_parameter("wave_height")) < 0.03, "the coast sheet is calmer than the lake")
 
 	var country_view := _first_overlook(path, RoadChunkGD.Env.COUNTRY)
 	var forest_view := _first_overlook(path, RoadChunkGD.Env.FOREST)
@@ -306,6 +321,29 @@ func _run() -> void:
 	check(forest_far < country_far * 0.72, "forest is a gorge, not a lake (%.0f vs %.0f)" % [forest_far, country_far])
 	check(mountain_far < country_far * 0.82, "mountain is a tarn in a pass (%.0f vs %.0f)" % [mountain_far, country_far])
 
+	var cairn_index := int(floor((mountain_view + 200.0) / RoadChunkGD.LENGTH))
+	var cairn: Node3D = RoadChunkGD.new()
+	cairn.name = "ViewpointCairnTest"
+	get_root().add_child(cairn)
+	cairn.call("setup", cairn_index, RoadChunkGD.Env.MOUNTAIN)
+	check(cairn.get_node_or_null("ViewpointCairn") != null, "the mountain view has a cairn on the far shore")
+	cairn.free()
+	var wall_index := int(floor((country_view + 200.0) / RoadChunkGD.LENGTH))
+	var wall: Node3D = RoadChunkGD.new()
+	wall.name = "ViewpointWallTest"
+	get_root().add_child(wall)
+	wall.call("setup", wall_index, RoadChunkGD.Env.COUNTRY)
+	check(wall.get_node_or_null("ViewpointWall") != null, "the country view has a dry-stone wall on the far shore")
+	wall.free()
+	var peak_index := int(floor((mountain_view + float(RoadChunkGD.RANGE_LAYERS[0]["left"])) / RoadChunkGD.LENGTH))
+	var peak: Node3D = RoadChunkGD.new()
+	peak.name = "PeakCloudTest"
+	get_root().add_child(peak)
+	peak.call("setup", peak_index, RoadChunkGD.Env.MOUNTAIN)
+	check(peak.get_node_or_null("Clouds") != null, "planted summits wear a collar of cloud")
+	check(peak.is_processing(), "peak clouds drift, so their chunk processes")
+	peak.free()
+
 	# Forest, coast and mountain roadside scenery still builds when those biomes
 	# are the chunk theme — not just countryside hedges.
 	var forest_chunk: Node3D = RoadChunkGD.new()
@@ -316,6 +354,7 @@ func _run() -> void:
 		forest_chunk.get_node_or_null("Trunks") != null or forest_chunk.get_node_or_null("Conifers") != null,
 		"forest chunks still plant trees"
 	)
+	check(not forest_chunk.is_processing(), "a roadside chunk does not run a vista animator")
 	forest_chunk.free()
 	var coast_chunk: Node3D = RoadChunkGD.new()
 	coast_chunk.name = "CoastSceneryTest"

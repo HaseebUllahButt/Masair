@@ -3,13 +3,15 @@ render_mode cull_disabled, depth_draw_opaque;
 
 uniform float wave_height = 0.18;
 uniform float wave_speed = 0.72;
+uniform float wave_scale = 1.0;
+uniform float shimmer_amount = 1.0;
 
 varying vec3 world_position;
 
 float water_height(vec2 p, float t) {
-	float broad = sin(dot(p, normalize(vec2(0.82, 0.57))) * 0.055 + t * 0.55) * 0.48;
-	float crosswave = sin(dot(p, normalize(vec2(-0.38, 0.92))) * 0.105 - t * 0.78) * 0.30;
-	float ripple = sin(dot(p, normalize(vec2(0.97, -0.24))) * 0.215 + t * 1.18) * 0.16;
+	float broad = sin(dot(p, normalize(vec2(0.82, 0.57))) * 0.055 * wave_scale + t * 0.55) * 0.48;
+	float crosswave = sin(dot(p, normalize(vec2(-0.38, 0.92))) * 0.105 * wave_scale - t * 0.78) * 0.30;
+	float ripple = sin(dot(p, normalize(vec2(0.97, -0.24))) * 0.215 * wave_scale + t * 1.18) * 0.16;
 	return (broad + crosswave + ripple) * wave_height;
 }
 
@@ -29,9 +31,9 @@ void fragment() {
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	float facing = clamp(dot(NORMAL, VIEW), 0.0, 1.0);
 	float fresnel = pow(1.0 - facing, 4.0);
-	float shimmer = 0.5 + 0.5 * sin(world_position.x * 0.42 + world_position.z * 0.16 + t * 1.4);
+	float shimmer = 0.5 + 0.5 * sin(world_position.x * 0.42 * wave_scale + world_position.z * 0.16 * wave_scale + t * 1.4);
 	vec3 water_color = COLOR.rgb * vec3(0.54, 0.84, 1.08);
-	ALBEDO = water_color + vec3(0.018, 0.035, 0.045) * fresnel + vec3(0.012, 0.020, 0.022) * shimmer;
+	ALBEDO = water_color + vec3(0.018, 0.035, 0.045) * fresnel + vec3(0.012, 0.020, 0.022) * shimmer * shimmer_amount;
 	METALLIC = 0.12;
 	ROUGHNESS = mix(0.16, 0.055, fresnel);
 	SPECULAR = 0.92;
@@ -65,7 +67,7 @@ void light() {
 	// is not something to rely on, and this is two instructions.
 	float glance = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 4.0);
 	float sparkle = 0.5 + 0.5 * sin(
-		world_position.x * 0.42 + world_position.z * 0.16 + TIME * wave_speed * 1.4
+		world_position.x * 0.42 * wave_scale + world_position.z * 0.16 * wave_scale + TIME * wave_speed * 1.4
 	);
-	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * spec * mix(1.0, 3.4, glance) * (0.55 + 0.75 * sparkle);
+	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * spec * mix(1.0, 3.4, glance) * (0.55 + 0.75 * sparkle * shimmer_amount);
 }

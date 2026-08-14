@@ -701,8 +701,12 @@ func _viewpoint_land_drop(z: float, out: float, centre_z: float) -> float:
 		# keeps the Wastwater talus. Mountain is a tarn: steep, then a shelf.
 		var fall_exp := 1.5
 		match theme_id:
-			1, 2:
+			1:
 				fall_exp = 1.18
+			2:
+				# A wall under the rail, not a beach. Higher exponent drops the
+				# first metres fastest, which is what reads as a cliff from the bench.
+				fall_exp = 2.15
 			3:
 				fall_exp = 1.32
 		var fall := 1.0 - pow(1.0 - t, fall_exp)
