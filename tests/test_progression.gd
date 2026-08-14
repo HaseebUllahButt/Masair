@@ -62,6 +62,11 @@ func _process(_delta: float) -> bool:
 	game.call("_award_credits", 5)
 	check(int(game.credits) == before_award + 5, "currency awards accumulate")
 
+	var music: Dictionary = game.call("load_music_config")
+	check(music.has("playback_position"), "music save remembers how far the track had played")
+	check(music.has("track_path"), "music save remembers which track was playing")
+	check(float(music.get("playback_position", -1.0)) >= 0.0, "playback position is a non-negative timestamp")
+
 	print("progression self-check: %d failures" % failures)
 	quit(1 if failures > 0 else 0)
 	return true

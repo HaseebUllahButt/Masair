@@ -3,8 +3,10 @@ extends Node
 ## paused (PROCESS_MODE_ALWAYS) and rides on a dedicated Music bus.
 ##
 ## Godot can only decode mp3/ogg/wav at runtime. FLAC/M4A are listed in the
-## playlist and decoded once via ffmpeg into a lossless WAV cache (no second
-## lossy encode).
+## playlist and decoded once via ffmpeg into a CD-quality WAV cache (no second
+## lossy encode). Decode and file load run on a worker thread so a switch never
+## stalls the ride; two voices crossfade and the next track is prefetched while
+## the current one plays. Playback position survives process restarts.
 
 signal playlist_changed
 signal track_changed(title: String)
@@ -26,6 +28,9 @@ const PRESETS := [
 const NATIVE_EXTS := ["mp3", "ogg", "oga", "wav"]
 const TRANSCODE_EXTS := ["flac", "m4a", "aac"]
 const VOLUME_DB := -9.0
+const FADE_SEC := 0.35
+const SAVE_INTERVAL := 5.0
+const CACHE_KEEP := 3
 
 var music_folder: String = ""
 var preset_index: int = 0
@@ -33,26 +38,64 @@ var tracks: Array[String] = []
 var track_index: int = 0
 var has_ffmpeg: bool = false
 
-var _player: AudioStreamPlayer
+var _voices: Array[AudioStreamPlayer] = []
+var _active: int = 0
 var _eq: AudioEffectEQ10
 var _want_playing: bool = false
+var _audible_index: int = 0
+var _resume_position: float = 0.0
+var _saved_track_path: String = ""
+var _fade_t: float = 1.0
+var _fading: bool = false
+var _save_timer: float = 0.0
+var _stream_cache: Dictionary = {}
+var _play_request: Dictionary = {}
+var _prefetch_path: String = ""
+var _task_id: int = -1
+var _failed: Dictionary = {}
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	has_ffmpeg = _detect_ffmpeg()
 	_ensure_music_bus()
-	_player = AudioStreamPlayer.new()
-	_player.name = "Stream"
-	_player.bus = BUS_NAME
-	_player.volume_db = VOLUME_DB
-	_player.process_mode = Node.PROCESS_MODE_ALWAYS
-	add_child(_player)
-	_player.finished.connect(_on_track_finished)
+	for i in 2:
+		var voice := AudioStreamPlayer.new()
+		voice.name = "Voice%d" % i
+		voice.bus = BUS_NAME
+		voice.volume_db = VOLUME_DB
+		voice.process_mode = Node.PROCESS_MODE_ALWAYS
+		add_child(voice)
+		voice.finished.connect(_on_voice_finished.bind(i))
+		_voices.append(voice)
 	_load_config()
 	_apply_preset()
 	_reload_playlist(false)
 	call_deferred("resume_if_wanted")
+
+
+func _process(delta: float) -> void:
+	_pump_tasks()
+	if _fading:
+		_fade_t = minf(1.0, _fade_t + delta / FADE_SEC)
+		_apply_fade_volumes()
+		if _fade_t >= 1.0:
+			_finish_fade()
+	_maybe_overlap_next()
+	if _voice_playing():
+		_save_timer += delta
+		if _save_timer >= SAVE_INTERVAL:
+			_save_timer = 0.0
+			_save_config()
+
+
+func _notification(what: int) -> void:
+	match what:
+		NOTIFICATION_WM_CLOSE_REQUEST, NOTIFICATION_APPLICATION_PAUSED:
+			_save_config()
+		NOTIFICATION_EXIT_TREE:
+			_save_config()
+			_drain_task()
 
 
 func preset_count() -> int:
@@ -87,6 +130,10 @@ func track_count() -> int:
 	return tracks.size()
 
 
+func playback_position() -> float:
+	return _current_position()
+
+
 func format_note() -> String:
 	if has_ffmpeg:
 		return "MP3 OGG WAV FLAC M4A"
@@ -94,7 +141,9 @@ func format_note() -> String:
 
 
 func is_playing() -> bool:
-	return _player != null and _player.playing and not _player.stream_paused
+	if _voice_playing():
+		return true
+	return _want_playing and not _play_request.is_empty()
 
 
 func cycle_preset(direction: int) -> void:
@@ -110,6 +159,13 @@ func set_folder(path: String) -> void:
 		return
 	music_folder = clean
 	track_index = 0
+	_audible_index = 0
+	_resume_position = 0.0
+	_saved_track_path = ""
+	_stream_cache.clear()
+	_failed.clear()
+	_play_request.clear()
+	_prefetch_path = ""
 	_reload_playlist(true)
 	_save_config()
 
@@ -117,21 +173,35 @@ func set_folder(path: String) -> void:
 func toggle_play() -> void:
 	if tracks.is_empty():
 		_want_playing = false
+		_play_request.clear()
 		playing_changed.emit(false)
 		return
-	if is_playing():
-		_player.stream_paused = true
+	if _voice_playing():
+		if not _play_request.is_empty():
+			_play_request.clear()
+			track_index = _audible_index
+			_emit_track()
+		_finish_fade()
+		_voice().stream_paused = true
+		_resume_position = _voice().get_playback_position()
 		_want_playing = false
 		playing_changed.emit(false)
 		_save_config()
 		return
-	if _player.stream != null and _player.stream_paused:
-		_player.stream_paused = false
+	if not _play_request.is_empty():
+		_play_request.clear()
+		_want_playing = false
+		playing_changed.emit(false)
+		_save_config()
+		return
+	var paused := _voice()
+	if paused.stream != null and paused.stream_paused:
+		paused.stream_paused = false
 		_want_playing = true
 		playing_changed.emit(true)
 		_save_config()
 		return
-	_play_current()
+	_request_play(track_index, _resume_position)
 	_save_config()
 
 
@@ -139,8 +209,9 @@ func next_track() -> void:
 	if tracks.is_empty():
 		return
 	track_index = (track_index + 1) % tracks.size()
-	if _want_playing or is_playing():
-		_play_current()
+	_resume_position = 0.0
+	if _want_playing or _voice_playing() or not _play_request.is_empty():
+		_request_play(track_index, 0.0)
 	else:
 		_emit_track()
 	_save_config()
@@ -149,17 +220,31 @@ func next_track() -> void:
 func previous_track() -> void:
 	if tracks.is_empty():
 		return
-	## Restart the current track if we are more than a couple of seconds in.
-	if is_playing() and _player.get_playback_position() > 2.0:
-		_player.seek(0.0)
+	if _voice_playing() and _voice().get_playback_position() > 2.0:
+		_play_request.clear()
+		_voice().seek(0.0)
+		_resume_position = 0.0
+		track_index = _audible_index
 		_emit_track()
+		_save_config()
 		return
 	track_index = (track_index - 1 + tracks.size()) % tracks.size()
-	if _want_playing or is_playing():
-		_play_current()
+	_resume_position = 0.0
+	if _want_playing or _voice_playing() or not _play_request.is_empty():
+		_request_play(track_index, 0.0)
 	else:
 		_emit_track()
 	_save_config()
+
+
+func resume_if_wanted() -> void:
+	## Called once the café is up so autoplay does not fight boot audio.
+	if DisplayServer.get_name() == "headless":
+		return
+	if _want_playing and not tracks.is_empty() and not _voice_playing():
+		if track_index >= tracks.size():
+			track_index = 0
+		_request_play(track_index, _resume_position)
 
 
 func _detect_ffmpeg() -> bool:
@@ -199,13 +284,19 @@ func _reload_playlist(autoplay: bool) -> void:
 		tracks.sort()
 	if tracks.is_empty():
 		track_index = 0
+		_audible_index = 0
 	else:
-		track_index = clampi(keep_index, 0, tracks.size() - 1)
+		var found := tracks.find(_saved_track_path)
+		if found >= 0:
+			track_index = found
+		else:
+			track_index = clampi(keep_index, 0, tracks.size() - 1)
+		_audible_index = track_index
 	playlist_changed.emit()
 	_emit_track()
-	_stop_stream()
+	_stop_all()
 	if autoplay and not tracks.is_empty():
-		_play_current()
+		_request_play(track_index, 0.0)
 	else:
 		if autoplay:
 			_want_playing = false
@@ -234,38 +325,266 @@ func _scan_folder(path: String, out: Array[String]) -> void:
 			out.append(path.path_join(file_name))
 
 
-func _play_current() -> void:
+func _voice() -> AudioStreamPlayer:
+	if _voices.is_empty():
+		return null
+	return _voices[_active]
+
+
+func _voice_playing() -> bool:
+	var v := _voice()
+	return v != null and v.playing and not v.stream_paused
+
+
+func _current_position() -> float:
+	var v := _voice()
+	if v and v.stream != null and (v.playing or v.stream_paused):
+		return maxf(0.0, v.get_playback_position())
+	return maxf(0.0, _resume_position)
+
+
+func _request_play(index: int, seek: float) -> void:
 	if tracks.is_empty():
-		_stop_stream()
+		_stop_all()
 		_want_playing = false
 		playing_changed.emit(false)
 		return
-	track_index = clampi(track_index, 0, tracks.size() - 1)
-	var stream := _load_stream(tracks[track_index])
-	if stream == null:
-		## Skip unreadable files without getting stuck.
-		var start := track_index
-		while true:
-			track_index = (track_index + 1) % tracks.size()
-			if track_index == start:
-				_stop_stream()
-				_want_playing = false
-				playing_changed.emit(false)
-				_emit_track()
-				return
-			stream = _load_stream(tracks[track_index])
-			if stream != null:
-				break
-	_player.stream = stream
-	_player.stream_paused = false
-	_player.play()
+	track_index = clampi(index, 0, tracks.size() - 1)
+	_resume_position = maxf(0.0, seek)
 	_want_playing = true
 	_emit_track()
 	playing_changed.emit(true)
+	var path := tracks[track_index]
+	if _failed.has(path):
+		_skip_failed(path)
+		return
+	_play_request = {"path": path, "seek": _resume_position}
+	if _stream_cache.has(path):
+		_fulfill_play()
 
 
-func _load_stream(path: String) -> AudioStream:
-	var playable := _resolve_playable_path(path)
+func _fulfill_play() -> void:
+	if _play_request.is_empty():
+		return
+	var path := str(_play_request.get("path", ""))
+	if not _stream_cache.has(path):
+		return
+	var seek := float(_play_request.get("seek", 0.0))
+	_play_request.clear()
+	_begin_playback(_stream_cache[path] as AudioStream, seek)
+	_queue_prefetch()
+
+
+func _begin_playback(stream: AudioStream, seek: float) -> void:
+	if stream == null:
+		return
+	var length := stream.get_length()
+	var from := maxf(0.0, seek)
+	if length > 1.5 and from >= length - 1.0 and tracks.size() > 1:
+		_resume_position = 0.0
+		track_index = (track_index + 1) % tracks.size()
+		_emit_track()
+		_play_request = {"path": tracks[track_index], "seek": 0.0}
+		if _stream_cache.has(tracks[track_index]):
+			_fulfill_play()
+		return
+	if length > 0.0:
+		from = minf(from, maxf(0.0, length - 0.05))
+	var incoming := 1 - _active
+	var next_voice := _voices[incoming]
+	var current := _voice()
+	next_voice.stream = stream
+	next_voice.stream_paused = false
+	var outgoing_live := current.playing and not current.stream_paused and current.stream != null
+	if outgoing_live:
+		next_voice.volume_db = linear_to_db(0.0001)
+		next_voice.play(from)
+		_active = incoming
+		_audible_index = track_index
+		_resume_position = from
+		_fade_t = 0.0
+		_fading = true
+		_apply_fade_volumes()
+	else:
+		_finish_fade()
+		current.stop()
+		current.stream = null
+		_active = incoming
+		next_voice.volume_db = VOLUME_DB
+		next_voice.play(from)
+		_audible_index = track_index
+		_resume_position = from
+		_fading = false
+		_fade_t = 1.0
+	_want_playing = true
+	playing_changed.emit(true)
+
+
+func _apply_fade_volumes() -> void:
+	var lin := db_to_linear(VOLUME_DB)
+	_voices[_active].volume_db = linear_to_db(maxf(0.0001, lin * _fade_t))
+	_voices[1 - _active].volume_db = linear_to_db(maxf(0.0001, lin * (1.0 - _fade_t)))
+
+
+func _finish_fade() -> void:
+	if not _voices:
+		return
+	_fading = false
+	_fade_t = 1.0
+	var current := _voice()
+	if current:
+		current.volume_db = VOLUME_DB
+	var other := _voices[1 - _active]
+	other.stop()
+	other.stream = null
+	other.volume_db = VOLUME_DB
+	_trim_cache()
+
+
+func _maybe_overlap_next() -> void:
+	if not _want_playing or _fading or tracks.size() < 2:
+		return
+	if not _play_request.is_empty():
+		return
+	var v := _voice()
+	if v == null or not v.playing or v.stream == null:
+		return
+	var length := v.stream.get_length()
+	if length <= FADE_SEC + 0.5:
+		return
+	if v.get_playback_position() < length - FADE_SEC:
+		return
+	track_index = (track_index + 1) % tracks.size()
+	_resume_position = 0.0
+	_request_play(track_index, 0.0)
+
+
+func _queue_prefetch() -> void:
+	if tracks.size() < 2:
+		_prefetch_path = ""
+		return
+	var nxt := tracks[(track_index + 1) % tracks.size()]
+	var prv := tracks[(track_index - 1 + tracks.size()) % tracks.size()]
+	if not _stream_cache.has(nxt) and not _failed.has(nxt):
+		_prefetch_path = nxt
+	elif not _stream_cache.has(prv) and not _failed.has(prv):
+		_prefetch_path = prv
+	else:
+		_prefetch_path = ""
+
+
+func _pump_tasks() -> void:
+	if _task_id != -1:
+		if not WorkerThreadPool.is_task_completed(_task_id):
+			return
+		var result: Variant = WorkerThreadPool.wait_for_task_completion(_task_id)
+		_task_id = -1
+		if result is Dictionary:
+			_handle_loaded(result)
+	## A nested fulfill may already have started the next decode.
+	if _task_id != -1:
+		return
+	var path := _next_load_path()
+	if _task_id != -1 or path.is_empty() or _stream_cache.has(path):
+		return
+	_task_id = WorkerThreadPool.add_task(_thread_load.bind(path, has_ffmpeg))
+
+
+func _next_load_path() -> String:
+	if not _play_request.is_empty():
+		var wanted := str(_play_request.get("path", ""))
+		if _stream_cache.has(wanted):
+			_fulfill_play()
+		elif _failed.has(wanted):
+			_play_request.clear()
+			_skip_failed(wanted)
+			if not _play_request.is_empty():
+				return str(_play_request.get("path", ""))
+		else:
+			return wanted
+	if not _prefetch_path.is_empty():
+		if _stream_cache.has(_prefetch_path) or _failed.has(_prefetch_path):
+			_prefetch_path = ""
+			_queue_prefetch()
+		return _prefetch_path
+	return ""
+
+
+static func _thread_load(path: String, ffmpeg: bool) -> Dictionary:
+	var stream: AudioStream = null
+	if not path.is_empty() and FileAccess.file_exists(path):
+		stream = _decode_stream(path, ffmpeg)
+	return {"path": path, "stream": stream}
+
+
+func _handle_loaded(result: Dictionary) -> void:
+	var path := str(result.get("path", ""))
+	var stream := result.get("stream") as AudioStream
+	if stream:
+		_remember(path, stream)
+	else:
+		_failed[path] = true
+	if str(_play_request.get("path", "")) == path:
+		if stream:
+			_fulfill_play()
+		else:
+			_play_request.clear()
+			_skip_failed(path)
+		return
+	if _prefetch_path == path:
+		_prefetch_path = ""
+		_queue_prefetch()
+
+
+func _skip_failed(failed_path: String) -> void:
+	if tracks.is_empty():
+		_want_playing = false
+		playing_changed.emit(false)
+		return
+	var start := track_index
+	while true:
+		track_index = (track_index + 1) % tracks.size()
+		if track_index == start:
+			_want_playing = false
+			playing_changed.emit(false)
+			_emit_track()
+			return
+		if tracks[track_index] != failed_path and not _failed.has(tracks[track_index]):
+			break
+	_request_play(track_index, 0.0)
+
+
+func _remember(path: String, stream: AudioStream) -> void:
+	_stream_cache[path] = stream
+	_trim_cache()
+
+
+func _trim_cache() -> void:
+	if _stream_cache.size() <= CACHE_KEEP or tracks.is_empty():
+		return
+	var keep: Dictionary = {}
+	for offset in [-1, 0, 1]:
+		keep[tracks[posmod(track_index + offset, tracks.size())]] = true
+	var live_voice := _voice()
+	var live: AudioStream = live_voice.stream if live_voice else null
+	var other: AudioStream = _voices[1 - _active].stream
+	var drop: Array[String] = []
+	for path in _stream_cache.keys():
+		var key := str(path)
+		if keep.has(key):
+			continue
+		var cached: AudioStream = _stream_cache[key]
+		if cached == live or cached == other:
+			continue
+		drop.append(key)
+	for key in drop:
+		_stream_cache.erase(key)
+		if _stream_cache.size() <= CACHE_KEEP:
+			break
+
+
+static func _decode_stream(path: String, ffmpeg: bool) -> AudioStream:
+	var playable := _resolve_playable_path(path, ffmpeg)
 	if playable.is_empty():
 		return null
 	var ext := playable.get_extension().to_lower()
@@ -280,57 +599,78 @@ func _load_stream(path: String) -> AudioStream:
 			return null
 
 
-func _resolve_playable_path(path: String) -> String:
+static func _resolve_playable_path(path: String, ffmpeg: bool) -> String:
 	var ext := path.get_extension().to_lower()
 	if ext in NATIVE_EXTS:
 		return path
 	if ext in TRANSCODE_EXTS:
-		return _transcode_cached(path)
+		return _transcode_cached(path, ffmpeg)
 	return ""
 
 
-func _transcode_cached(path: String) -> String:
-	if not has_ffmpeg:
+static func _transcode_cached(path: String, ffmpeg: bool) -> String:
+	if not ffmpeg:
 		return ""
 	if not FileAccess.file_exists(path):
 		return ""
 	var cache_abs := ProjectSettings.globalize_path(CACHE_DIR)
 	DirAccess.make_dir_recursive_absolute(cache_abs)
 	var stamp := int(FileAccess.get_modified_time(path))
-	## Decode to PCM WAV — never re-encode through Vorbis/AAC. Godot's runtime
-	## loader only accepts 16-bit/float WAV, so 16-bit PCM is the transparent path.
-	var key := "%s_%d.wav" % [path.md5_text(), stamp]
+	## Decode to 44.1 kHz 16-bit stereo PCM. Hi-res FLAC otherwise becomes a
+	## hundred-megabyte WAV that hitches even after the first transcode.
+	var key := "%s_%d_44k.wav" % [path.md5_text(), stamp]
 	var out_abs := cache_abs.path_join(key)
 	if FileAccess.file_exists(out_abs):
 		return out_abs
+	var legacy := cache_abs.path_join("%s_%d.wav" % [path.md5_text(), stamp])
+	if FileAccess.file_exists(legacy):
+		return legacy
 	var sink: Array = []
 	var code := OS.execute(
 		"ffmpeg",
-		["-y", "-i", path, "-vn", "-c:a", "pcm_s16le", out_abs],
+		[
+			"-y", "-hide_banner", "-loglevel", "error", "-threads", "1",
+			"-i", path, "-vn", "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le",
+			out_abs,
+		],
 		sink,
 		true,
 		true
 	)
 	if code != 0 or not FileAccess.file_exists(out_abs):
-		push_warning("MusicPlayer: ffmpeg failed for %s (code %d)" % [path.get_file(), code])
 		return ""
 	return out_abs
 
 
-func _stop_stream() -> void:
-	if _player == null:
+func _stop_all() -> void:
+	_finish_fade()
+	_play_request.clear()
+	_prefetch_path = ""
+	for voice in _voices:
+		voice.stop()
+		voice.stream = null
+		voice.stream_paused = false
+		voice.volume_db = VOLUME_DB
+
+
+func _drain_task() -> void:
+	if _task_id == -1:
 		return
-	_player.stop()
-	_player.stream = null
-	_player.stream_paused = false
+	WorkerThreadPool.wait_for_task_completion(_task_id)
+	_task_id = -1
 
 
-func _on_track_finished() -> void:
+func _on_voice_finished(which: int) -> void:
+	if which != _active or _fading:
+		return
+	if not _play_request.is_empty():
+		return
 	if not _want_playing or tracks.is_empty():
 		playing_changed.emit(false)
 		return
 	track_index = (track_index + 1) % tracks.size()
-	_play_current()
+	_resume_position = 0.0
+	_request_play(track_index, 0.0)
 	_save_config()
 
 
@@ -347,12 +687,20 @@ func _load_config() -> void:
 	music_folder = str(data.get("folder", ""))
 	track_index = maxi(0, int(data.get("track_index", 0)))
 	_want_playing = bool(data.get("want_playing", false))
+	_resume_position = maxf(0.0, float(data.get("playback_position", 0.0)))
+	_saved_track_path = str(data.get("track_path", ""))
+	_audible_index = track_index
 
 
 func _save_config() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
 	var game := get_node_or_null("/root/GameManager")
 	if game == null or not game.has_method("save_music_config"):
 		return
+	var path := ""
+	if track_index >= 0 and track_index < tracks.size():
+		path = tracks[track_index]
 	game.call(
 		"save_music_config",
 		{
@@ -360,13 +708,7 @@ func _save_config() -> void:
 			"folder": music_folder,
 			"track_index": track_index,
 			"want_playing": _want_playing,
+			"playback_position": _current_position(),
+			"track_path": path,
 		}
 	)
-
-
-func resume_if_wanted() -> void:
-	## Called once the café is up so autoplay does not fight boot audio.
-	if _want_playing and not tracks.is_empty() and not is_playing():
-		if track_index >= tracks.size():
-			track_index = 0
-		_play_current()

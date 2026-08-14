@@ -22,7 +22,9 @@ No Godot install needed. The game is 64-bit Windows.
 
 On the café menu (top right), pick a music folder. Masair plays **MP3 / OGG /
 WAV** natively. **FLAC / M4A** work if [ffmpeg](https://ffmpeg.org/download.html)
-is on your PATH — tracks are decoded once to a lossless cache, then played.
+is on your PATH — tracks decode in the background to a CD-quality cache, then
+crossfade so a switch never stalls the ride. Playback resumes where you left
+off, including after quitting the game.
 
 ### Controls
 

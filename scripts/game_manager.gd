@@ -236,11 +236,15 @@ func load_music_config() -> Dictionary:
 	var preset_index := 0
 	var track_index := 0
 	var want_playing := false
+	var playback_position := 0.0
+	var track_path := ""
 	if cfg.load(SAVE_PATH) == OK:
 		preset_index = int(cfg.get_value("music", "preset_index", 0))
 		track_index = int(cfg.get_value("music", "track_index", 0))
 		want_playing = bool(cfg.get_value("music", "want_playing", false))
 		folder = str(cfg.get_value("music", "folder", ""))
+		playback_position = float(cfg.get_value("music", "playback_position", 0.0))
+		track_path = str(cfg.get_value("music", "track_path", ""))
 		## Migrate the old multi-folder preset save if needed.
 		if folder.is_empty():
 			var stored: Variant = cfg.get_value("music", "folders", [])
@@ -255,6 +259,8 @@ func load_music_config() -> Dictionary:
 		"track_index": track_index,
 		"want_playing": want_playing,
 		"folder": folder,
+		"playback_position": playback_position,
+		"track_path": track_path,
 	}
 
 
@@ -265,6 +271,8 @@ func save_music_config(data: Dictionary) -> void:
 	cfg.set_value("music", "track_index", int(data.get("track_index", 0)))
 	cfg.set_value("music", "want_playing", bool(data.get("want_playing", false)))
 	cfg.set_value("music", "folder", str(data.get("folder", "")))
+	cfg.set_value("music", "playback_position", float(data.get("playback_position", 0.0)))
+	cfg.set_value("music", "track_path", str(data.get("track_path", "")))
 	if cfg.has_section_key("music", "folders"):
 		cfg.erase_section_key("music", "folders")
 	cfg.save(SAVE_PATH)
