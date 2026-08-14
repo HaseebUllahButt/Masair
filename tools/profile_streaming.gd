@@ -46,13 +46,24 @@ class Runner:
 		frames.sort()
 		var total := 0.0
 		var hitches := 0
+		var slow_frames := 0
 		for frame in frames:
 			total += frame
 			if frame > 0.033:
 				hitches += 1
+			if frame > 0.020:
+				slow_frames += 1
+		var p95_index := mini(floori(float(frames.size() - 1) * 0.95), frames.size() - 1)
 		var p99_index := mini(floori(float(frames.size() - 1) * 0.99), frames.size() - 1)
 		print(
-			"streaming perf: %.1f fps avg, %.1f ms p99, %.1f ms worst, %d frames over 33 ms"
-			% [float(frames.size()) / total, frames[p99_index] * 1000.0, frames[-1] * 1000.0, hitches]
+			"streaming perf: %.1f fps avg, %.2f ms p95, %.2f ms p99, %.2f ms worst, %d frames over 33 ms, %d over 20 ms"
+			% [
+				float(frames.size()) / total,
+				frames[p95_index] * 1000.0,
+				frames[p99_index] * 1000.0,
+				frames[-1] * 1000.0,
+				hitches,
+				slow_frames,
+			]
 		)
 		tree_ref.quit(0)
