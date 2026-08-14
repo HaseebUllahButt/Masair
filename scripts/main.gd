@@ -13,6 +13,7 @@ extends Node3D
 const SKY_SHADER: Shader = preload("res://shaders/sky.gdshader")
 const GRADE_SHADER: Shader = preload("res://shaders/grade.gdshader")
 const LowPoly := preload("res://scripts/low_poly.gd")
+const RoadChunkGD := preload("res://scripts/road_chunk.gd")
 const RideAudioGD := preload("res://scripts/ride_audio.gd")
 
 ## Mood keys pushed straight through to the sky shader under the same name.
@@ -308,6 +309,11 @@ var _applied_scenic: bool = false
 
 func _ready() -> void:
 	Engine.time_scale = 1.0  # a crashed run leaves it in slow motion
+	# Warm the shared mesh/material/asset caches before any chunk is built. The
+	# chunk under the bike is built synchronously — here and on every restart — so
+	# without this its first-use lazy init is paid mid-frame, which is the
+	# intermittent restart spike. See RoadChunk.warm_shared_resources().
+	RoadChunkGD.warm_shared_resources()
 	_build_environment()
 	_build_grade_overlay()
 	_build_rain()
@@ -380,11 +386,14 @@ func _build_environment() -> void:
 
 	var sky := Sky.new()
 	sky.sky_material = _sky_mat
-	# Realtime radiance is the cheap path for a sky that uses TIME (cloud drift,
-	# twinkle) and that weather eases every frame. Incremental plus a frozen
-	# phase was cheaper, and it is also why rain used to step the whole look.
+	# Realtime radiance keeps the reflected sky and ambient in step with the
+	# animated clouds and the smoothly-eased rain — dropping to incremental made the
+	# weather step, and test_restart guards the realtime mode for that reason.
+	# The radiance map itself is halved to 32: nothing in the game shows a sharp sky
+	# reflection (road and water carry authored ones), so the reconvolution runs at
+	# a quarter of the pixels each frame with no visible loss.
 	sky.process_mode = Sky.PROCESS_MODE_REALTIME
-	sky.radiance_size = Sky.RADIANCE_SIZE_64
+	sky.radiance_size = Sky.RADIANCE_SIZE_32
 	_sky_mat.set_shader_parameter("sky_phase", float(_path_seed() % 1000) * 0.17)
 
 	_environment = Environment.new()
