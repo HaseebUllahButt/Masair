@@ -91,6 +91,7 @@ func set_difficulty(level: int) -> void:
 func restart() -> void:
 	bank_progress()
 	get_tree().paused = false
+	Engine.time_scale = 1.0
 	distance_m = 0.0
 	bonus_m = 0.0
 	near_miss_count = 0
@@ -98,12 +99,22 @@ func restart() -> void:
 	is_crashed = false
 	_next_credit_distance = CREDIT_DISTANCE
 	distance_changed.emit(0.0)
-	if _player and _player.has_method("reset_run"):
-		_player.call("reset_run")
+	var scene := get_tree().current_scene
+	if not is_instance_valid(_player):
+		_player = scene.get_node_or_null("Player") as Node3D if scene else null
+		if _player == null:
+			_player = get_tree().root.find_child("Player", true, false) as Node3D
+	# Seed, then rider state, then the visible road, then sit on that road.
+	# Randomizing *after* reset_run() parked the bike on the previous world's
+	# origin while reset_world() built a seed-apart ribbon — several metres in
+	# height and lateral — so R left the rider in the air next to the new tarmac.
+	# reset_run() has to happen before reset_world() so the streamer rebuilds
+	# chunk 0 rather than the overlook the bike just left.
 	var path := get_node_or_null("/root/RoadPath")
 	if path and path.has_method("randomize_world"):
 		path.call("randomize_world")
-	var scene := get_tree().current_scene
+	if _player and _player.has_method("reset_run"):
+		_player.call("reset_run")
 	if scene:
 		var streamer := scene.get_node_or_null("RoadStreamer")
 		if streamer and streamer.has_method("reset_world"):
@@ -111,6 +122,13 @@ func restart() -> void:
 		var traffic := scene.get_node_or_null("TrafficManager")
 		if traffic and traffic.has_method("reset_world"):
 			traffic.call("reset_world")
+	# Snap again now the new ribbon exists, then kill physics interpolation so
+	# the camera does not tween from the overlook bench to kilometre zero —
+	# that tween is the "flying across the lake" restart.
+	if _player and _player.has_method("_place"):
+		_player.call("_place")
+	if _player:
+		_player.reset_physics_interpolation()
 	restarted.emit()
 
 

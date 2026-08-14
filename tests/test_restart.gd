@@ -33,6 +33,18 @@ func _process(_delta: float) -> bool:
 		var restart_ms := float(Time.get_ticks_usec() - restart_started) / 1000.0
 		var reset_player: Node = main.get_node("Player")
 		check(reset_player.track_z < 0.05 and reset_player.alive, "restart resets the bike immediately")
+		var parked: Transform3D = path.call(
+			"road_transform_at",
+			reset_player.track_z,
+			reset_player.lateral,
+			reset_player.half_width + reset_player.road_edge_margin
+		)
+		check(
+			(reset_player as Node3D).global_position.distance_to(parked.origin) < 0.05,
+			"restart parks the bike on the new world's road, not the previous seed"
+		)
+		var spawn_chunk: Node = (main.get_node("RoadStreamer").get("_chunks") as Dictionary).get(0)
+		check(spawn_chunk != null and spawn_chunk.get_node_or_null("RoadSurface") != null, "spawn road mesh exists under the bike")
 		check(restart_ms < 48.0, "restart stays a short hitch (%.2f ms)" % restart_ms)
 	if frames == 20:
 		var player: Node = main.get_node("Player")
@@ -84,6 +96,33 @@ func _process(_delta: float) -> bool:
 			if int(chunk_index) > 20:
 				leftover = true
 		check(not leftover, "restart unloads the overlook instead of leaving it in the world")
+		# Sitting on the bench, then R, used to leave the eye at the lake: the
+		# rider stayed `seated`, distance climbed back to 2800 m, and physics
+		# interpolation flew the camera across the water instead of snapping it
+		# onto the new spawn road.
+		player.track_z = viewpoint
+		player.lateral = viewpoint_side * float(path.call("spur_offset", viewpoint))
+		player.set("seated", true)
+		player.set("_seat_blend", 1.0)
+		player.call("_place")
+		player.call("_update_view", 1.0)
+		var bench: Transform3D = path.call("viewpoint_seat", viewpoint)
+		game.restart()
+		check(not bool(player.get("seated")), "restart stands the rider up off the bench")
+		check(is_equal_approx(float(player.get("_seat_blend")), 0.0), "restart clears the bench camera blend")
+		check(player.track_z < 0.05, "restart from the bench returns to kilometre zero")
+		var cam: Camera3D = camera_pivot.get_node("Camera3D") as Camera3D
+		check(
+			cam.global_position.distance_to(bench.origin) > 80.0,
+			"restart does not leave the eye sitting on the lake"
+		)
+		var parked_from_bench: Transform3D = path.call(
+			"road_transform_at", player.track_z, player.lateral, player.half_width + player.road_edge_margin
+		)
+		check(
+			(player as Node3D).global_position.distance_to(parked_from_bench.origin) < 0.05,
+			"restart from the bench parks on the new world's road"
+		)
 		var chunks_before_light: Array = (streamer.get("_chunks") as Dictionary).keys()
 		main.call("_cycle_lighting")
 		check(

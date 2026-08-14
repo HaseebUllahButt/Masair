@@ -202,6 +202,8 @@ func _physics_process(delta: float) -> void:
 
 	if Input.is_action_just_pressed("restart") and _game:
 		_game.restart()
+		_update_view(delta)
+		_update_audio(delta)
 		return
 
 	if Input.is_action_just_pressed("sit"):
@@ -481,8 +483,14 @@ func reset_run() -> void:
 	camera_pivot.position = _pivot_base
 	camera_pivot.rotation = Vector3(0.0, PI, 0.0)
 	camera.transform = Transform3D(_cam_basis, _cam_base)
+	camera.make_current()
 	visual.rotation = Vector3.ZERO
 	_place()
+	# The bike is kinematic; Godot still interpolates Node3D poses. A restart is
+	# a teleport, and without this the rendered camera eases from the old pose —
+	# the overlook bench, a crash, halfway down the route — to kilometre zero,
+	# which is the flight across the lake.
+	reset_physics_interpolation()
 
 
 func set_night_lighting(darkness: float) -> void:

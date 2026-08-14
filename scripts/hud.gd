@@ -95,6 +95,8 @@ func _process(delta: float) -> void:
 		if Input.is_action_just_pressed("toggle_day"):
 			_cycle_menu_mood()
 		return
+	if get_tree().paused and Input.is_action_just_pressed("restart") and _game:
+		_game.restart()
 	if Input.is_action_just_pressed("pause"):
 		if _game == null or not _game.is_crashed:
 			_set_paused(not get_tree().paused)
@@ -197,6 +199,8 @@ func _on_restarted() -> void:
 	flash_label.modulate.a = 0.0
 	_flash = 0.0
 	_shown_speed = 0.0
+	if _player:
+		_update_prompt()
 
 func _update_pause_label() -> void:
 	if pause_label == null:
