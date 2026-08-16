@@ -605,6 +605,13 @@ func setup(index: int, theme_id: int) -> void:
 
 
 func setup_incremental(index: int, theme_id: int) -> void:
+	await setup_ribbon_incremental(index, theme_id)
+	if not is_instance_valid(self) or not is_inside_tree():
+		return
+	await setup_props_incremental()
+
+
+func setup_ribbon_incremental(index: int, theme_id: int) -> void:
 	## Runtime streaming must not consume an entire render frame. The chunk is far
 	## beyond the camera when queued, so build its ribbon in small invisible slices.
 	_configure(index, theme_id)
@@ -621,6 +628,9 @@ func setup_incremental(index: int, theme_id: int) -> void:
 	await _finish_ribbon_incremental(hard, road, soft_left, soft_right, z0)
 	if not await _keep_streaming():
 		return
+
+
+func setup_props_incremental() -> void:
 	await _build_props_incremental()
 
 
@@ -631,29 +641,69 @@ func _build_props_incremental() -> void:
 	await _build_furniture_incremental()
 	if not await _keep_streaming():
 		return
-	_build_theme_scenery()
-	if not await _keep_streaming():
-		return
+	if _on_spur:
+		for station in 5:
+			_build_spur_woodland(station, 1)
+			if not await _keep_streaming():
+				return
+	if not _on_lake:
+		_build_ordinary_theme_scenery()
+		if not await _keep_streaming():
+			return
 	_build_distant_scenery()
 	if not await _keep_streaming():
 		return
-	# Split across frames: the overlook landscape is the heaviest single thing a
-	# chunk builds, and the whole point of the incremental path is that nothing in
-	# it costs a visible frame. The stages are the same three calls the immediate
-	# path makes — spelling the individual builders out here a second time is how
-	# the islands and the far settlement came to exist everywhere except in the
-	# running game, which streams every chunk through this function.
+	# Keep this list in the same order as `_build_viewpoint_landscape()`. Each
+	# independent mesh gets its own frame; grouping the five distance meshes made
+	# lake chunks produce a recurring 20–100 ms streaming frame.
 	if _on_lake:
-		_build_lake_basin()
+		_build_lake_water()
 		if not await _keep_streaming():
 			return
-		_build_lake_distance()
+		_build_far_ground()
 		if not await _keep_streaming():
 			return
-		_build_lake_dressing()
+		_build_view_range()
 		if not await _keep_streaming():
 			return
-	_build_set_piece()
+		_build_peak_clouds()
+		if not await _keep_streaming():
+			return
+		_build_far_shore()
+		if not await _keep_streaming():
+			return
+		_build_far_cliffs()
+		if not await _keep_streaming():
+			return
+		_build_coast_headland()
+		if not await _keep_streaming():
+			return
+		if not await _build_lake_edges_incremental():
+			return
+		_build_view_frame()
+		if not await _keep_streaming():
+			return
+		_dress_vista()
+		if not await _keep_streaming():
+			return
+		_build_vista_birds()
+		if not await _keep_streaming():
+			return
+		_build_vista_landmarks()
+		if not await _keep_streaming():
+			return
+	if _on_spur:
+		_build_spur_furniture()
+		if not await _keep_streaming():
+			return
+		_build_junction()
+		if not await _keep_streaming():
+			return
+		if _owns_platform:
+			if not await _set_piece_platform_incremental():
+				return
+	else:
+		_build_set_piece()
 	await _commit_props_incremental()
 
 
@@ -731,6 +781,10 @@ func _build_theme_scenery() -> void:
 	# makes every scenic chunk generate hundreds of transforms it never needs.
 	if _on_lake:
 		return
+	_build_ordinary_theme_scenery()
+
+
+func _build_ordinary_theme_scenery() -> void:
 	match theme:
 		Env.CITY:
 			_scenery_city()
@@ -744,12 +798,12 @@ func _build_theme_scenery() -> void:
 			_scenery_country()
 
 
-func _build_spur_woodland() -> void:
+func _build_spur_woodland(first_station: int = 0, station_count: int = 5) -> void:
 	## Planting along the climb. The spur geometry is the same everywhere; what
 	## grows beside it follows the biome of this stretch, so a coastal headland
 	## is not ridden through a pine tunnel.
 	var z0: float = float(chunk_index) * LENGTH
-	for station in 5:
+	for station in range(first_station, mini(first_station + station_count, 5)):
 		var z: float = z0 + 3.2 + float(station) * 7.4
 		if z >= z0 + LENGTH:
 			continue
@@ -1174,13 +1228,31 @@ func _finish_ribbon_incremental(
 	## ArrayMesh creation uploads geometry to the renderer. Publishing all three
 	## unique surfaces in one frame caused the remaining one-hitch-per-chunk spike,
 	## even though their CPU-side vertices were already built incrementally.
-	_prepare_ribbon(hard, road, z0)
+	_build_markings(hard, z0)
+	if not await _keep_streaming():
+		return
+	if _on_spur:
+		for first_step in range(0, STEPS, RIBBON_STEPS_PER_FRAME):
+			var step_count := mini(RIBBON_STEPS_PER_FRAME, STEPS - first_step)
+			_build_spur_ribbon(hard, road, z0, first_step, step_count, false)
+			if not await _keep_streaming():
+				return
+		_finish_spur_ribbon(hard, z0)
+		if not await _keep_streaming():
+			return
+	if theme == Env.COAST:
+		_build_sea(hard, z0)
+		if not await _keep_streaming():
+			return
 	_commit_hard_ribbon(hard)
-	await get_tree().process_frame
+	if not await _keep_streaming():
+		return
 	_commit_road_ribbon(road)
-	await get_tree().process_frame
+	if not await _keep_streaming():
+		return
 	_commit_terrain_ribbon(soft_left, "Terrain")
-	await get_tree().process_frame
+	if not await _keep_streaming():
+		return
 	_commit_terrain_ribbon(soft_right, "TerrainRight")
 	_clear_ribbon_samples()
 
@@ -1981,25 +2053,50 @@ func _commit_props() -> void:
 
 func _commit_props_incremental() -> void:
 	## Creating and filling every MultiMesh bucket in one frame was the remaining
-	## large streaming spike. The chunk is still beyond the camera here, so publish
-	## it in four small groups and give the renderer a frame between them.
+	## large streaming spike. Publish each independent bucket separately; scenic
+	## woodland can put hundreds of transforms in one bucket by itself.
 	_commit_mm(_cubes, _cube_cols, unit_cube(), LowPoly.solid_material(), "Cubes", true)
+	if not _cubes.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_arch, _arch_cols, unit_box_sharp(), LowPoly.solid_material(), "Architecture", true)
+	if not _arch.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_prisms, _prism_cols, unit_cone(), LowPoly.solid_material(), "Cones", true)
-	await get_tree().process_frame
+	if not _prisms.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_blobs, _blob_cols, unit_sphere(), LowPoly.solid_material(), "Rocks", false)
+	if not _blobs.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_leaves, _leaf_cols, unit_sphere(), LowPoly.foliage_material(), "Foliage", false)
+	if not _leaves.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_trunks, _trunk_cols, unit_trunk(), LowPoly.solid_material(), "Trunks", true)
-	await get_tree().process_frame
+	if not _trunks.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_crowns, _crown_cols, unit_crown(), LowPoly.foliage_material(), "Crowns", false)
+	if not _crowns.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_conifers, _conifer_cols, unit_conifer(), LowPoly.foliage_material(), "Conifers", false)
+	if not _conifers.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_fronds, _frond_cols, unit_frond(), LowPoly.foliage_material(), "Fronds", false)
-	await get_tree().process_frame
+	if not _fronds.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_ridges, _ridge_cols, unit_ridge(), LowPoly.solid_material(), "Ridges", false)
+	if not _ridges.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_grass, _grass_cols, grass_tuft(), LowPoly.foliage_material(), "Grass", false)
+	if not _grass.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_hay, _hay_cols, unit_hay_bale(), LowPoly.solid_material(), "HayBales", false)
+	if not _hay.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_lamps, _lamp_cols, unit_cube(), LowPoly.glow_material(), "Lamps", false)
+	if not _lamps.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_clouds, _cloud_cols, unit_sphere(), cloud_material(), "Clouds", false)
+	if not _clouds.is_empty() and not await _keep_streaming():
+		return
 	_commit_mm(_birds, _bird_cols, unit_bird(), bird_material(), "Birds", false)
 	_arm_vista_motion()
 
@@ -2034,7 +2131,7 @@ func _commit_mm(
 		# popped the trees off the opposite bank while the rider was still looking.
 		mmi.visibility_range_end = 1800.0
 	else:
-		mmi.visibility_range_end = 360.0 if node_name == "Architecture" else 280.0
+		mmi.visibility_range_end = 200.0 if node_name == "Architecture" else 160.0
 	if not shadows or _on_lake:
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mmi)
@@ -3222,7 +3319,14 @@ static func viewpoint_side(index: int, world_seed: int) -> float:
 # biome: country lake and pass, forest gorge, coastal headland, mountain tarn.
 
 
-func _build_spur_ribbon(hard: LowPoly, road: LowPoly, z0: float) -> void:
+func _build_spur_ribbon(
+	hard: LowPoly,
+	road: LowPoly,
+	z0: float,
+	first_step: int = 0,
+	step_count: int = STEPS,
+	finish: bool = true
+) -> void:
 	## The spur's own road surface. It is a separate ribbon laid over ground the
 	## path has already flattened for it, sitting 60 mm proud like real
 	## surfacing — which is also what keeps it out of a z-fight with the terrain
@@ -3237,7 +3341,7 @@ func _build_spur_ribbon(hard: LowPoly, road: LowPoly, z0: float) -> void:
 	var shoulder: Color = _pal["shoulder"]
 	var stripe: Color = _pal["stripe"]
 	var inner_edge := 0 if _vp_side > 0.0 else 1  # which end of the span faces the road
-	for i in STEPS:
+	for i in range(first_step, mini(first_step + step_count, STEPS)):
 		var za := z0 + float(i) * step
 		var zb := za + step
 		var span_a := _spur_span(za)
@@ -3311,6 +3415,11 @@ func _build_spur_ribbon(hard: LowPoly, road: LowPoly, z0: float) -> void:
 				_p(zb, cb - 0.09, -PROUD - LINE),
 				stripe
 			)
+	if finish:
+		_finish_spur_ribbon(hard, z0)
+
+
+func _finish_spur_ribbon(hard: LowPoly, z0: float) -> void:
 	_build_platform_bays(hard, z0)
 	_build_decel_lane(hard, z0)
 	_build_gore_hatch(hard, z0)
@@ -4362,6 +4471,29 @@ func _build_lake_edges() -> void:
 	## Boulders and reeds along the waterline, and scree on the face of the
 	## headland. All of it sits below the platform, dressing the drop without
 	## ever standing in the view from it.
+	_build_lake_edge_boulders()
+	_build_face_scree()
+	_build_lake_reeds()
+
+
+func _build_lake_edges_incremental() -> bool:
+	_build_lake_edge_boulders()
+	if not await _keep_streaming():
+		return false
+	var fan_count := SCREE_FANS * 2 if _vp_theme == Env.MOUNTAIN or _vp_theme == Env.COAST else SCREE_FANS
+	var z0 := float(chunk_index) * LENGTH
+	var face_run: float = maxf(
+		float(_path.viewpoint_near_shore(_vp_centre)) - RoadPathGD.HEADLAND_CREST - 8.0, 24.0
+	)
+	for _fan in fan_count:
+		_build_face_scree_fan(z0, face_run)
+		if not await _keep_streaming():
+			return false
+	_build_lake_reeds()
+	return await _keep_streaming()
+
+
+func _build_lake_edge_boulders() -> void:
 	var z0 := float(chunk_index) * LENGTH
 	# Boulders at and just under the waterline, in groups, and big enough to
 	# matter at a hundred and forty metres. The whole near shore sits in the
@@ -4400,15 +4532,16 @@ func _build_lake_edges() -> void:
 				false,
 				true
 			)
-	# Talus first, and unconditionally: it is the surface of the drop, not
-	# dressing on top of it, and every theme has one.
-	_build_face_scree()
+
+
+func _build_lake_reeds() -> void:
 	# Reeds, where reeds actually grow. A mountain tarn sits above the line where
 	# anything roots in its margins, and a sea cliff has surf at the bottom of it
 	# — on both, these were half a dozen saturated green chips lying flat on a
 	# dark bank, reading as litter rather than as planting.
 	if _vp_theme == Env.MOUNTAIN or _vp_theme == Env.COAST:
 		return
+	var z0 := float(chunk_index) * LENGTH
 	for _i in 18:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.viewpoint_near_shore(z)) + _rng.randf_range(-3.0, 8.0)
@@ -4450,37 +4583,41 @@ func _build_face_scree() -> void:
 	var face_run: float = maxf(
 		float(_path.viewpoint_near_shore(_vp_centre)) - RoadPathGD.HEADLAND_CREST - 8.0, 24.0
 	)
-	for fan in (SCREE_FANS * 2 if _vp_theme == Env.MOUNTAIN or _vp_theme == Env.COAST else SCREE_FANS):
-		# Source of the fan: a point high on the face, in this chunk.
-		var head_z: float = z0 + _rng.randf_range(0.0, LENGTH)
-		var head_out: float = RoadPathGD.HEADLAND_CREST + 3.0 + _rng.randf_range(0.0, face_run * 0.35)
-		var spread: float = _rng.randf_range(9.0, 22.0)
-		for _i in SCREE_PER_FAN:
-			# Fall line, biased downslope, spreading as it goes.
-			var run: float = _rng.randf() * _rng.randf()  # bunched near the head
-			var out: float = head_out + run * (face_run - (head_out - RoadPathGD.HEADLAND_CREST))
-			var z: float = head_z + _rng.randf_range(-1.0, 1.0) * spread * (0.35 + run)
-			var above := _height_above_water(z, out)
-			if above < 1.0 or float(_path.spur_deck_blend(z, _vp_side * out)) > 0.15:
-				continue
-			# Graded: fines at the head of the fan, blocks at the foot.
-			var s: float = lerpf(0.55, 3.1, run * run) * _rng.randf_range(0.82, 1.24)
-			# And graded in value the same way. A stone lying in the shade of the
-			# lip is not the same colour as one out on the open apron below it, and
-			# a single pale grey for all of them is what made them read as popcorn
-			# scattered over a dark slope.
-			var stone := Color("4c463c").lerp(Color("6b6357"), run)
-			if _vp_theme == Env.COAST:
-				stone = Color("7a7060").lerp(Color("9a8e78"), run)
-			_blob(
-				z,
-				_vp_side * out,
-				Vector3(s * 1.7, s * 1.1, s * 1.5),
-				stone.darkened(_rng.randf() * 0.20),
-				0.0,
-				false,
-				true
-			)
+	for _fan in (SCREE_FANS * 2 if _vp_theme == Env.MOUNTAIN or _vp_theme == Env.COAST else SCREE_FANS):
+		_build_face_scree_fan(z0, face_run)
+
+
+func _build_face_scree_fan(z0: float, face_run: float) -> void:
+	# Source of the fan: a point high on the face, in this chunk.
+	var head_z: float = z0 + _rng.randf_range(0.0, LENGTH)
+	var head_out: float = RoadPathGD.HEADLAND_CREST + 3.0 + _rng.randf_range(0.0, face_run * 0.35)
+	var spread: float = _rng.randf_range(9.0, 22.0)
+	for _i in SCREE_PER_FAN:
+		# Fall line, biased downslope, spreading as it goes.
+		var run: float = _rng.randf() * _rng.randf()  # bunched near the head
+		var out: float = head_out + run * (face_run - (head_out - RoadPathGD.HEADLAND_CREST))
+		var z: float = head_z + _rng.randf_range(-1.0, 1.0) * spread * (0.35 + run)
+		var above := _height_above_water(z, out)
+		if above < 1.0 or float(_path.spur_deck_blend(z, _vp_side * out)) > 0.15:
+			continue
+		# Graded: fines at the head of the fan, blocks at the foot.
+		var s: float = lerpf(0.55, 3.1, run * run) * _rng.randf_range(0.82, 1.24)
+		# And graded in value the same way. A stone lying in the shade of the
+		# lip is not the same colour as one out on the open apron below it, and
+		# a single pale grey for all of them is what made them read as popcorn
+		# scattered over a dark slope.
+		var stone := Color("4c463c").lerp(Color("6b6357"), run)
+		if _vp_theme == Env.COAST:
+			stone = Color("7a7060").lerp(Color("9a8e78"), run)
+		_blob(
+			z,
+			_vp_side * out,
+			Vector3(s * 1.7, s * 1.1, s * 1.5),
+			stone.darkened(_rng.randf() * 0.20),
+			0.0,
+			false,
+			true
+		)
 
 
 func _build_far_cliffs() -> void:
@@ -4992,10 +5129,10 @@ func _range_face(
 	var top_a: Color = foot.lerp(body, 0.42 + 0.58 * lift_a)
 	var top_b: Color = foot.lerp(body, 0.42 + 0.58 * lift_b)
 	if _vp_theme == Env.MOUNTAIN:
-		# Ice on the high rock, not a snow lid. Only the top third picks up a
-		# cooler rim; the rest stays scree, so it does not read as a painted cap.
-		top_a = top_a.lerp(Color("c2ced8"), smoothstep(0.58, 0.96, lift_a) * 0.52)
-		top_b = top_b.lerp(Color("c2ced8"), smoothstep(0.58, 0.96, lift_b) * 0.52)
+		# Snow on the high rock. A full-face lid was a beige primitive; this
+		# only takes the top half of a summit, so the scree underneath stays.
+		top_a = top_a.lerp(Color("e8eef4"), smoothstep(0.46, 0.82, lift_a))
+		top_b = top_b.lerp(Color("e8eef4"), smoothstep(0.46, 0.82, lift_b))
 	var crest_a := _far_point(za, _vp_side * a.y, base_y + a.x)
 	var crest_b := _far_point(zb, _vp_side * c.y, base_y + c.x)
 	if cliff:
@@ -5107,6 +5244,27 @@ func _platform_lateral(out: float, z: float = -1.0e12) -> float:
 
 
 func _set_piece_platform() -> void:
+	_build_belvedere()
+	_build_platform_furniture()
+	_build_platform_trees()
+	_build_platform_planting()
+
+
+func _set_piece_platform_incremental() -> bool:
+	_build_belvedere()
+	if not await _keep_streaming():
+		return false
+	_build_platform_furniture()
+	if not await _keep_streaming():
+		return false
+	_build_platform_trees()
+	if not await _keep_streaming():
+		return false
+	_build_platform_planting()
+	return await _keep_streaming()
+
+
+func _build_platform_furniture() -> void:
 	## The destination. Everything is placed from the overlook centre on ground
 	## the path has already levelled, so nothing here needs a fudge height.
 	var centre := _vp_centre
@@ -5114,10 +5272,6 @@ func _set_piece_platform() -> void:
 	# Out on the terrace, clear of anything the bike can reach.
 	var edge: float = RoadPathGD.PLATFORM_HALF_WIDTH + 6.2
 	var timber := Color("6d4f38")
-
-	# Stone terrace, parapet, retaining wall. The rail along the climb is still
-	# the spur barrier; across the platform the belvedere owns the edge.
-	_build_belvedere()
 
 	# Benches square on to the water, planted on the terrace rather than hovering
 	# a world-up offset above a pitched deck.
@@ -5142,9 +5296,12 @@ func _set_piece_platform() -> void:
 		if absf(offset) > 1.0:
 			_deck_light(lamp_z, lamp_lateral, 0.68, LAMP_LIGHT, 7.5, 0.72)
 
+
+func _build_platform_trees() -> void:
 	# Pines along the back of the platform, screening the carriageway.
 	# Coast keeps the sky; mountain is a couple of snags; forest and country
 	# keep the wooded backstop.
+	var centre := _vp_centre
 	var reach: float = RoadPathGD.PLATFORM_HALF_LENGTH + 8.0
 	if _vp_theme != Env.COAST:
 		for _i in (10 if _vp_theme == Env.FOREST else 7):
@@ -5180,7 +5337,10 @@ func _set_piece_platform() -> void:
 				true
 			)
 
+
+func _build_platform_planting() -> void:
 	# A couple of stone planters at the ends, not a hedge across the view.
+	var centre := _vp_centre
 	for end in [-1.0, 1.0]:
 		var pz: float = centre + end * 16.5
 		var plat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 1.8, pz)
@@ -5194,6 +5354,7 @@ func _set_piece_platform() -> void:
 			true
 		)
 	# Boulders and scrub on the back of the platform, screening the road.
+	var reach: float = RoadPathGD.PLATFORM_HALF_LENGTH + 8.0
 	for _i in 11:
 		var z := centre + _rng.randf_range(-reach, reach)
 		var out: float = -RoadPathGD.PLATFORM_HALF_WIDTH - _rng.randf_range(1.0, 4.0)

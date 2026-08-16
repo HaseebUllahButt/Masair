@@ -56,6 +56,21 @@ func _process(_delta: float) -> bool:
 		# above proves the reset itself while this allows the bike to roll a little.
 		check(player.track_z < 12.0 and player.alive, "bike remains near the reset point")
 		check((streamer.get("_chunks") as Dictionary).size() >= 2, "nearby road is ready immediately")
+		var opening: Node = (streamer.get("_chunks") as Dictionary).get(1)
+		check(
+			opening != null
+			and (
+				opening.get_node_or_null("Trunks") != null
+				or opening.get_node_or_null("Conifers") != null
+				or opening.get_node_or_null("Crowns") != null
+				or opening.get_node_or_null("Fronds") != null
+				or opening.get_node_or_null("Rocks") != null
+				or opening.get_node_or_null("Grass") != null
+				or opening.get_node_or_null("HayBales") != null
+				or opening.get_node_or_null("Foliage") != null
+			),
+			"the road ahead is already planted at the start of a run"
+		)
 		check((traffic.get("_cars") as Array).is_empty(), "traffic is cleared")
 		# Committing to the scenic spur must retain both junctions while riding it.
 		# Parked on the platform the camera looks at the lake, so only the basin
@@ -71,6 +86,11 @@ func _process(_delta: float) -> bool:
 		var riding_bounds: Vector2i = streamer.call("_desired_bounds", floori(player.track_z / 40.0))
 		check(float(riding_bounds.x) * 40.0 <= viewpoint - spur_span, "riding the spur retains the entrance junction")
 		check(float(riding_bounds.y + 1) * 40.0 >= viewpoint + spur_span, "riding the spur retains the exit junction")
+		var build_bounds: Vector2i = streamer.call("_desired_build_bounds", floori(player.track_z / 40.0))
+		check(
+			float(build_bounds.y - build_bounds.x) * 40.0 < 600.0,
+			"riding the spur only builds the nearby streaming ring"
+		)
 		player.track_z = viewpoint
 		player.lateral = viewpoint_side * float(path.call("spur_offset", viewpoint))
 		var scenic_bounds: Vector2i = streamer.call("_desired_bounds", floori(viewpoint / 40.0))
@@ -298,6 +318,27 @@ func _process(_delta: float) -> bool:
 		check(
 			is_equal_approx(float(main.call("rain_at", 12345.0)), float(main.call("rain_at", 12345.0))),
 			"weather is deterministic for a given route position"
+		)
+	if frames == 90:
+		var streamer: Node = main.get_node("RoadStreamer")
+		var dressed := 0
+		for chunk in (streamer.get("_chunks") as Dictionary).values():
+			if not is_instance_valid(chunk):
+				continue
+			if (
+				chunk.get_node_or_null("Trunks") != null
+				or chunk.get_node_or_null("Conifers") != null
+				or chunk.get_node_or_null("Crowns") != null
+				or chunk.get_node_or_null("Fronds") != null
+				or chunk.get_node_or_null("Rocks") != null
+				or chunk.get_node_or_null("Grass") != null
+				or chunk.get_node_or_null("HayBales") != null
+				or chunk.get_node_or_null("Foliage") != null
+			):
+				dressed += 1
+		check(
+			dressed >= 2,
+			"streamed chunks grow trees and roadside scenery, not just the spawn ribbon (%d dressed)" % dressed
 		)
 		print("restart self-check: %d failures" % failures)
 		quit(1 if failures > 0 else 0)
