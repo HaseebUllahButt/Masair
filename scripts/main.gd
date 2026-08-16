@@ -823,3 +823,6 @@ func _apply_lighting() -> void:
 	sun.light_angular_distance = mood["angular_distance"]
 	_fill.light_color = mood["fill_color"]
 	_fill.light_energy = mood["fill_energy"]
+	var horizon := get_node_or_null("HorizonMountains")
+	if horizon and horizon.has_method("apply_mood"):
+		horizon.call("apply_mood", mood)

@@ -14,6 +14,7 @@ extends Node3D
 signal crashed_into_traffic
 
 const AudioGD := preload("res://scripts/audio.gd")
+const HorizonMountainsGD := preload("res://scripts/horizon_mountains.gd")
 
 # Longitudinal
 @export var top_speed: float = 55.5556 # 200 km/h
@@ -204,6 +205,9 @@ func _physics_process(delta: float) -> void:
 		_game.restart()
 		_update_view(delta)
 		_update_audio(delta)
+		## `_update_view` writes the rig after the teleport. Reset again so
+		## those local camera writes cannot interpolate from the bench pose.
+		reset_physics_interpolation()
 		return
 
 	if Input.is_action_just_pressed("sit"):
@@ -544,7 +548,10 @@ func _update_view(delta: float) -> void:
 	_ride_fov = lerpf(_ride_fov, 76.0 + v * 9.0, 1.0 - exp(-4.0 * delta))
 	camera.fov = _ride_fov
 	var scenic := seated or (_path != null and bool(_path.at_platform(track_z, lateral)))
-	camera.far = 5200.0 if scenic else 2200.0
+	## Riding stays at 2200 m so the spur does not draw three kilometres of
+	## trees. The skyline sits inside that window, so it stays in frame on the
+	## scenic road; the bench opens to 5200 m for the authored lake ranges.
+	camera.far = 5200.0 if scenic else HorizonMountainsGD.CLIP_FAR
 
 	_bob += delta * (6.0 + speed * 0.5)
 	var jitter := Vector3.ZERO

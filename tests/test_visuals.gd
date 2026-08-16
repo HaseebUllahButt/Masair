@@ -422,6 +422,42 @@ func _run() -> void:
 			check(shown == (i == style), "%s visibility matches style %d" % [KITS[i], style])
 	bike_vis.free()
 
+	var HorizonGD: GDScript = load("res://scripts/horizon_mountains.gd")
+	var horizon_consts: Dictionary = HorizonGD.get_script_constant_map()
+	var horizon_layers: Array = horizon_consts["LAYERS"]
+	check(horizon_layers.size() >= 3, "the skyline is stacked ranges, not one cutout")
+	check(float(horizon_consts["CLIP_FAR"]) >= 2200.0, "the riding clip clears the far range")
+	var nearest_radius := INF
+	var previous_radius := 0.0
+	for layer in horizon_layers:
+		var radius := float(layer["radius"])
+		check(radius > 1400.0, "a horizon range at %.0f m would sit inside the streamed world" % radius)
+		check(radius > previous_radius, "each range sits behind the one in front")
+		check(float(layer["face"]) >= 150.0, "range at %.0f m has a front slope, not a vertical wall" % radius)
+		previous_radius = radius
+		nearest_radius = minf(nearest_radius, radius)
+	check(
+		nearest_radius + 400.0 < float(horizon_consts["CLIP_FAR"]),
+		"the near range is inside the riding far clip"
+	)
+	var horizon: Node3D = HorizonGD.new()
+	horizon.name = "HorizonTest"
+	get_root().add_child(horizon)
+	check(horizon.get_node_or_null("Range0") != null, "the near range builds")
+	check(horizon.get_node_or_null("Range2") != null, "the far range builds")
+	var clouds := horizon.get_node_or_null("Clouds") as MultiMeshInstance3D
+	check(clouds != null and clouds.multimesh != null and clouds.multimesh.instance_count > 8, "high peaks wear a collar of cloud")
+	var near_range := horizon.get_node("Range0") as MeshInstance3D
+	var range_mat := near_range.material_override as ShaderMaterial
+	check(range_mat != null and range_mat.shader != null, "the skyline is painted as air, not a lit rock card")
+	check(range_mat.shader.resource_path.ends_with("horizon.gdshader"), "distant ranges use the horizon haze shader")
+	var cloud_mat := clouds.material_override as ShaderMaterial
+	check(cloud_mat != null and cloud_mat.shader != null and cloud_mat.shader.resource_path.ends_with("horizon_cloud.gdshader"), "collar puffs are soft cards, not solid spheres")
+	horizon.call("apply_mood", {"horizon_color": Color("f6b06a"), "fog_color": Color("8b625f"), "light_color": Color("ff9e62"), "cloud_lit": Color("f4b07d")})
+	var haze: Color = range_mat.get_shader_parameter("haze_color")
+	check(haze.r > 0.7 and haze.g > 0.4, "dusk paints the skyline with the horizon, not navy")
+	horizon.free()
+
 	if owns_path:
 		path.free()
 	print("visual self-check: %d failures" % failures)

@@ -123,6 +123,16 @@ func _process(_delta: float) -> bool:
 			(player as Node3D).global_position.distance_to(parked_from_bench.origin) < 0.05,
 			"restart from the bench parks on the new world's road"
 		)
+		var horizon: Node3D = main.get_node_or_null("HorizonMountains") as Node3D
+		check(horizon != null, "the follow skyline is in the ride scene")
+		check(
+			horizon.physics_interpolation_mode == Node.PHYSICS_INTERPOLATION_MODE_OFF,
+			"the follow skyline does not interpolate teleports"
+		)
+		check(
+			horizon.global_position.distance_to((player as Node3D).global_position) < 0.05,
+			"restart snaps the skyline onto the bike instead of flying it from the lake"
+		)
 		var chunks_before_light: Array = (streamer.get("_chunks") as Dictionary).keys()
 		main.call("_cycle_lighting")
 		check(
