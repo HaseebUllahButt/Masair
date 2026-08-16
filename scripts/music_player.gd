@@ -4,8 +4,9 @@ extends Node
 ##
 ## Godot can only decode mp3/ogg/wav at runtime. FLAC/M4A are listed in the
 ## playlist and decoded once via ffmpeg into a CD-quality WAV cache (no second
-## lossy encode). Decode and file load run on a worker thread so a switch never
-## stalls the ride; two voices crossfade and the next track is prefetched while
+## lossy encode). ffmpeg runs on a worker thread; AudioStream decoding stays on
+## the main thread because Godot does not expose task return values from
+## WorkerThreadPool. Two voices crossfade and the next track is prefetched while
 ## the current one plays. Playback position survives process restarts.
 
 signal playlist_changed
@@ -13,8 +14,9 @@ signal track_changed(title: String)
 signal playing_changed(is_playing: bool)
 signal preset_changed(index: int)
 
+const MusicLoader := preload("res://scripts/music_loader.gd")
+
 const BUS_NAME := "Music"
-const CACHE_DIR := "user://music_cache"
 ## Tone shapes for AudioEffectEQ10 (32 Hz → 16 kHz). Values are gain in dB.
 const PRESETS := [
 	{"name": "FLAT", "gains": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
@@ -52,6 +54,7 @@ var _stream_cache: Dictionary = {}
 var _play_request: Dictionary = {}
 var _prefetch_path: String = ""
 var _task_id: int = -1
+var _load_job: MusicLoader = null
 var _failed: Dictionary = {}
 
 
@@ -393,10 +396,10 @@ func _begin_playback(stream: AudioStream, seek: float) -> void:
 	var incoming := 1 - _active
 	var next_voice := _voices[incoming]
 	var current := _voice()
-	next_voice.stream = stream
-	next_voice.stream_paused = false
-	var outgoing_live := current.playing and not current.stream_paused and current.stream != null
+	var outgoing_live := current != null and current.playing and not current.stream_paused and current.stream != null
 	if outgoing_live:
+		next_voice.stream = stream
+		next_voice.stream_paused = false
 		next_voice.volume_db = linear_to_db(0.0001)
 		next_voice.play(from)
 		_active = incoming
@@ -406,16 +409,20 @@ func _begin_playback(stream: AudioStream, seek: float) -> void:
 		_fading = true
 		_apply_fade_volumes()
 	else:
-		_finish_fade()
-		current.stop()
-		current.stream = null
+		if current:
+			current.stop()
+			current.stream = null
+			current.volume_db = VOLUME_DB
 		_active = incoming
+		next_voice.stream = stream
+		next_voice.stream_paused = false
 		next_voice.volume_db = VOLUME_DB
 		next_voice.play(from)
 		_audible_index = track_index
 		_resume_position = from
 		_fading = false
 		_fade_t = 1.0
+		_trim_cache()
 	_want_playing = true
 	playing_changed.emit(true)
 
@@ -477,17 +484,22 @@ func _pump_tasks() -> void:
 	if _task_id != -1:
 		if not WorkerThreadPool.is_task_completed(_task_id):
 			return
-		var result: Variant = WorkerThreadPool.wait_for_task_completion(_task_id)
+		WorkerThreadPool.wait_for_task_completion(_task_id)
 		_task_id = -1
-		if result is Dictionary:
-			_handle_loaded(result)
+		if _load_job:
+			_finish_load_job(_load_job)
+			_load_job = null
 	## A nested fulfill may already have started the next decode.
 	if _task_id != -1:
 		return
 	var path := _next_load_path()
 	if _task_id != -1 or path.is_empty() or _stream_cache.has(path):
 		return
-	_task_id = WorkerThreadPool.add_task(_thread_load.bind(path, has_ffmpeg))
+	if MusicLoader.needs_transcode(path):
+		_load_job = MusicLoader.new()
+		_task_id = WorkerThreadPool.add_task(_load_job.prepare.bind(path, has_ffmpeg))
+	else:
+		_load_native(path)
 
 
 func _next_load_path() -> String:
@@ -510,16 +522,18 @@ func _next_load_path() -> String:
 	return ""
 
 
-static func _thread_load(path: String, ffmpeg: bool) -> Dictionary:
-	var stream: AudioStream = null
-	if not path.is_empty() and FileAccess.file_exists(path):
-		stream = _decode_stream(path, ffmpeg)
-	return {"path": path, "stream": stream}
+func _finish_load_job(job: MusicLoader) -> void:
+	var path := job.source_path
+	var playable := job.playable_path
+	var stream: AudioStream = _load_playable_file(playable) if not playable.is_empty() else null
+	_handle_loaded(path, stream)
 
 
-func _handle_loaded(result: Dictionary) -> void:
-	var path := str(result.get("path", ""))
-	var stream := result.get("stream") as AudioStream
+func _load_native(path: String) -> void:
+	_handle_loaded(path, _load_playable_file(path))
+
+
+func _handle_loaded(path: String, stream: AudioStream) -> void:
 	if stream:
 		_remember(path, stream)
 	else:
@@ -583,9 +597,8 @@ func _trim_cache() -> void:
 			break
 
 
-static func _decode_stream(path: String, ffmpeg: bool) -> AudioStream:
-	var playable := _resolve_playable_path(path, ffmpeg)
-	if playable.is_empty():
+func _load_playable_file(playable: String) -> AudioStream:
+	if playable.is_empty() or not FileAccess.file_exists(playable):
 		return null
 	var ext := playable.get_extension().to_lower()
 	match ext:
@@ -597,49 +610,6 @@ static func _decode_stream(path: String, ffmpeg: bool) -> AudioStream:
 			return AudioStreamWAV.load_from_file(playable)
 		_:
 			return null
-
-
-static func _resolve_playable_path(path: String, ffmpeg: bool) -> String:
-	var ext := path.get_extension().to_lower()
-	if ext in NATIVE_EXTS:
-		return path
-	if ext in TRANSCODE_EXTS:
-		return _transcode_cached(path, ffmpeg)
-	return ""
-
-
-static func _transcode_cached(path: String, ffmpeg: bool) -> String:
-	if not ffmpeg:
-		return ""
-	if not FileAccess.file_exists(path):
-		return ""
-	var cache_abs := ProjectSettings.globalize_path(CACHE_DIR)
-	DirAccess.make_dir_recursive_absolute(cache_abs)
-	var stamp := int(FileAccess.get_modified_time(path))
-	## Decode to 44.1 kHz 16-bit stereo PCM. Hi-res FLAC otherwise becomes a
-	## hundred-megabyte WAV that hitches even after the first transcode.
-	var key := "%s_%d_44k.wav" % [path.md5_text(), stamp]
-	var out_abs := cache_abs.path_join(key)
-	if FileAccess.file_exists(out_abs):
-		return out_abs
-	var legacy := cache_abs.path_join("%s_%d.wav" % [path.md5_text(), stamp])
-	if FileAccess.file_exists(legacy):
-		return legacy
-	var sink: Array = []
-	var code := OS.execute(
-		"ffmpeg",
-		[
-			"-y", "-hide_banner", "-loglevel", "error", "-threads", "1",
-			"-i", path, "-vn", "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le",
-			out_abs,
-		],
-		sink,
-		true,
-		true
-	)
-	if code != 0 or not FileAccess.file_exists(out_abs):
-		return ""
-	return out_abs
 
 
 func _stop_all() -> void:
@@ -658,6 +628,7 @@ func _drain_task() -> void:
 		return
 	WorkerThreadPool.wait_for_task_completion(_task_id)
 	_task_id = -1
+	_load_job = null
 
 
 func _on_voice_finished(which: int) -> void:
