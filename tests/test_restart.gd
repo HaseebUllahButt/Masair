@@ -84,8 +84,10 @@ func _process(_delta: float) -> bool:
 		player.track_z = viewpoint - 220.0
 		player.lateral = viewpoint_side * float(path.call("spur_offset", player.track_z))
 		var riding_bounds: Vector2i = streamer.call("_desired_bounds", floori(player.track_z / 40.0))
-		check(float(riding_bounds.x) * 40.0 <= viewpoint - spur_span, "riding the spur retains the entrance junction")
-		check(float(riding_bounds.y + 1) * 40.0 >= viewpoint + spur_span, "riding the spur retains the exit junction")
+		var riding_span: float = float(riding_bounds.y - riding_bounds.x + 1) * 40.0
+		check(riding_span < 900.0, "riding the spur keeps a sliding window, not the whole climb")
+		check(riding_bounds.x <= floori(player.track_z / 40.0), "riding the spur retains road behind the bike")
+		check(riding_bounds.y >= floori(player.track_z / 40.0), "riding the spur retains road ahead of the bike")
 		var build_bounds: Vector2i = streamer.call("_desired_build_bounds", floori(player.track_z / 40.0))
 		check(
 			float(build_bounds.y - build_bounds.x) * 40.0 < 600.0,

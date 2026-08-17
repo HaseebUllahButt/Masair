@@ -27,8 +27,13 @@ const UNLOADS_PER_FRAME := 2
 ## One dressed chunk ahead after spawn/R. Six full setups used to hitch the
 ## first frames; 80 m of trees is enough to look into, the rest streams.
 const OPENING_AHEAD := 1
-## Dress this near window before far tarmac. Matches how far roadside trees draw.
-const DRESS_AHEAD := 3
+## Prefer dressing this near window once ribbons exist. Never blocks tarmac.
+const DRESS_AHEAD := 4
+## Ribbon look-ahead on the scenic spur. Kept modest — dressing is what hitchs.
+const SCENIC_CHUNKS_AHEAD := 6
+## How far behind the bike spur terrain stays loaded while riding. Keeping the
+## whole 3.36 km route alive put ~80 terrain meshes in the world at once.
+const SCENIC_KEEP_BEHIND := 10
 
 
 func _ready() -> void:
@@ -128,25 +133,46 @@ func _sync(build_all: bool) -> void:
 		return
 	if _fill_opening(current, build_max):
 		return
-	var dress_max := mini(current + DRESS_AHEAD, build_max)
-	var near_missing := _first_missing(current, dress_max)
-	var near_undressed := _queued_props_between(current, dress_max)
-	# Ribbons and props are independent queues for far scenery. Inside the
-	# look-ahead window a chunk is not done until it has trees — otherwise the
-	# rider stares at bare tarmac. Finish that window before spending frames on
-	# far ribbon.
-	if not _build_in_flight:
-		if near_missing >= 0:
+	# Tarmac first. Never stack a ribbon slice with a prop stage on the same
+	# frame — that concurrency was the scenic approach hitch.
+	if not _build_in_flight and not _props_in_flight:
+		var next := _nearest_missing(current, build_min, build_max)
+		if next >= 0:
 			_build_in_flight = true
-			_spawn_dressed_incremental(near_missing, _stream_generation)
-		elif not near_undressed:
-			var next := _nearest_missing(current, build_min, build_max)
-			if next >= 0:
-				_build_in_flight = true
+			# Sync only the hole under the wheels. Syncing current+1 paid an
+			# 11–24 ms ribbon hitch every chunk boundary at top speed.
+			var under: Node = _chunks.get(current)
+			var need_sync := next == current and (
+				under == null or under.get_node_or_null("RoadSurface") == null
+			)
+			if need_sync:
+				_spawn_ribbon_sync(next, _stream_generation)
+			else:
 				_spawn_incremental(next, _stream_generation)
-	if not _build_in_flight and not _props_in_flight and not _props_queue.is_empty():
-		_props_in_flight = true
-		_build_next_props(_stream_generation)
+		else:
+			_enqueue_nearby_props(current)
+			if not _props_queue.is_empty():
+				_props_in_flight = true
+				_build_next_props(_stream_generation)
+
+
+func _enqueue_nearby_props(current: int) -> void:
+	## Far spur chunks stay ribbon-only until they enter the dress window.
+	var dress_max := current + DRESS_AHEAD
+	for i in range(maxi(current - 1, 0), dress_max + 1):
+		if not _chunks.has(i):
+			continue
+		var chunk: Node3D = _chunks[i]
+		if not is_instance_valid(chunk) or not chunk.is_inside_tree():
+			continue
+		if bool(chunk.get_meta("props_done", false)):
+			continue
+		if bool(chunk.get_meta("props_queued", false)):
+			continue
+		if chunk.get_node_or_null("RoadSurface") == null:
+			continue
+		chunk.set_meta("props_queued", true)
+		_props_queue.append(chunk)
 
 
 func _arm_opening(current: int) -> void:
@@ -198,30 +224,29 @@ func _desired_bounds(current: int) -> Vector2i:
 	var min_i := maxi(current - chunks_behind, 0)
 	var max_i := current + chunks_ahead
 	if _path and _path.has_method("on_spur") and _path.call("on_spur", _player.track_z, _player.lateral):
-		# Keep the complete authored spur once the rider commits to it. The road is
-		# 3.36 km end-to-end; the old fixed 600 m ring freed its two ends while the
-		# player was still on it, so looking back showed the route ending in empty sky.
-		#
-		# At the platform the camera looks at the lake, not back down the spur.
-		# Loading both junctions here paid for fifty chunks of trees the view never
-		# sees, which is most of why the overlook stuttered.
 		var centre: float = float(_path.call("viewpoint_centre_for", _player.track_z))
-		var half_span: float = RoadPathGD.SPUR_HALF_SPAN
 		if _path.has_method("at_platform") and bool(_path.call("at_platform", _player.track_z, _player.lateral)):
-			half_span = RoadPathGD.LAKE_SPAN + 180.0
-		min_i = maxi(floori((centre - half_span) / CHUNK_LENGTH) - 1, 0)
-		max_i = ceili((centre + half_span) / CHUNK_LENGTH) + 1
+			# Parked on the bench: keep the lake, drop the climb. Fifty woodland
+			# chunks behind the eye were most of the overlook stutter.
+			var half_span: float = RoadPathGD.LAKE_SPAN + 180.0
+			min_i = maxi(floori((centre - half_span) / CHUNK_LENGTH) - 1, 0)
+			max_i = ceili((centre + half_span) / CHUNK_LENGTH) + 1
+		else:
+			# Sliding window while riding. Full-spur retention kept ~80 live
+			# terrain meshes and made the climb hitch every frame.
+			min_i = maxi(current - SCENIC_KEEP_BEHIND, 0)
+			max_i = current + SCENIC_CHUNKS_AHEAD
 	return Vector2i(min_i, max_i)
 
 
 func _desired_build_bounds(current: int) -> Vector2i:
-	## Building and retaining answer different questions on a scenic spur.
-	##
-	## Retention spans both junctions so a glance back never exposes an unloaded
-	## road. Construction stays around the rider: expanding the build queue to the
-	## retention window committed all 3.36 km (roughly 84 woodland chunks) in one
-	## instant. Chunks already passed remain alive through `_desired_bounds()`.
-	return Vector2i(maxi(current - chunks_behind, 0), current + chunks_ahead)
+	## Building stays around the rider even on a scenic spur.
+	var ahead := chunks_ahead
+	var behind := chunks_behind
+	if _path and _path.has_method("on_spur") and _path.call("on_spur", _player.track_z, _player.lateral):
+		ahead = SCENIC_CHUNKS_AHEAD
+		behind = mini(chunks_behind, 2)
+	return Vector2i(maxi(current - behind, 0), current + ahead)
 
 
 func _nearest_missing(current: int, min_i: int, max_i: int) -> int:
@@ -249,14 +274,16 @@ func _spawn(index: int, incremental: bool) -> void:
 		chunk.call("setup_incremental", index, theme_for_chunk(index))
 	else:
 		chunk.call("setup", index, theme_for_chunk(index))
+		chunk.set_meta("props_done", true)
 
 
-func _spawn_dressed_incremental(index: int, generation: int) -> void:
+func _spawn_ribbon_sync(index: int, generation: int) -> void:
+	## Immediate tarmac for the hole under the bike only.
 	var chunk: Node3D = RoadChunkGD.new() as Node3D
 	chunk.name = "Chunk%d" % index
 	add_child(chunk)
 	_chunks[index] = chunk
-	await chunk.call("setup_incremental", index, theme_for_chunk(index))
+	chunk.call("setup_ribbon", index, theme_for_chunk(index))
 	if generation != _stream_generation:
 		return
 	_build_in_flight = false
@@ -267,15 +294,10 @@ func _spawn_incremental(index: int, generation: int) -> void:
 	chunk.name = "Chunk%d" % index
 	add_child(chunk)
 	_chunks[index] = chunk
-	# Make the riding surface for the whole nearby ring before decorating it.
-	# Serializing ribbon + props per chunk let a 50-frame lake build block every
-	# road behind it, so a fast rider reached chunks whose tarmac did not exist.
 	await chunk.call("setup_ribbon_incremental", index, theme_for_chunk(index))
 	if generation != _stream_generation:
 		return
 	_build_in_flight = false
-	if is_instance_valid(chunk) and chunk.is_inside_tree():
-		_props_queue.append(chunk)
 
 
 func _build_next_props(generation: int) -> void:
@@ -288,6 +310,9 @@ func _build_next_props(generation: int) -> void:
 		await chunk.call("setup_props_incremental")
 		if generation != _stream_generation:
 			return
+		if is_instance_valid(chunk):
+			chunk.set_meta("props_done", true)
+			chunk.set_meta("props_queued", false)
 		break
 	if generation == _stream_generation:
 		_props_in_flight = false
@@ -299,6 +324,7 @@ func _take_nearest_props() -> Node3D:
 	if _props_queue.is_empty() or _player == null:
 		return _props_queue.pop_front() if not _props_queue.is_empty() else null
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
+	var dress_max := current + DRESS_AHEAD
 	var best_i := -1
 	var best_d := INF
 	for i in _props_queue.size():
@@ -306,12 +332,16 @@ func _take_nearest_props() -> Node3D:
 		if not is_instance_valid(chunk):
 			continue
 		var index := int(chunk.get("chunk_index"))
-		var d: float = float(index - current) if index >= current else 1000.0 + float(current - index)
+		if index < current - 1 or index > dress_max:
+			continue
+		var d: float = float(index - current) if index >= current else 0.5 + float(current - index)
 		if d < best_d:
 			best_d = d
 			best_i = i
 	if best_i < 0:
-		return _props_queue.pop_front()
+		# Outside the dress window — drop and wait until the rider gets closer.
+		_props_queue.clear()
+		return null
 	var chosen: Node3D = _props_queue[best_i]
 	_props_queue.remove_at(best_i)
 	return chosen
