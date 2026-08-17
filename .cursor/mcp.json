@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "godotiq": {
+      "command": "/home/haseeb/.local/bin/godotiq",
+      "args": [],
+      "env": {
+        "GODOTIQ_PROJECT_ROOT": "/home/haseeb/dev/me/hehe/Masair",
+        "PATH": "/home/haseeb/.local/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}
