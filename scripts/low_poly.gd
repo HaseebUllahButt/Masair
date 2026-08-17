@@ -458,6 +458,61 @@ func add_sphere(
 			add_hull_quad(p00, p10, p11, p01, color, glow)
 
 
+func add_ring(
+	xform: Transform3D, outer_r: float, inner_r: float, height: float, sides: int, color: Color, glow: bool = false
+) -> void:
+	## Hollow cylinder: tyre carcasses and rim lips. End caps are annuli so the
+	## hub and spokes stay visible through the middle — a solid add_cylinder
+	## would bury them.
+	var out_r := maxf(outer_r, inner_r + 0.001)
+	var in_r := clampf(inner_r, 0.0, out_r - 0.001)
+	var segs := maxi(sides, 6)
+	hull_origin = xform.origin
+	var hy := height * 0.5
+	for i in segs:
+		var a0: float = TAU * float(i) / float(segs)
+		var a1: float = TAU * float(i + 1) / float(segs)
+		var o0 := Vector3(cos(a0), 0, sin(a0)) * out_r
+		var o1 := Vector3(cos(a1), 0, sin(a1)) * out_r
+		var i0 := Vector3(cos(a0), 0, sin(a0)) * in_r
+		var i1 := Vector3(cos(a1), 0, sin(a1)) * in_r
+		# Outer wall.
+		add_hull_quad(
+			xform * (o0 + Vector3(0, hy, 0)),
+			xform * (o1 + Vector3(0, hy, 0)),
+			xform * (o1 + Vector3(0, -hy, 0)),
+			xform * (o0 + Vector3(0, -hy, 0)),
+			color,
+			glow
+		)
+		# Inner wall (inward-facing).
+		add_hull_quad(
+			xform * (i1 + Vector3(0, hy, 0)),
+			xform * (i0 + Vector3(0, hy, 0)),
+			xform * (i0 + Vector3(0, -hy, 0)),
+			xform * (i1 + Vector3(0, -hy, 0)),
+			color,
+			glow
+		)
+		# Top / bottom annuli.
+		add_hull_quad(
+			xform * (o0 + Vector3(0, hy, 0)),
+			xform * (i0 + Vector3(0, hy, 0)),
+			xform * (i1 + Vector3(0, hy, 0)),
+			xform * (o1 + Vector3(0, hy, 0)),
+			color,
+			glow
+		)
+		add_hull_quad(
+			xform * (o0 + Vector3(0, -hy, 0)),
+			xform * (o1 + Vector3(0, -hy, 0)),
+			xform * (i1 + Vector3(0, -hy, 0)),
+			xform * (i0 + Vector3(0, -hy, 0)),
+			color,
+			glow
+		)
+
+
 func add_capsule(
 	xform: Transform3D, radius: float, height: float, segments: int, color: Color, glow: bool = false
 ) -> void:

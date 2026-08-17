@@ -1,0 +1,17 @@
+{
+  "project": {
+    "name": "Masair",
+    "engine": "godot_4",
+    "type": "3d"
+  },
+  "custom_rules": [
+    {
+      "id": "masair-procedural-meshes",
+      "text": "Masair builds low-poly 3D geometry procedurally in GDScript via scripts/low_poly.gd and visual builders (motorcycle_visual.gd, traffic_car.gd, etc.). Do not refactor procedural mesh builders into .tscn scenes unless explicitly asked."
+    },
+    {
+      "id": "masair-godot-version",
+      "text": "Godot 4.7, Forward Plus. Use GDScript 2 syntax (@export, await, CharacterBody3D). Prefer preload for LowPoly and other core modules that must work in headless CLI runs."
+    }
+  ]
+}

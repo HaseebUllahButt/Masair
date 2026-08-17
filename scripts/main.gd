@@ -552,14 +552,15 @@ static func _protect_scenic_visibility(mood: Dictionary) -> Dictionary:
 	# to rescue detail out of silhouette back when the light had no darks in it
 	# to begin with; now that shaded slopes land honestly dark, lifting this hard
 	# just flattens the form the light is finally producing.
-	out["exposure"] = maxf(float(out["exposure"]), 1.02)
+	out["exposure"] = maxf(float(out["exposure"]), 1.04)
 	# Enough sky in the ambient that a slope turned away from a low sun settles
-	# into a cool blue rather than into nothing. At 0.36 the shaded side of every
-	# fell in the forest and mountain views was reading as flat black, which is
-	# not a dark — it is an absence, and it takes the whole near half of the
-	# composition out of the picture.
-	out["ambient_sky_mix"] = maxf(float(out["ambient_sky_mix"]), 0.52)
-	out["ambient"] = maxf(float(out["ambient"]), 0.86)
+	# into a cool blue rather than into nothing. At dusk the key is three degrees
+	# up and the near headland faces away from it — without a real fill that half
+	# of the composition falls to pitch black, which is an absence, not a dark.
+	out["ambient_sky_mix"] = maxf(float(out["ambient_sky_mix"]), 0.62)
+	out["ambient"] = maxf(float(out["ambient"]), 0.98)
+	out["fill_energy"] = maxf(float(out["fill_energy"]), 0.88)
+	out["fill_color"] = (out["fill_color"] as Color).lerp(Color("7a9eb8"), 0.40)
 	return out
 
 
