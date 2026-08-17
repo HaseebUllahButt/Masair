@@ -4,7 +4,7 @@ extends Node3D
 const RoadChunkGD: GDScript = preload("res://scripts/road_chunk.gd")
 const RoadPathGD: GDScript = preload("res://scripts/road_path.gd")
 const CHUNK_LENGTH: float = 40.0
-@export var chunks_ahead: int = 5
+@export var chunks_ahead: int = 6
 @export var chunks_behind: int = 2
 ## Runtime chunks are built one at a time. setup_incremental() spans many
 ## frames, so merely limiting how many builds *start* per frame still lets the
@@ -23,17 +23,20 @@ var _defer_stream: bool = false
 ## Arriving at the bench shrinks keep from the whole spur to the lake. Freeing
 ## sixty woodland chunks in one `_process` is a hitch of its own; hide them
 ## immediately and destroy a couple per frame.
-const UNLOADS_PER_FRAME := 2
-## One dressed chunk ahead after spawn/R. Six full setups used to hitch the
-## first frames; 80 m of trees is enough to look into, the rest streams.
-const OPENING_AHEAD := 1
-## Prefer dressing this near window once ribbons exist. Never blocks tarmac.
-const DRESS_AHEAD := 4
-## Ribbon look-ahead on the scenic spur. Kept modest — dressing is what hitchs.
-const SCENIC_CHUNKS_AHEAD := 6
-## How far behind the bike spur terrain stays loaded while riding. Keeping the
-## whole 3.36 km route alive put ~80 terrain meshes in the world at once.
-const SCENIC_KEEP_BEHIND := 10
+const UNLOADS_PER_FRAME := 4
+## Two fully dressed chunks after spawn/R so the opening shot is not a bare
+## ribbon with props popping in twenty metres out.
+const OPENING_AHEAD := 2
+## Dress this far ahead of the bike so the corridor looks finished before it
+## enters the lens. Too tight and the ride reads as pop-in / procedural.
+const DRESS_AHEAD := 5
+## Ribbon look-ahead on the scenic spur — must stay ahead of DRESS_AHEAD so
+## tarmac is ready when the dress window wants to plant.
+const SCENIC_CHUNKS_AHEAD := 7
+## How far behind the bike spur terrain stays loaded while riding.
+const SCENIC_KEEP_BEHIND := 7
+## Prefer dressing the near corridor over building ribbons beyond this gap.
+const RIBBON_PRIORITY_AHEAD := 2
 
 
 func _ready() -> void:
@@ -133,10 +136,18 @@ func _sync(build_all: bool) -> void:
 		return
 	if _fill_opening(current, build_max):
 		return
-	# Tarmac first. Never stack a ribbon slice with a prop stage on the same
-	# frame — that concurrency was the scenic approach hitch.
+	# Near scenery first once the bike's immediate tarmac exists. Waiting for
+	# the whole look-ahead ring to finish ribbons left the camera staring at
+	# bare curb while far strips built — that pop-in read as choppy generation.
 	if not _build_in_flight and not _props_in_flight:
 		var next := _nearest_missing(current, build_min, build_max)
+		var urgent_ribbon := next >= 0 and next <= current + RIBBON_PRIORITY_AHEAD
+		if not urgent_ribbon and _has_undressed_nearby(current):
+			_enqueue_nearby_props(current)
+			if not _props_queue.is_empty():
+				_props_in_flight = true
+				_build_next_props(_stream_generation)
+				return
 		if next >= 0:
 			_build_in_flight = true
 			# Sync only the hole under the wheels. Syncing current+1 paid an
@@ -175,13 +186,30 @@ func _enqueue_nearby_props(current: int) -> void:
 		_props_queue.append(chunk)
 
 
+func _has_undressed_nearby(current: int) -> bool:
+	## True when the camera corridor still has bare ribbons waiting for props.
+	var dress_max := current + DRESS_AHEAD
+	for i in range(maxi(current - 1, 0), dress_max + 1):
+		if not _chunks.has(i):
+			continue
+		var chunk: Node3D = _chunks[i]
+		if not is_instance_valid(chunk):
+			continue
+		if chunk.get_node_or_null("RoadSurface") == null:
+			continue
+		if bool(chunk.get_meta("props_done", false)):
+			continue
+		return true
+	return false
+
+
 func _arm_opening(current: int) -> void:
 	_open_until = current + OPENING_AHEAD
 
 
 func _fill_opening(current: int, build_max: int) -> bool:
-	## One fully dressed chunk on the frame after spawn, not six. That used to
-	## hitch boot by rebuilding a whole look-ahead of forest in the first ticks.
+	## A short fully-dressed look-ahead after spawn so the first glance is not
+	## pop-in. Kept small enough that restart hitch stays tolerable.
 	if _open_until < 0:
 		return false
 	for i in range(current + 1, _open_until + 1):
@@ -228,7 +256,7 @@ func _desired_bounds(current: int) -> Vector2i:
 		if _path.has_method("at_platform") and bool(_path.call("at_platform", _player.track_z, _player.lateral)):
 			# Parked on the bench: keep the lake, drop the climb. Fifty woodland
 			# chunks behind the eye were most of the overlook stutter.
-			var half_span: float = RoadPathGD.LAKE_SPAN + 180.0
+			var half_span: float = RoadPathGD.LAKE_SPAN + 100.0
 			min_i = maxi(floori((centre - half_span) / CHUNK_LENGTH) - 1, 0)
 			max_i = ceili((centre + half_span) / CHUNK_LENGTH) + 1
 		else:

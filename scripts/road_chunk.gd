@@ -55,7 +55,7 @@ const DASH_ON := 2.8
 const PROP_ROAD_CLEARANCE := 0.75
 ## Hard cap on GLB instances per chunk. The Kenney kit is suburban, so it stocks
 ## the countryside and villages; the city builds its own frontage.
-const MAX_IMPORTED_ASSETS_PER_CHUNK := 6
+const MAX_IMPORTED_ASSETS_PER_CHUNK := 4
 ## Real omni lights per chunk. A glowing quad on a pole floats; the pool of light
 ## it drops on the tarmac is what sells a lit road at dusk. Kept to a hard few and
 ## faded out at 35 m: this is an integrated-GPU game and clustered lights are the
@@ -635,9 +635,9 @@ func setup_ribbon_incremental(index: int, theme_id: int) -> void:
 	var soft_left: LowPoly = builders[2]
 	var soft_right: LowPoly = builders[3]
 	var z0: float = float(chunk_index) * LENGTH
-	# Spur ribbons are denser (deck/terrace mixes). Finish the cross-sections in
-	# one slice; the hitch was uploading spur extras, not the strip vertices.
-	var steps_per: int = STEPS if _on_spur else RIBBON_STEPS_PER_FRAME
+	# Spur ribbons are denser (deck/terrace mixes). Slice them — finishing all
+	# twelve cross-sections in one tick still hitchs on integrated GPUs.
+	var steps_per: int = 4 if _on_spur else RIBBON_STEPS_PER_FRAME
 	for first_step in range(0, STEPS, steps_per):
 		_build_ribbon_rows(hard, road, soft_left, soft_right, z0, first_step, mini(first_step + steps_per, STEPS))
 		if not await _keep_streaming():
@@ -683,8 +683,8 @@ func _build_props_incremental() -> void:
 	if not await _keep_streaming():
 		return
 	if _on_spur:
-		# One woodland pass — enough to read as a tunnel without the five-station
-		# streaming tax that made the climb hitch.
+		# Three woodland stations — denser tunnel so the climb does not read as
+		# sparse pop-in once the dress window is ahead of the camera.
 		_build_spur_woodland(0, 3)
 		if not await _keep_streaming():
 			return
@@ -738,9 +738,11 @@ func _build_props_incremental() -> void:
 		else:
 			# Peak collars sit on range shoulders that can fall outside the seated
 			# vista window; the builder no-ops unless a summit lands in this strip.
-			_build_peak_clouds()
-			if not await _keep_streaming():
-				return
+			# Coast skips them — open water/sky, not alpine shoulders.
+			if _vp_theme != Env.COAST:
+				_build_peak_clouds()
+				if not await _keep_streaming():
+					return
 	if _on_spur:
 		_build_spur_furniture()
 		if not await _keep_streaming():
@@ -880,10 +882,9 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5) -> voi
 			continue
 		var towards_summit: float = 1.0 - clampf((distance - 80.0) / 1100.0, 0.0, 1.0)
 		for road_side in [-1.0, 1.0]:
-			# Near row only on most stations. Outer row every other station keeps
-			# the tunnel without doubling Multimesh transforms.
+			# Near row only on most stations. Outer row is rare — Multimesh cost.
 			for row in 2:
-				if row == 1 and (station % 2 == 1 or _rng.randf() > 0.4):
+				if row == 1 and (station % 2 == 1 or _rng.randf() > 0.22):
 					continue
 				var jitter_z: float = z + _rng.randf_range(-2.0, 2.0)
 				# Sample the spur at the plant point, not the station. The apron
@@ -897,23 +898,27 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5) -> voi
 					continue
 				match _vp_theme:
 					Env.COAST:
-						var s := _rng.randf_range(1.4, 3.2)
+						# No palms/cypress on the climb — thin needles read as sticks at
+						# roadside speed. Big Sur is scrub, rock and marram.
+						var s := _rng.randf_range(1.6, 3.6)
 						_blob(
 							jitter_z,
 							lateral,
-							Vector3(s * 1.8, s * 0.7, s * 1.5),
+							Vector3(s * 1.9, s * 0.75, s * 1.6),
 							Color("9a8868").lerp(Color("6a8070"), _rng.randf()),
 							0.0,
 							false,
 							true
 						)
-						if row == 0 and _rng.randf() < 0.34:
-							_tree(
-								Flora.CYPRESS if _rng.randf() < 0.55 else Flora.PALM,
-								jitter_z,
-								lateral,
-								_rng.randf_range(5.5, 9.0) * reveal,
-								Color("3a5c44").darkened(_rng.randf() * 0.2),
+						if row == 0 and _rng.randf() < 0.55:
+							var bush := _rng.randf_range(1.2, 2.4)
+							_blob(
+								jitter_z + _rng.randf_range(-1.2, 1.2),
+								lateral + road_side * _rng.randf_range(0.6, 2.2),
+								Vector3(bush * 2.0, bush * 0.85, bush * 1.7),
+								Color("3a5c44").lerp(Color("6a7a58"), _rng.randf()),
+								0.0,
+								true,
 								true
 							)
 					Env.MOUNTAIN:
@@ -1367,7 +1372,10 @@ func _finish_ribbon_incremental(
 	if not await _keep_streaming():
 		return
 	if _on_spur:
-		_build_spur_ribbon(hard, road, z0, 0, STEPS, false)
+		_build_spur_ribbon(hard, road, z0, 0, 6, false)
+		if not await _keep_streaming():
+			return
+		_build_spur_ribbon(hard, road, z0, 6, 6, false)
 		if not await _keep_streaming():
 			return
 		_finish_spur_ribbon(hard, z0)
@@ -2416,7 +2424,7 @@ func _grass_verge() -> void:
 		return
 	var z0: float = float(chunk_index) * LENGTH
 	var base: Color = _pal["verge"]
-	for _i in 72:
+	for _i in 28:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var side: float = 1.0 if _rng.randf() < 0.5 else -1.0
 		# Packed against the curb, thinning outward.
@@ -2578,7 +2586,7 @@ func _verge_planting() -> void:
 	## Rounded growth packed along the first few metres of verge, every theme.
 	## This is the band the rider actually looks at, and it used to be a bare
 	## coloured stripe between the curb and whatever was 20 m away.
-	const DENSITY := {Env.CITY: 8, Env.FOREST: 28, Env.COAST: 18, Env.MOUNTAIN: 22, Env.COUNTRY: 26}
+	const DENSITY := {Env.CITY: 8, Env.FOREST: 22, Env.COAST: 12, Env.MOUNTAIN: 16, Env.COUNTRY: 20}
 	var z0: float = float(chunk_index) * LENGTH
 	# City verge is concrete-grey; planting it that colour reads as rubble.
 	var base: Color = Color("2c4a33") if theme == Env.CITY else _pal["prop_a"]
@@ -2912,7 +2920,7 @@ func _scenery_coast() -> void:
 	# a rugged rocky shoulder now: rocks that vary warm against cool and tall
 	# against low so the dusk light has edges to catch, imported boulders for real
 	# silhouette, and dune scrub in green and marram breaking the sand with colour.
-	for _i in 14:
+	for _i in 10:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var lx := -(HALF_WIDTH + 8.0 + _rng.randf_range(0.0, 58.0))
 		var roll := _rng.randf()
@@ -2932,20 +2940,39 @@ func _scenery_coast() -> void:
 			var w := _rng.randf_range(4.0, 9.0)
 			_blob(z, lx, Vector3(w, _rng.randf_range(2.4, 4.8), w * 0.75), (_pal["prop_b"] as Color).lerp(_pal["prop_c"], _rng.randf() * 0.6))
 	# Marram and scrub on the sand — without this the land bank is bare tint.
-	for _i in 16:
+	for _i in 10:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var lx := -(HALF_WIDTH + 5.0 + _rng.randf_range(0.0, 64.0))
 		var w := _rng.randf_range(1.5, 3.4)
 		_blob(z, lx, Vector3(w, _rng.randf_range(0.6, 1.4), w * 0.9), (_pal["prop_a"] as Color).lerp(_pal["ground_alt"], _rng.randf()).darkened(_rng.randf() * 0.2), 0.0, true)
-	# Palms leaning out of the land side, with a few scrubby broadleaves behind.
-	for _i in 10:
+	# Sea-side curb: scrub and rock only. Palms/cypress read as thin sticks at
+	# highway speed and fight the open Big Sur skyline.
+	for _i in 9:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
-		var lx := HALF_WIDTH + 3.0 + _rng.randf_range(0.0, 14.0)
-		if _rng.randf() < 0.75:
-			_tree(Flora.PALM, z, lx, _rng.randf_range(6.0, 10.5), (_pal["prop_a"] as Color).darkened(_rng.randf() * 0.2))
+		var lx := HALF_WIDTH + 2.4 + _rng.randf_range(0.0, 18.0)
+		var w := _rng.randf_range(1.4, 3.2)
+		if _rng.randf() < 0.55:
+			_blob(
+				z,
+				lx,
+				Vector3(w * 2.1, w * 0.85, w * 1.7),
+				(_pal["prop_a"] as Color).lerp(_pal["ground_alt"], _rng.randf()).darkened(_rng.randf() * 0.18),
+				0.0,
+				true,
+				true
+			)
 		else:
-			_tree(Flora.BROADLEAF, z, lx, _rng.randf_range(4.0, 6.5), _pal["prop_a"])
-	for _i in 10:
+			var s := _rng.randf_range(1.1, 2.6)
+			_blob(
+				z,
+				lx,
+				Vector3(s * 1.6, s * 0.9, s * 1.4),
+				(_pal["prop_c"] as Color).darkened(_rng.randf() * 0.22),
+				0.0,
+				false,
+				true
+			)
+	for _i in 8:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var lx := HALF_WIDTH + 14.0 + _rng.randf_range(0.0, 90.0)
 		var s := _rng.randf_range(1.2, 4.5)
@@ -4098,10 +4125,9 @@ func _dress_vista_forest() -> void:
 
 
 func _dress_vista_coast() -> void:
-	## Big Sur: open water, a cliffed drop under the rail, one headland in the
-	## mid-ground. Kenney boulders on the lip, not hovering in the sea.
+	## Big Sur: open water, cliffed drop, headland rocks and marram — no trees.
 	var z0 := float(chunk_index) * LENGTH
-	for _i in 10:
+	for _i in 8:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = RoadPathGD.HEADLAND_CREST + 4.0 + _rng.randf_range(0.0, 22.0)
 		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.12:
@@ -4109,6 +4135,23 @@ func _dress_vista_coast() -> void:
 		if _height_above_water(z, out) < 4.0:
 			continue
 		_vista_rock(z, _vp_side * out, _rng.randf_range(2.8, 7.0), _rng.randf_range(-0.4, 0.2))
+	for _i in 6:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var out: float = RoadPathGD.HEADLAND_CREST + 3.0 + _rng.randf_range(0.0, 18.0)
+		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.12:
+			continue
+		if _height_above_water(z, out) < 3.0:
+			continue
+		var s: float = _rng.randf_range(1.4, 3.0)
+		_blob(
+			z,
+			_vp_side * out,
+			Vector3(s * 2.0, s * 0.8, s * 1.6),
+			Color("3a5c44").lerp(Color("6a7a58"), _rng.randf()),
+			0.0,
+			true,
+			true
+		)
 
 
 func _dress_vista_mountain() -> void:
@@ -4441,9 +4484,8 @@ func _vista_shore_wall() -> void:
 
 
 func _vista_cypress() -> void:
-	## One dark needle in the picture, not beside the camera. 40 m in front of
-	## the eye and 28 m along the route is 35° off the view axis — the edge of
-	## a 94° seated frame, which is where a framing tree belongs.
+	## Framing landmark on the coast view axis: a chunky sea-stack, not a thin
+	## cypress needle. Marker name kept for the visuals self-check.
 	var z: float = _vp_centre + 28.0
 	if not _chunk_covers(z):
 		return
@@ -4451,7 +4493,11 @@ func _vista_cypress() -> void:
 	var out: float = eye_out + 40.0
 	if _height_above_water(z, out) < 2.0:
 		out = RoadPathGD.HEADLAND_CREST + 8.0
-	_tree(Flora.CYPRESS, z, _vp_side * out, 22.0, Color("14241c"), true)
+	var lat: float = _vp_side * out
+	var stone := Color("5a5348").lerp(Color("3a3834"), 0.45)
+	_prism(z, lat, Vector3(5.4, 7.2, 4.6), stone.darkened(0.08), -0.35)
+	_prism(z + 1.1, lat + _vp_side * 1.6, Vector3(3.6, 4.8, 3.1), stone, -0.2)
+	_blob(z - 0.8, lat - _vp_side * 1.2, Vector3(4.2, 2.4, 3.4), stone.lightened(0.06), 0.0, false, true)
 	var marker := Node3D.new()
 	marker.name = "ViewpointCypress"
 	add_child(marker)
@@ -4699,7 +4745,7 @@ func _build_lake_edges_incremental() -> bool:
 	_build_lake_edge_boulders()
 	if not await _keep_streaming():
 		return false
-	var fan_count := SCREE_FANS * 2 if _vp_theme == Env.MOUNTAIN or _vp_theme == Env.COAST else SCREE_FANS
+	var fan_count := SCREE_FANS if _vp_theme == Env.COAST else (SCREE_FANS * 2 if _vp_theme == Env.MOUNTAIN else SCREE_FANS)
 	var z0 := float(chunk_index) * LENGTH
 	var face_run: float = maxf(
 		float(_path.viewpoint_near_shore(_vp_centre)) - RoadPathGD.HEADLAND_CREST - 8.0, 24.0
@@ -4802,7 +4848,7 @@ func _build_face_scree() -> void:
 	var face_run: float = maxf(
 		float(_path.viewpoint_near_shore(_vp_centre)) - RoadPathGD.HEADLAND_CREST - 8.0, 24.0
 	)
-	for _fan in (SCREE_FANS * 2 if _vp_theme == Env.MOUNTAIN or _vp_theme == Env.COAST else SCREE_FANS):
+	for _fan in (SCREE_FANS if _vp_theme == Env.COAST else (SCREE_FANS * 2 if _vp_theme == Env.MOUNTAIN else SCREE_FANS)):
 		_build_face_scree_fan(z0, face_run)
 
 

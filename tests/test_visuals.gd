@@ -292,7 +292,7 @@ func _run() -> void:
 			check(themed.get_node_or_null("ViewpointRange") != null, "the coast keeps a distant headland on the horizon")
 			check(themed.get_node_or_null("ViewpointCliffs") == null, "the coast overlook has no far-shore wall in the water")
 			check(themed.get_node_or_null("ViewpointHeadland") != null, "the coast overlook has a cliff under the bench")
-			check(themed.get_node_or_null("ViewpointCypress") != null, "the coast view has a lone cypress")
+			check(themed.get_node_or_null("ViewpointCypress") != null, "the coast view has a framing sea-stack")
 			check(themed.get_node_or_null("Birds") != null, "gulls circle the coast water")
 			check(themed.is_processing(), "the coast flock keeps the chunk awake")
 		if env == RoadChunkGD.Env.MOUNTAIN:
