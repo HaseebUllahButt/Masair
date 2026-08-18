@@ -64,6 +64,35 @@ func _count_trees_on_tarmac(chunk: Node3D, path: Node, index: int) -> int:
 	return on_road
 
 
+func _count_inland_verge_trees(chunk: Node3D, path: Node, index: int) -> int:
+	## Trees on the main-road verge opposite the scenic turnoff. The climb used
+	## to skip ordinary scenery for the whole spur window, so this side went bare.
+	var origin: Vector3 = chunk.get("_origin")
+	var planted: Array = []
+	planted.append_array(chunk.get("_conifers") as Array)
+	planted.append_array(chunk.get("_trunks") as Array)
+	var z0: float = float(index) * RoadChunkGD.LENGTH
+	var side: float = float(path.call("viewpoint_side_for", path.call("viewpoint_centre_for", z0)))
+	var inland := 0
+	for xform in planted:
+		var world: Vector3 = origin + xform.origin
+		var best_z := z0
+		var best_d := INF
+		for i in 21:
+			var z: float = z0 + float(i) * 2.0
+			var centre: Vector3 = path.call("center_at", z)
+			var d: float = Vector2(world.x - centre.x, world.z - centre.z).length()
+			if d < best_d:
+				best_d = d
+				best_z = z
+		var at: Vector3 = path.call("center_at", best_z)
+		var right: Vector3 = (path.call("frame_flat_at", best_z) as Basis).x
+		var lateral: float = (world - at).dot(right)
+		if lateral * side < 0.0 and absf(lateral) > RoadChunkGD.HALF_WIDTH + 1.5:
+			inland += 1
+	return inland
+
+
 func _initialize() -> void:
 	call_deferred("_run")
 
@@ -95,6 +124,20 @@ func _run() -> void:
 	var metal: StandardMaterial3D = LowPolyGD.metal_material()
 	check(metal.metallic > 0.9 and metal.roughness < 0.4, "metal channel actually reflects the sky")
 	check(LowPolyGD.paint_material().clearcoat_enabled, "paint channel has a clearcoat")
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = BoxMesh.new()
+	var xf := Transform3D(Basis.from_euler(Vector3(0.2, 0.7, 0.1)).scaled(Vector3(2.0, 0.5, 1.25)), Vector3(3.0, 4.0, 5.0))
+	var xforms: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	xforms.append(xf)
+	cols.append(Color(0.2, 0.4, 0.6, 0.8))
+	LowPolyGD.fill_multimesh(mm, xforms, cols)
+	var packed: PackedFloat32Array = mm.get_buffer()
+	check(packed.size() == 16, "multimesh buffer is one TRANSFORM_3D + colour")
+	check(is_equal_approx(packed[3], xf.origin.x) and is_equal_approx(packed[7], xf.origin.y) and is_equal_approx(packed[11], xf.origin.z), "multimesh buffer round-trips the instance origin")
+	check(is_equal_approx(packed[12], 0.2) and is_equal_approx(packed[15], 0.8), "multimesh buffer round-trips the instance colour")
 
 	var chunk: Node3D = RoadChunkGD.new()
 	chunk.name = "VisualChunkTest"
@@ -105,6 +148,13 @@ func _run() -> void:
 	check(chunk.get_node_or_null("PowerLine") == null, "distant cable ribbons cannot spike through the skyline")
 	check(chunk.get_node_or_null("Terrain") != null, "chunk has a separate terrain ribbon")
 	check(chunk.get_node_or_null("Cubes") != null, "chunk has batched roadside furniture")
+	var cubes := chunk.get_node_or_null("Cubes") as MultiMeshInstance3D
+	var planted_cubes: Array = chunk.get("_cubes")
+	var cube_buf: PackedFloat32Array = PackedFloat32Array() if cubes == null else cubes.multimesh.get_buffer()
+	check(
+		cubes != null and planted_cubes.size() > 0 and cube_buf.size() >= 12 and is_equal_approx(cube_buf[3], planted_cubes[0].origin.x),
+		"batched props keep their authored transforms"
+	)
 	check(chunk.get_node_or_null("RoadSurface/RoadDetails") == null, "road details are not nested over the road surface")
 	var road_surface := chunk.get_node("RoadSurface") as MeshInstance3D
 	check(road_surface.material_override == road_material, "road surface uses the road material")
@@ -161,6 +211,12 @@ func _run() -> void:
 	check(lake != null and lake.material_override == RoadChunkGD.water_material(), "the lake uses the reflective shared water")
 	check(viewpoint.get_node_or_null("ViewpointRange") != null, "the overlook builds the range it looks at")
 	check(viewpoint.get_node_or_null("ViewpointFarGround") != null, "the drawn ground reaches the foot of the range")
+	var far_ground := viewpoint.get_node("ViewpointFarGround") as MeshInstance3D
+	check(
+		far_ground.mesh != null and far_ground.mesh.get_aabb().get_longest_axis_size() > 80.0,
+		"far ground is a skirt under the range, not a buried stub (%.0f m)"
+		% (far_ground.mesh.get_aabb().get_longest_axis_size() if far_ground.mesh else 0.0)
+	)
 	# The old range put one gaussian blob in the middle of the lake, low enough
 	# that the seated eye looked down onto a pale-yellow lid. Then two parabolic
 	# noses did the same job as ice-cream hills. A country overlook is a pass
@@ -172,7 +228,9 @@ func _run() -> void:
 	)
 	check(float(RoadChunkGD.RANGE_LAYERS[0]["height"]) >= 200.0, "the near range is a fell, not a bump")
 	check(RoadChunkGD.RANGE_LAYERS.size() >= 4, "the view stacks four distances, not one lump")
-	check(float(RoadPathGD.SEAT_TILT) > deg_to_rad(10.0), "the seated eye looks down at the water")
+	check(float(RoadPathGD.SEAT_EYE) >= 1.5, "the seated eye sits above the terrace, not in the water")
+	check(float(RoadPathGD.SEAT_TILT) > deg_to_rad(3.0), "the seated eye still dips toward the lake")
+	check(float(RoadPathGD.SEAT_TILT) < deg_to_rad(10.0), "the seated eye looks out at the far shore, not down at the near water")
 	for layer in RoadChunkGD.RANGE_LAYERS:
 		check(not layer.has("peak"), "range layers no longer author a single central summit")
 		check(not layer.has("snow"), "the range is not wearing a pale snow lid")
@@ -213,6 +271,8 @@ func _run() -> void:
 	)
 	var on_road_trees := _count_trees_on_tarmac(viewpoint, path, overlook_chunk)
 	check(on_road_trees == 0, "the platform chunk does not plant trees on the scenic road (%d)" % on_road_trees)
+	var platform_grass: int = (viewpoint.get("_grass") as Array).size()
+	check(platform_grass < 100, "the platform does not scatter field grass over the lake (%d)" % platform_grass)
 	check(viewpoint.get_node_or_null("Birds") != null, "country overlooks have a small flock over the water")
 	check(viewpoint.is_processing(), "country flock keeps the platform chunk awake")
 	var climb: Node3D = RoadChunkGD.new()
@@ -222,7 +282,22 @@ func _run() -> void:
 	climb.call("setup", climb_chunk, RoadChunkGD.Env.FOREST)
 	var climb_trees := _count_trees_on_tarmac(climb, path, climb_chunk)
 	check(climb_trees == 0, "the scenic climb does not plant trees on the tarmac (%d)" % climb_trees)
+	check(bool(climb.get("_on_lake")), "the climb chunk sits in the lake basin")
+	var climb_inland := _count_inland_verge_trees(climb, path, climb_chunk)
+	check(climb_inland > 4, "the carriageway beside the scenic climb still has trees (%d)" % climb_inland)
 	climb.free()
+	var approach: Node3D = RoadChunkGD.new()
+	approach.name = "ScenicApproachVergeTest"
+	get_root().add_child(approach)
+	var approach_chunk := overlook_chunk - 40
+	approach.call("setup", approach_chunk, RoadChunkGD.Env.FOREST)
+	check(bool(approach.get("_on_spur")), "the approach chunk is inside the scenic spur window")
+	check(not bool(approach.get("_on_lake")), "the approach chunk is not the lake basin")
+	var approach_road := _count_trees_on_tarmac(approach, path, approach_chunk)
+	check(approach_road == 0, "the scenic approach does not plant trees on the tarmac (%d)" % approach_road)
+	var approach_inland := _count_inland_verge_trees(approach, path, approach_chunk)
+	check(approach_inland > 4, "the main road near the scenic turnoff still has trees (%d)" % approach_inland)
+	approach.free()
 	var spur_surface := viewpoint.get_node("RoadSurface") as MeshInstance3D
 	var spur_aabb: AABB = spur_surface.mesh.get_aabb()
 	# Far wider than the 16 m carriageway on its own: the spur and its parking
@@ -270,7 +345,84 @@ func _run() -> void:
 		path.call("at_platform", RoadPathGD.VIEWPOINT_FIRST, path.call("viewpoint_side_for", RoadPathGD.VIEWPOINT_FIRST) * RoadPathGD.SPUR_OUT),
 		"the built platform is the one the path offers a seat on"
 	)
+	# Riding past a scenic turnoff must keep the highway trees, and taking the
+	# spur must drop the unused corridor so both paths are not drawn at once.
+	viewpoint.call("apply_corridor", false, true)
+	var lake_mesh := viewpoint.get_node_or_null("ViewpointLake") as Node3D
+	check(lake_mesh != null and not lake_mesh.visible, "the main road does not draw the unused scenic basin")
+	var highway_shown := false
+	for child in viewpoint.get_children():
+		if str(child.get_meta("corridor", "")) == "highway" and bool(child.visible):
+			highway_shown = true
+			break
+	check(highway_shown, "the main road keeps its trees while the scenic spur is unused")
+	viewpoint.call("apply_corridor", true, true)
+	check(lake_mesh.visible, "the scenic basin draws once the rider takes the spur")
+	var highway_hidden := true
+	for child in viewpoint.get_children():
+		if str(child.get_meta("corridor", "")) == "highway" and bool(child.visible):
+			highway_hidden = false
+			break
+	check(highway_hidden, "the scenic spur does not draw the unused highway trees")
+	viewpoint.call("apply_corridor", false, true, true)
+	check(viewpoint.get_node_or_null("ViewpointLake") == null, "committed highway frees the unused lake")
+	viewpoint.call("apply_corridor", false, false)
 	viewpoint.free()
+
+	# Streaming past a turnoff must not upload the lake. Tests and the catalog
+	# still call setup() with scenic included; runtime passes false until the
+	# rider is on the spur, then late-builds.
+	var highway_only: Node3D = RoadChunkGD.new()
+	highway_only.name = "HighwayOnlyOverlook"
+	get_root().add_child(highway_only)
+	highway_only.call("setup", overlook_chunk, RoadChunkGD.Env.COUNTRY, false)
+	check(highway_only.get_node_or_null("ViewpointLake") == null, "highway streaming skips the unused lake")
+	check(
+		_count_inland_verge_trees(highway_only, path, overlook_chunk) > 0,
+		"highway-only overlook still plants inland trees"
+	)
+	highway_only.call("_build_scenic_props")
+	check(highway_only.get_node_or_null("ViewpointLake") != null, "taking the spur late-builds the lake")
+	highway_only.free()
+
+	# The climb must not plant unused highway trees. Returning to the carriageway
+	# late-builds them; the lake is already there.
+	var scenic_only: Node3D = RoadChunkGD.new()
+	scenic_only.name = "ScenicOnlyOverlook"
+	get_root().add_child(scenic_only)
+	scenic_only.call("setup", overlook_chunk, RoadChunkGD.Env.COUNTRY, true, false)
+	check(scenic_only.get_node_or_null("ViewpointLake") != null, "the climb still builds the lake")
+	check(
+		_count_inland_verge_trees(scenic_only, path, overlook_chunk) == 0,
+		"the climb does not plant unused highway trees"
+	)
+	scenic_only.call("_build_highway_props")
+	check(
+		_count_inland_verge_trees(scenic_only, path, overlook_chunk) > 0,
+		"returning to the highway late-builds the verge"
+	)
+	scenic_only.free()
+
+	# Riding past the turnoff still needs woodland at the gore so the exit is not
+	# a hole, without uploading the lake.
+	var stub_index := overlook_chunk
+	for i in range(overlook_chunk - 42, overlook_chunk - 8):
+		var d: float = float(path.call("spur_divergence", (float(i) + 0.5) * RoadChunkGD.LENGTH))
+		if d >= 0.08 and d < RoadPathGD.CORRIDOR_COMMIT:
+			stub_index = i
+			break
+	check(stub_index != overlook_chunk, "the exit has a readable junction strip")
+	var stub: Node3D = RoadChunkGD.new()
+	stub.name = "JunctionStubOverlook"
+	get_root().add_child(stub)
+	stub.call("setup", stub_index, RoadChunkGD.Env.COUNTRY, false)
+	check(stub.get_node_or_null("ViewpointLake") == null, "the unused climb does not build the lake at the exit")
+	var stub_scenic := 0
+	for child in stub.get_children():
+		if str(child.get_meta("corridor", "")) == "scenic":
+			stub_scenic += 1
+	check(stub_scenic > 0, "the exit still shows woodland where the spur peels off")
+	stub.free()
 
 	# Other rural biomes still produce a viewpoint landscape: water, a far side,
 	# no towers or hamlets. The spur maths are shared; only the dressing changes.
@@ -425,8 +577,8 @@ func _run() -> void:
 	var HorizonGD: GDScript = load("res://scripts/horizon_mountains.gd")
 	var horizon_consts: Dictionary = HorizonGD.get_script_constant_map()
 	var horizon_layers: Array = horizon_consts["LAYERS"]
-	check(horizon_layers.size() >= 3, "the skyline is stacked ranges, not one cutout")
-	check(float(horizon_consts["CLIP_FAR"]) >= 2200.0, "the riding clip clears the far range")
+	check(horizon_layers.size() >= 4, "the skyline is stacked ranges, not one cutout")
+	check(float(horizon_consts["CLIP_FAR"]) >= 2600.0, "the riding clip clears the far range")
 	var nearest_radius := INF
 	var previous_radius := 0.0
 	for layer in horizon_layers:
@@ -439,6 +591,10 @@ func _run() -> void:
 	check(
 		nearest_radius + 400.0 < float(horizon_consts["CLIP_FAR"]),
 		"the near range is inside the riding far clip"
+	)
+	check(
+		float(horizon_layers[horizon_layers.size() - 1]["high"]) > float(horizon_layers[0]["high"]) * 1.4,
+		"distant peaks rise behind the near foothills, not hide under them"
 	)
 	var horizon: Node3D = HorizonGD.new()
 	horizon.name = "HorizonTest"

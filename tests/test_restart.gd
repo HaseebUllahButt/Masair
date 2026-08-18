@@ -321,6 +321,38 @@ func _process(_delta: float) -> bool:
 			is_equal_approx(float(main.call("rain_at", 12345.0)), float(main.call("rain_at", 12345.0))),
 			"weather is deterministic for a given route position"
 		)
+	if frames == 25:
+		# Snap onto the overlook on the highway: the unused lake must not upload.
+		var player: Node = main.get_node("Player")
+		var streamer: Node = main.get_node("RoadStreamer")
+		var viewpoint: float = float(path.call("viewpoint_centre_for", 2800.0))
+		player.track_z = viewpoint
+		player.lateral = 0.0
+		player.call("_place")
+		streamer.call("reset_world")
+		var idx := int(floor(viewpoint / 40.0))
+		var chunk: Node = (streamer.get("_chunks") as Dictionary).get(idx)
+		check(chunk != null, "highway snap at the overlook still has a chunk")
+		if chunk != null:
+			check(
+				chunk.get_node_or_null("ViewpointLake") == null,
+				"riding the highway does not build the unused lake"
+			)
+	if frames == 40:
+		# Opening highway chunks are in. Commit to the spur so scenic late-builds.
+		var player: Node = main.get_node("Player")
+		var viewpoint: float = float(path.call("viewpoint_centre_for", 2800.0))
+		var side: float = float(path.call("viewpoint_side_for", viewpoint))
+		player.track_z = viewpoint
+		player.lateral = side * float(path.call("spur_offset", viewpoint))
+		player.call("_place")
+	if frames == 88:
+		var streamer: Node = main.get_node("RoadStreamer")
+		var lakes := 0
+		for chunk in (streamer.get("_chunks") as Dictionary).values():
+			if is_instance_valid(chunk) and chunk.get_node_or_null("ViewpointLake") != null:
+				lakes += 1
+		check(lakes > 0, "taking the spur late-builds the lake (%d lake chunks)" % lakes)
 	if frames == 90:
 		var streamer: Node = main.get_node("RoadStreamer")
 		var dressed := 0

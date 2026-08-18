@@ -29,6 +29,7 @@ var _rng := RandomNumberGenerator.new()
 var _path: Node
 var difficulty: int = 1
 var pack_chance: float = 0.18
+var _scenic_quiet: bool = false
 
 ## Traffic weather along the route. Indexed in this order by the mood tables.
 enum Mood { CLEAR, FLOW, PACK, CRAWL, WALL }
@@ -106,12 +107,30 @@ func set_difficulty(level: int) -> void:
 
 
 func reset_world() -> void:
+	_scenic_quiet = false
 	for car in _cars:
 		if is_instance_valid(car):
 			car.free()
 	_cars.clear()
 	_seed_from_world()
 	_timer = first_spawn_delay
+
+
+func _player_on_scenic() -> bool:
+	if _player == null:
+		return false
+	if _path == null:
+		_path = get_node_or_null("/root/RoadPath")
+	if _path == null or not _path.has_method("on_spur"):
+		return false
+	return bool(_path.on_spur(_player.track_z, _player.lateral))
+
+
+func _clear_cars() -> void:
+	for car in _cars:
+		if is_instance_valid(car):
+			car.free()
+	_cars.clear()
 
 
 func _seed_from_world() -> void:
@@ -185,6 +204,12 @@ func mood_active_cap(mood: int) -> int:
 func _process(delta: float) -> void:
 	if _player == null:
 		return
+	if _player_on_scenic():
+		if not _scenic_quiet:
+			_clear_cars()
+			_scenic_quiet = true
+		return
+	_scenic_quiet = false
 	_cleanup()
 	_timer -= delta
 	if _timer > 0.0:

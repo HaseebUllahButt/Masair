@@ -16,14 +16,20 @@ var _path: Node
 var _build_in_flight: bool = false
 var _props_in_flight: bool = false
 var _props_queue: Array[Node3D] = []
+var _scenic_queue: Array[Node3D] = []
+var _highway_queue: Array[Node3D] = []
 var _unload_queue: Array[Node] = []
 var _stream_generation: int = 0
 var _open_until: int = -1
 var _defer_stream: bool = false
+var _scenic_in_flight: bool = false
+var _highway_in_flight: bool = false
+var _corridor_key: int = -1
+var _idle_current: int = -1
 ## Arriving at the bench shrinks keep from the whole spur to the lake. Freeing
 ## sixty woodland chunks in one `_process` is a hitch of its own; hide them
 ## immediately and destroy a couple per frame.
-const UNLOADS_PER_FRAME := 4
+const UNLOADS_PER_FRAME := 2
 ## Two fully dressed chunks after spawn/R so the opening shot is not a bare
 ## ribbon with props popping in twenty metres out.
 const OPENING_AHEAD := 2
@@ -37,6 +43,9 @@ const SCENIC_CHUNKS_AHEAD := 7
 const SCENIC_KEEP_BEHIND := 7
 ## Prefer dressing the near corridor over building ribbons beyond this gap.
 const RIBBON_PRIORITY_AHEAD := 2
+## Spur divergence at which the unused path is culled. Below this, both the
+## exit and the highway stay drawn so the junction remains readable.
+const CORRIDOR_COMMIT := RoadPathGD.CORRIDOR_COMMIT
 
 
 func _ready() -> void:
@@ -66,8 +75,14 @@ func reset_world() -> void:
 	_stream_generation += 1
 	_build_in_flight = false
 	_props_in_flight = false
+	_scenic_in_flight = false
+	_highway_in_flight = false
 	_props_queue.clear()
+	_scenic_queue.clear()
+	_highway_queue.clear()
 	_open_until = -1
+	_corridor_key = -1
+	_idle_current = -1
 	for dropped in _unload_queue:
 		if is_instance_valid(dropped):
 			dropped.free()
@@ -107,6 +122,32 @@ func theme_for_chunk(index: int) -> int:
 
 func _sync(build_all: bool) -> void:
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
+	var busy := (
+		_build_in_flight or _props_in_flight or _scenic_in_flight or _highway_in_flight
+	)
+	if (
+		not build_all
+		and not busy
+		and current == _idle_current
+		and _props_queue.is_empty()
+		and _scenic_queue.is_empty()
+		and _highway_queue.is_empty()
+		and _unload_queue.is_empty()
+		and _open_until < 0
+	):
+		_apply_corridor()
+		if _player_wants_scenic():
+			_enqueue_scenic(current)
+		if _player_wants_highway():
+			_enqueue_highway(current)
+		if not _scenic_queue.is_empty():
+			_scenic_in_flight = true
+			_build_next_scenic(_stream_generation)
+		elif not _highway_queue.is_empty():
+			_highway_in_flight = true
+			_build_next_highway(_stream_generation)
+		return
+	_idle_current = -1
 	var keep_bounds := _desired_bounds(current)
 	var keep_min: int = keep_bounds.x
 	var keep_max: int = keep_bounds.y
@@ -120,6 +161,8 @@ func _sync(build_all: bool) -> void:
 			_chunks.erase(i)
 			if dropped is Node3D:
 				_props_queue.erase(dropped as Node3D)
+				_scenic_queue.erase(dropped as Node3D)
+				_highway_queue.erase(dropped as Node3D)
 			if is_instance_valid(dropped):
 				if build_all:
 					dropped.free()
@@ -128,6 +171,12 @@ func _sync(build_all: bool) -> void:
 					_unload_queue.append(dropped)
 	if not build_all:
 		_drain_unloads()
+
+	_apply_corridor()
+	if _player_wants_scenic():
+		_enqueue_scenic(current)
+	if _player_wants_highway():
+		_enqueue_highway(current)
 
 	if build_all:
 		for i in range(build_min, build_max + 1):
@@ -139,11 +188,27 @@ func _sync(build_all: bool) -> void:
 	# Near scenery first once the bike's immediate tarmac exists. Waiting for
 	# the whole look-ahead ring to finish ribbons left the camera staring at
 	# bare curb while far strips built — that pop-in read as choppy generation.
-	if not _build_in_flight and not _props_in_flight:
+	if not _build_in_flight and not _props_in_flight and not _scenic_in_flight and not _highway_in_flight:
 		var next := _nearest_missing(current, build_min, build_max)
 		var urgent_ribbon := next >= 0 and next <= current + RIBBON_PRIORITY_AHEAD
-		if not urgent_ribbon and _has_undressed_nearby(current):
+		if not urgent_ribbon and (
+			_has_undressed_nearby(current)
+			or _has_undressed_scenic(current)
+			or _has_undressed_highway(current)
+		):
 			_enqueue_nearby_props(current)
+			if _player_wants_scenic():
+				_enqueue_scenic(current)
+			if _player_wants_highway():
+				_enqueue_highway(current)
+			if not _scenic_queue.is_empty():
+				_scenic_in_flight = true
+				_build_next_scenic(_stream_generation)
+				return
+			if not _highway_queue.is_empty():
+				_highway_in_flight = true
+				_build_next_highway(_stream_generation)
+				return
 			if not _props_queue.is_empty():
 				_props_in_flight = true
 				_build_next_props(_stream_generation)
@@ -162,9 +227,31 @@ func _sync(build_all: bool) -> void:
 				_spawn_incremental(next, _stream_generation)
 		else:
 			_enqueue_nearby_props(current)
-			if not _props_queue.is_empty():
+			if _player_wants_scenic():
+				_enqueue_scenic(current)
+			if _player_wants_highway():
+				_enqueue_highway(current)
+			if not _scenic_queue.is_empty():
+				_scenic_in_flight = true
+				_build_next_scenic(_stream_generation)
+			elif not _highway_queue.is_empty():
+				_highway_in_flight = true
+				_build_next_highway(_stream_generation)
+			elif not _props_queue.is_empty():
 				_props_in_flight = true
 				_build_next_props(_stream_generation)
+	if (
+		not _build_in_flight
+		and not _props_in_flight
+		and not _scenic_in_flight
+		and not _highway_in_flight
+		and _props_queue.is_empty()
+		and _scenic_queue.is_empty()
+		and _highway_queue.is_empty()
+		and _unload_queue.is_empty()
+		and _open_until < 0
+	):
+		_idle_current = current
 
 
 func _enqueue_nearby_props(current: int) -> void:
@@ -183,6 +270,10 @@ func _enqueue_nearby_props(current: int) -> void:
 		if chunk.get_node_or_null("RoadSurface") == null:
 			continue
 		chunk.set_meta("props_queued", true)
+		var on_spur := bool(chunk.get("_on_spur"))
+		chunk.set_meta("highway_requested", _player_wants_highway() or not on_spur)
+		if _player_wants_scenic() and on_spur:
+			chunk.set_meta("scenic_requested", true)
 		_props_queue.append(chunk)
 
 
@@ -198,6 +289,112 @@ func _has_undressed_nearby(current: int) -> bool:
 		if chunk.get_node_or_null("RoadSurface") == null:
 			continue
 		if bool(chunk.get_meta("props_done", false)):
+			continue
+		return true
+	return false
+
+
+func _player_wants_scenic() -> bool:
+	if _player == null or _path == null or not _path.has_method("on_spur"):
+		return false
+	return bool(_path.call("on_spur", _player.track_z, _player.lateral))
+
+
+func _player_committed() -> bool:
+	if _player == null or _path == null or not _path.has_method("spur_divergence"):
+		return false
+	return float(_path.call("spur_divergence", _player.track_z)) >= CORRIDOR_COMMIT
+
+
+func _player_wants_highway() -> bool:
+	return not (_player_wants_scenic() and _player_committed())
+
+
+func _enqueue_scenic(current: int) -> void:
+	var dress_max := current + DRESS_AHEAD
+	for i in range(maxi(current - 1, 0), dress_max + 1):
+		if not _chunks.has(i):
+			continue
+		var chunk: Node3D = _chunks[i]
+		if not is_instance_valid(chunk) or not chunk.is_inside_tree():
+			continue
+		if not bool(chunk.get("_on_spur")):
+			continue
+		if bool(chunk.get_meta("scenic_done", false)):
+			continue
+		if bool(chunk.get_meta("scenic_queued", false)):
+			continue
+		if bool(chunk.get_meta("scenic_building", false)):
+			continue
+		if chunk.get_node_or_null("RoadSurface") == null:
+			continue
+		if not bool(chunk.get_meta("props_done", false)):
+			continue
+		chunk.set_meta("scenic_queued", true)
+		chunk.set_meta("scenic_requested", true)
+		_scenic_queue.append(chunk)
+
+
+func _has_undressed_scenic(current: int) -> bool:
+	if not _player_wants_scenic():
+		return false
+	var dress_max := current + DRESS_AHEAD
+	for i in range(maxi(current - 1, 0), dress_max + 1):
+		if not _chunks.has(i):
+			continue
+		var chunk: Node3D = _chunks[i]
+		if not is_instance_valid(chunk):
+			continue
+		if not bool(chunk.get("_on_spur")):
+			continue
+		if chunk.get_node_or_null("RoadSurface") == null:
+			continue
+		if not bool(chunk.get_meta("props_done", false)):
+			continue
+		if bool(chunk.get_meta("scenic_done", false)):
+			continue
+		return true
+	return false
+
+
+func _enqueue_highway(current: int) -> void:
+	var dress_max := current + DRESS_AHEAD
+	for i in range(maxi(current - 1, 0), dress_max + 1):
+		if not _chunks.has(i):
+			continue
+		var chunk: Node3D = _chunks[i]
+		if not is_instance_valid(chunk) or not chunk.is_inside_tree():
+			continue
+		if bool(chunk.get_meta("highway_done", false)):
+			continue
+		if bool(chunk.get_meta("highway_queued", false)):
+			continue
+		if bool(chunk.get_meta("highway_building", false)):
+			continue
+		if chunk.get_node_or_null("RoadSurface") == null:
+			continue
+		if not bool(chunk.get_meta("props_done", false)):
+			continue
+		chunk.set_meta("highway_queued", true)
+		chunk.set_meta("highway_requested", true)
+		_highway_queue.append(chunk)
+
+
+func _has_undressed_highway(current: int) -> bool:
+	if not _player_wants_highway():
+		return false
+	var dress_max := current + DRESS_AHEAD
+	for i in range(maxi(current - 1, 0), dress_max + 1):
+		if not _chunks.has(i):
+			continue
+		var chunk: Node3D = _chunks[i]
+		if not is_instance_valid(chunk):
+			continue
+		if chunk.get_node_or_null("RoadSurface") == null:
+			continue
+		if not bool(chunk.get_meta("props_done", false)):
+			continue
+		if bool(chunk.get_meta("highway_done", false)):
 			continue
 		return true
 	return false
@@ -301,8 +498,18 @@ func _spawn(index: int, incremental: bool) -> void:
 	if incremental:
 		chunk.call("setup_incremental", index, theme_for_chunk(index))
 	else:
-		chunk.call("setup", index, theme_for_chunk(index))
+		# Opening chunks are sync. Skip the unused scenic basin unless the bike
+		# is already on the spur — otherwise riding past a turnoff still paid
+		# for the lake.
+		var include_scenic := _player_wants_scenic()
+		var include_highway := _player_wants_highway()
+		chunk.call("setup", index, theme_for_chunk(index), include_scenic, include_highway)
 		chunk.set_meta("props_done", true)
+		if include_scenic:
+			chunk.set_meta("scenic_done", true)
+		if include_highway:
+			chunk.set_meta("highway_done", true)
+	_apply_corridor_to(chunk)
 
 
 func _spawn_ribbon_sync(index: int, generation: int) -> void:
@@ -312,6 +519,7 @@ func _spawn_ribbon_sync(index: int, generation: int) -> void:
 	add_child(chunk)
 	_chunks[index] = chunk
 	chunk.call("setup_ribbon", index, theme_for_chunk(index))
+	_apply_corridor_to(chunk)
 	if generation != _stream_generation:
 		return
 	_build_in_flight = false
@@ -335,12 +543,17 @@ func _build_next_props(generation: int) -> void:
 			break
 		if not is_instance_valid(chunk) or not chunk.is_inside_tree():
 			continue
+		var on_spur := bool(chunk.get("_on_spur"))
+		chunk.set_meta("highway_requested", _player_wants_highway() or not on_spur)
+		if _player_wants_scenic() and on_spur:
+			chunk.set_meta("scenic_requested", true)
 		await chunk.call("setup_props_incremental")
 		if generation != _stream_generation:
 			return
 		if is_instance_valid(chunk):
 			chunk.set_meta("props_done", true)
 			chunk.set_meta("props_queued", false)
+			_apply_corridor_to(chunk)
 		break
 	if generation == _stream_generation:
 		_props_in_flight = false
@@ -373,3 +586,127 @@ func _take_nearest_props() -> Node3D:
 	var chosen: Node3D = _props_queue[best_i]
 	_props_queue.remove_at(best_i)
 	return chosen
+
+
+func _build_next_scenic(generation: int) -> void:
+	while not _scenic_queue.is_empty():
+		var chunk: Node3D = _take_nearest_scenic()
+		if chunk == null:
+			break
+		if not is_instance_valid(chunk) or not chunk.is_inside_tree():
+			continue
+		if bool(chunk.get_meta("scenic_done", false)):
+			chunk.set_meta("scenic_queued", false)
+			continue
+		await chunk.call("ensure_scenic_dress")
+		if generation != _stream_generation:
+			return
+		if is_instance_valid(chunk):
+			chunk.set_meta("scenic_queued", false)
+			_apply_corridor_to(chunk)
+		break
+	if generation == _stream_generation:
+		_scenic_in_flight = false
+
+
+func _take_nearest_scenic() -> Node3D:
+	if _scenic_queue.is_empty() or _player == null:
+		return _scenic_queue.pop_front() if not _scenic_queue.is_empty() else null
+	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
+	var dress_max := current + DRESS_AHEAD
+	var best_i := -1
+	var best_d := INF
+	for i in _scenic_queue.size():
+		var chunk: Node3D = _scenic_queue[i]
+		if not is_instance_valid(chunk):
+			continue
+		var index := int(chunk.get("chunk_index"))
+		if index < current - 1 or index > dress_max:
+			continue
+		var d: float = float(index - current) if index >= current else 0.5 + float(current - index)
+		if d < best_d:
+			best_d = d
+			best_i = i
+	if best_i < 0:
+		for leftover in _scenic_queue:
+			if is_instance_valid(leftover):
+				leftover.set_meta("scenic_queued", false)
+		_scenic_queue.clear()
+		return null
+	var chosen: Node3D = _scenic_queue[best_i]
+	_scenic_queue.remove_at(best_i)
+	return chosen
+
+
+func _build_next_highway(generation: int) -> void:
+	while not _highway_queue.is_empty():
+		var chunk: Node3D = _take_nearest_highway()
+		if chunk == null:
+			break
+		if not is_instance_valid(chunk) or not chunk.is_inside_tree():
+			continue
+		if bool(chunk.get_meta("highway_done", false)):
+			chunk.set_meta("highway_queued", false)
+			continue
+		await chunk.call("ensure_highway_dress")
+		if generation != _stream_generation:
+			return
+		if is_instance_valid(chunk):
+			chunk.set_meta("highway_queued", false)
+			_apply_corridor_to(chunk)
+		break
+	if generation == _stream_generation:
+		_highway_in_flight = false
+
+
+func _take_nearest_highway() -> Node3D:
+	if _highway_queue.is_empty() or _player == null:
+		return _highway_queue.pop_front() if not _highway_queue.is_empty() else null
+	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
+	var dress_max := current + DRESS_AHEAD
+	var best_i := -1
+	var best_d := INF
+	for i in _highway_queue.size():
+		var chunk: Node3D = _highway_queue[i]
+		if not is_instance_valid(chunk):
+			continue
+		var index := int(chunk.get("chunk_index"))
+		if index < current - 1 or index > dress_max:
+			continue
+		var d: float = float(index - current) if index >= current else 0.5 + float(current - index)
+		if d < best_d:
+			best_d = d
+			best_i = i
+	if best_i < 0:
+		for leftover in _highway_queue:
+			if is_instance_valid(leftover):
+				leftover.set_meta("highway_queued", false)
+		_highway_queue.clear()
+		return null
+	var chosen: Node3D = _highway_queue[best_i]
+	_highway_queue.remove_at(best_i)
+	return chosen
+
+
+func _apply_corridor() -> void:
+	if _player == null or _path == null or not _path.has_method("on_spur"):
+		return
+	var on_scenic := bool(_path.call("on_spur", _player.track_z, _player.lateral))
+	var committed := float(_path.call("spur_divergence", _player.track_z)) >= CORRIDOR_COMMIT
+	var key := (1 if on_scenic else 0) | (2 if committed else 0)
+	if key == _corridor_key:
+		return
+	_corridor_key = key
+	for chunk in _chunks.values():
+		if chunk is Node:
+			_apply_corridor_to(chunk as Node)
+
+
+func _apply_corridor_to(chunk: Node) -> void:
+	if not is_instance_valid(chunk) or not chunk.has_method("apply_corridor"):
+		return
+	if _player == null or _path == null or not _path.has_method("on_spur"):
+		return
+	var on_scenic := bool(_path.call("on_spur", _player.track_z, _player.lateral))
+	var committed := float(_path.call("spur_divergence", _player.track_z)) >= CORRIDOR_COMMIT
+	chunk.call("apply_corridor", on_scenic, committed, committed)

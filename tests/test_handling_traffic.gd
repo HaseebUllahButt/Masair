@@ -117,6 +117,7 @@ func _process(_delta: float) -> bool:
 		vehicle_mesh.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
 		"traffic never enters the artifact-prone directional shadow pass"
 	)
+	check(vehicle_mesh.visibility_range_end <= 380.0, "distant traffic leaves the far fog without a draw")
 	var contact_shadow := follower.get_node_or_null("ContactShadow") as MeshInstance3D
 	check(contact_shadow != null, "traffic has a smooth lightweight contact shadow")
 	check(
@@ -253,6 +254,21 @@ func _process(_delta: float) -> bool:
 	traffic.call("reset_world")
 	var second_roll: int = int(traffic.get("_rng").randi())
 	check(first_roll == second_roll, "reset_world re-seeds the traffic RNG from world_seed")
+
+	var parked := TrafficCarGD.new() as Node3D
+	traffic.add_child(parked)
+	parked.call("setup", 0, 1, 150.0, 24.0, 0)
+	(traffic.get("_cars") as Array).append(parked)
+	var viewpoint_z: float = float(path.call("viewpoint_centre_for", 800.0))
+	var viewpoint_side: float = float(path.call("viewpoint_side_for", viewpoint_z))
+	bike.track_z = viewpoint_z
+	bike.lateral = viewpoint_side * float(path.call("spur_offset", viewpoint_z))
+	traffic.call("_process", 0.016)
+	check((traffic.get("_cars") as Array).is_empty(), "traffic despawns while the rider is on the scenic spur")
+	check(bool(traffic.get("_scenic_quiet")), "traffic stays quiet on the scenic spur")
+	bike.lateral = 0.0
+	traffic.call("_process", 0.016)
+	check(not bool(traffic.get("_scenic_quiet")), "traffic resumes on the main road")
 
 	print("handling/traffic self-check: %d failures" % failures)
 	quit(1 if failures > 0 else 0)

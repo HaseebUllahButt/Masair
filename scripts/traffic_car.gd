@@ -129,6 +129,8 @@ func setup(vehicle_kind: int, start_lane: int, z: float, cruise: float, color_in
 		# maps produced a dotted screen-door pattern on the tarmac and rendered every
 		# car again for each sun cascade.
 		_mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_mesh_instance.visibility_range_end = 380.0
+		LowPoly.cheap_draw(_mesh_instance)
 		add_child(_mesh_instance)
 	_mesh_instance.mesh = _mesh_for(kind, color_index)
 	if _contact_shadow == null:
@@ -170,6 +172,7 @@ func _make_contact_shadow() -> MeshInstance3D:
 	shadow.rotation.x = -PI * 0.5
 	shadow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	shadow.visibility_range_end = 145.0
+	LowPoly.cheap_draw(shadow)
 	add_child(shadow)
 	return shadow
 
@@ -178,6 +181,8 @@ func _lamp_child(node_name: String) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.name = node_name
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.visibility_range_end = 380.0
+	LowPoly.cheap_draw(mi)
 	add_child(mi)
 	return mi
 
@@ -254,9 +259,10 @@ func _physics_process(delta: float) -> void:
 
 	# Tight curves ask traffic to shed a little speed too; this makes blind bends
 	# readable and creates a natural opening for the rider to filter through.
-	var curvature_load := absf(_path.curvature_at(track_z)) * speed * speed
+	var kappa := absf(_path.curvature_at(track_z))
+	var curvature_load := kappa * speed * speed
 	if curvature_load > 2.5:
-		target_speed = minf(target_speed, sqrt(maxf(4.0, 24.0 / maxf(absf(_path.curvature_at(track_z)), 0.0001))))
+		target_speed = minf(target_speed, sqrt(maxf(4.0, 24.0 / maxf(kappa, 0.0001))))
 	var rate := 11.0 if target_speed < speed else 4.0
 	# Brake lights come from the demand, not from the achieved speed: they light as
 	# the car decides to slow, which is the half second of warning that makes
