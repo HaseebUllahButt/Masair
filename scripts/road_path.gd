@@ -30,6 +30,20 @@ var _curve_phase_a: float = 0.0
 var _curve_phase_b: float = 0.0
 var _terrain_phase: float = 0.0
 var _shape_scale: float = 1.0
+var _q_height_z: float = INF
+var _q_height: float = 0.0
+var _q_cx_z: float = INF
+var _q_cx: float = 0.0
+var _q_flat_z: float = INF
+var _q_flat: Basis = Basis.IDENTITY
+var _q_center_z: float = INF
+var _q_center: Vector3 = Vector3.ZERO
+var _q_shape_z: float = INF
+var _q_shape: Vector4 = Vector4.ZERO
+var _q_yaw_z: float = INF
+var _q_yaw: float = 0.0
+var _q_bank_z: float = INF
+var _q_bank: float = 0.0
 func _ready() -> void:
 	randomize_world()
 
@@ -89,21 +103,25 @@ func _shape_at(z: float) -> Vector4:
 	##
 	## Negative z is clamped: pitch_at(0) samples z-DZ, and treating that as the
 	## wrapped last region put a sixty-degree kink on the start line.
+	if z == _q_shape_z:
+		return _q_shape
 	var z_on := maxf(z, 0.0)
 	var region := int(floor(z_on / BIOME_LENGTH))
 	var local := z_on - float(region) * BIOME_LENGTH
 	var here := _shape_for_theme(_theme_for_region(region))
+	var shaped: Vector4 = here
 	if local < BIOME_BLEND:
-		if region == 0:
-			return here
-		var prev := _shape_for_theme(_theme_for_region(region - 1))
-		var t := smoothstep(0.0, 1.0, 0.5 + 0.5 * (local / BIOME_BLEND))
-		return prev.lerp(here, t)
-	if local > BIOME_LENGTH - BIOME_BLEND:
+		if region != 0:
+			var prev := _shape_for_theme(_theme_for_region(region - 1))
+			var t := smoothstep(0.0, 1.0, 0.5 + 0.5 * (local / BIOME_BLEND))
+			shaped = prev.lerp(here, t)
+	elif local > BIOME_LENGTH - BIOME_BLEND:
 		var next := _shape_for_theme(_theme_for_region(region + 1))
 		var t := smoothstep(0.0, 1.0, 0.5 * ((local - (BIOME_LENGTH - BIOME_BLEND)) / BIOME_BLEND))
-		return here.lerp(next, t)
-	return here
+		shaped = here.lerp(next, t)
+	_q_shape = shaped
+	_q_shape_z = z
+	return shaped
 
 
 func theme_at(z: float) -> int:
@@ -124,6 +142,13 @@ func randomize_world() -> void:
 func set_world_seed(value: int) -> void:
 	world_seed = value
 	_water_y_cache.clear()
+	_q_height_z = INF
+	_q_cx_z = INF
+	_q_flat_z = INF
+	_q_center_z = INF
+	_q_shape_z = INF
+	_q_yaw_z = INF
+	_q_bank_z = INF
 	var rng := RandomNumberGenerator.new()
 	rng.seed = value
 	_rebuild_biome_order(rng)
@@ -195,6 +220,9 @@ const SPUR_RAMP := 1480.0  # climb and peel; the last stretch each side rides th
 ## spur peels away at all. This is the deceleration lane: time to notice the
 ## sign, come off the throttle and move across before the gore opens.
 const SPUR_HOLD := 0.08
+## Spur divergence at which the unused corridor is culled. Below this, the
+## junction keeps both the exit and the highway drawn so the signs stay readable.
+const CORRIDOR_COMMIT := 0.22
 ## Fraction of the swing spent easing into and out of the lean. The rest is
 ## ridden at one constant angle.
 const SPUR_EASE := 0.14
@@ -415,17 +443,15 @@ const PLATFORM_BENCH_Z := [-10.0, 6.0]
 ## the frame without putting the bench through the fence. Two metres of setback
 ## filled the bottom sixth of the old view with a bright horizontal terrace slab.
 const PLATFORM_BENCH_OUT := PLATFORM_HALF_WIDTH + 5.55
-const SEAT_EYE := 1.24
-## How far below the horizon a seated rider is looking. Dead level, the frame is
-## two thirds sky; much past this and it is two thirds the terrace they are
-## sitting on, because a bench set back from a cliff edge cannot see the cliff.
-## This is the angle that fills the frame with water and the far side.
-## Raised with the seated lens. Dropping the field of view from 78° to 62° took
-## sixteen degrees out of the bottom of the frame, and the near shore — which is
-## about twenty-eight degrees below the eye — was the first thing to fall out of
-## it on the themes whose basin sits deepest. The tilt has to come down by
-## roughly half of what the lens gave up.
-const SEAT_TILT := deg_to_rad(15.0)
+const SEAT_EYE := 1.62
+## How far below the horizon a seated rider is looking.
+##
+## The lake starts 320 m out and 40 m down — about seven degrees under the eye.
+## Fifteen degrees of tilt on a 62° lens put the look direction *below* that
+## near shore, so the lower two thirds of the picture was a blue floor and the
+## far range sat on a thin strip of sky. A small dip keeps the water in the
+## lower half without burying the view under it.
+const SEAT_TILT := deg_to_rad(6.0)
 
 
 func viewpoint_seat(z: float) -> Transform3D:
@@ -447,14 +473,10 @@ func viewpoint_seat(z: float) -> Transform3D:
 	# the full width of the picture. Nobody sitting on a bench sees the bench.
 	# Half a metre forward puts its edge at 70° and out of shot, and buys a little
 	# more of the drop at the same time.
-	var eye := point_at(best, lateral) + flat.y * SEAT_EYE + flat.x * side * 0.30
+	var eye := point_at(best, lateral) + flat.y * SEAT_EYE + flat.x * side * 0.42
 	# Looking out over the water: away from the road, along the seat's own axis,
-	# and tilted down.
-	#
-	# Dead level, the frame is two thirds sky and the drop the platform exists for
-	# is entirely below the bottom edge of it — the rider has to be told to look
-	# down before the view contains anything but distant hills. Nobody sits down
-	# at a belvedere and stares at the horizon. W/S still moves from here.
+	# and a little down — enough that the lake sits in the lower half, not so
+	# much that it becomes the floor. W/S still moves from here.
 	var aim: Vector3 = (flat.x * side - flat.y * tan(SEAT_TILT)).normalized()
 	return Transform3D(Basis.looking_at(aim, flat.y), eye)
 
@@ -814,6 +836,8 @@ func hilliness_at(z: float) -> float:
 
 
 func height_at(z: float) -> float:
+	if z == _q_height_z:
+		return _q_height
 	var h := hilliness_at(z)
 	var s := _shape_at(z)
 	# Two long wavelengths only. Layering short waves onto hills is mathematically
@@ -821,19 +845,25 @@ func height_at(z: float) -> float:
 	# grades keep the horizon readable in the same way Café Racer's roads do.
 	# Biomes scale the same waves rather than introducing new ones: a new
 	# frequency would kink the ribbon wherever its amplitude left zero.
-	return _shape_scale * (
+	_q_height = _shape_scale * (
 		sin(z * 0.0024 + _height_phase_a) * 7.5 * s.z
 		+ sin(z * 0.0065 + _height_phase_b) * 2.8 * h * s.w
 	)
+	_q_height_z = z
+	return _q_height
 
 
 func center_x_at(z: float) -> float:
+	if z == _q_cx_z:
+		return _q_cx
 	var t := twistiness_at(z)
 	var s := _shape_at(z)
-	return _shape_scale * (
+	_q_cx = _shape_scale * (
 		sin(z * 0.0038 + _curve_phase_a) * 24.0 * s.x
 		+ sin(z * 0.010 + _curve_phase_b) * 5.0 * t * s.y
 	)
+	_q_cx_z = z
+	return _q_cx
 
 
 func pitch_at(z: float) -> float:
@@ -841,7 +871,11 @@ func pitch_at(z: float) -> float:
 
 
 func yaw_at(z: float) -> float:
-	return atan2(center_x_at(z + DZ) - center_x_at(z - DZ), DZ * 2.0)
+	if z == _q_yaw_z:
+		return _q_yaw
+	_q_yaw = atan2(center_x_at(z + DZ) - center_x_at(z - DZ), DZ * 2.0)
+	_q_yaw_z = z
+	return _q_yaw
 
 
 ## Signed horizontal curvature (rad per metre). Positive = the road bends toward
@@ -851,7 +885,11 @@ func curvature_at(z: float) -> float:
 
 
 func bank_at(z: float) -> float:
-	return clampf(-curvature_at(z) * BANK_PER_CURVATURE, -MAX_BANK, MAX_BANK)
+	if z == _q_bank_z:
+		return _q_bank
+	_q_bank = clampf(-curvature_at(z) * BANK_PER_CURVATURE, -MAX_BANK, MAX_BANK)
+	_q_bank_z = z
+	return _q_bank
 
 
 func forward_dir(z: float) -> Vector3:
@@ -864,9 +902,13 @@ func forward_dir(z: float) -> Vector3:
 ## offset that tapers out past the verge, so a 9° corner does not launch terrain
 ## 70 m out into the sky.
 func frame_flat_at(z: float) -> Basis:
+	if z == _q_flat_z:
+		return _q_flat
 	var fwd := forward_dir(z)
 	var right := Vector3(fwd.z, 0.0, -fwd.x).normalized()
-	return Basis(right, fwd.cross(right), fwd)
+	_q_flat = Basis(right, fwd.cross(right), fwd)
+	_q_flat_z = z
+	return _q_flat
 
 
 func frame_at(z: float) -> Basis:
@@ -908,7 +950,11 @@ func surface_pitch_at(z: float, lateral: float) -> float:
 
 
 func center_at(z: float) -> Vector3:
-	return Vector3(center_x_at(z), height_at(z), z)
+	if z == _q_center_z:
+		return _q_center
+	_q_center = Vector3(center_x_at(z), height_at(z), z)
+	_q_center_z = z
+	return _q_center
 
 
 func bank_offset(z: float, lateral: float) -> float:
@@ -923,7 +969,8 @@ func point_at(z: float, lateral: float = 0.0) -> Vector3:
 
 ## Ground point beside the road, on the terrain rather than the tarmac.
 func ground_at(z: float, lateral: float) -> Vector3:
-	return point_at(z, lateral) - frame_flat_at(z).y * terrain_drop(lateral, z)
+	var f := frame_flat_at(z)
+	return center_at(z) + f.x * lateral + f.y * (bank_offset(z, lateral) + spur_lift(z, lateral) - terrain_drop(lateral, z))
 
 
 ## Extra shaping used by the verge ribbon. Kept here as well as in the mesh
@@ -959,7 +1006,8 @@ func ride_surface_at(z: float, lateral: float) -> Vector3:
 	## use road_point_at(), which projects lateral to the defined tarmac.
 	if absf(lateral) <= HALF_WIDTH:
 		return point_at(z, lateral)
-	return ground_at(z, lateral) - frame_flat_at(z).y * terrain_profile_drop(lateral, z)
+	var f := frame_flat_at(z)
+	return ground_at(z, lateral) - f.y * terrain_profile_drop(lateral, z)
 
 
 func ride_transform_at(z: float, lateral: float) -> Transform3D:
