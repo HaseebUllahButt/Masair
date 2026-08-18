@@ -18,62 +18,75 @@ extends Node3D
 
 const RANGE_SHADER: Shader = preload("res://shaders/horizon.gdshader")
 const CLOUD_SHADER: Shader = preload("res://shaders/horizon_cloud.gdshader")
+const LowPoly := preload("res://scripts/low_poly.gd")
 
-## Riding camera far clip. Kept at the original 2200 m window so the scenic
-## spur does not draw three kilometres of set piece. Layers sit inside this.
-const CLIP_FAR := 2200.0
+## Riding camera far clip. Layers sit inside this. Far enough that a fourth
+## range can rise behind the near foothills without being sliced by the lens.
+const CLIP_FAR := 2800.0
 const FOOT_Y := -160.0
 
 ## Relative summit heights walked around the ring. Written out rather than
 ## rolled so the composition is designed: hero, col, shoulder, foothill, hero.
 ## Thirteen entries is prime against every massif count below, so the rhythm
 ## never lines up with itself and no two sectors of the horizon are twins.
-const RHYTHM := [1.00, 0.42, 0.78, 0.48, 0.92, 0.38, 0.70, 0.52, 0.88, 0.44, 0.66, 0.50, 0.82]
+const RHYTHM := [1.00, 0.26, 0.74, 0.34, 0.94, 0.22, 0.64, 0.38, 0.90, 0.28, 0.60, 0.36, 0.82]
 ## Neighbours overlap just enough for a col, not enough to fill into a wall.
 const REACH := 1.02
 const GRIT_BLOCK := 4
 
 ## Scree starts near the crest line so the ring is not an inner wall. A deep
 ## inset was a beige cylinder you could see out the sides of the lens.
-const FACE_G := [0.38, 0.28, 0.18, 0.10, 0.04, 0.00]
-const FACE_F := [0.00, 0.22, 0.42, 0.62, 0.80, 1.00]
+const FACE_G := [0.42, 0.32, 0.22, 0.14, 0.08, 0.03, 0.00]
+const FACE_F := [0.00, 0.16, 0.34, 0.52, 0.70, 0.86, 1.00]
 
 const LAYERS := [
 	{
-		"radius": 1520.0,
-		"face": 300.0,
-		"high": 380.0,
+		"radius": 1480.0,
+		"face": 340.0,
+		"high": 250.0,
 		"count": 17,
-		"segments": 144,
-		"haze": 0.08,
+		"segments": 160,
+		"haze": 0.06,
 		"clouds": true,
 		"phase": 0.11,
-		"sharp": 0.88,
+		"sharp": 0.86,
 		"beat": 0,
 	},
 	{
-		"radius": 1760.0,
-		"face": 250.0,
-		"high": 300.0,
+		"radius": 1780.0,
+		"face": 280.0,
+		"high": 370.0,
 		"count": 15,
-		"segments": 120,
-		"haze": 0.28,
+		"segments": 136,
+		"haze": 0.22,
 		"clouds": true,
 		"phase": 0.47,
-		"sharp": 0.82,
+		"sharp": 0.83,
 		"beat": 5,
 	},
 	{
-		"radius": 1980.0,
-		"face": 200.0,
-		"high": 240.0,
+		"radius": 2080.0,
+		"face": 230.0,
+		"high": 480.0,
 		"count": 13,
-		"segments": 96,
-		"haze": 0.48,
-		"clouds": false,
+		"segments": 112,
+		"haze": 0.40,
+		"clouds": true,
 		"phase": 0.83,
-		"sharp": 0.78,
+		"sharp": 0.80,
 		"beat": 9,
+	},
+	{
+		"radius": 2420.0,
+		"face": 180.0,
+		"high": 580.0,
+		"count": 11,
+		"segments": 96,
+		"haze": 0.62,
+		"clouds": false,
+		"phase": 0.29,
+		"sharp": 0.76,
+		"beat": 3,
 	},
 ]
 
@@ -120,11 +133,13 @@ func apply_mood(mood: Dictionary) -> void:
 	_range_mat.set_shader_parameter("haze_color", haze)
 	## Warm scree at the foot walking to cooler rock at the crest. One rock
 	## colour lit by a backlit sun is a card whichever way the facets point.
-	_range_mat.set_shader_parameter("foot_color", fog.darkened(0.44))
-	_range_mat.set_shader_parameter("crest_color", fog.darkened(0.06).lerp(Color("5a6790"), 0.52))
+	## Night fog is already a navy; darkening it again crushed the near range
+	## into the same black triangles the Lambert overlooks used to be.
+	_range_mat.set_shader_parameter("foot_color", fog.darkened(0.16).lerp(Color("3c4a62"), 0.38))
+	_range_mat.set_shader_parameter("crest_color", fog.lerp(Color("6a7a98"), 0.48).lightened(0.06))
 	## What an up-facing plane collects from the dusk dome. This is the term
 	## that keeps the backlit face off zero without smearing sunset over it.
-	_range_mat.set_shader_parameter("sky_color", haze.lerp(Color("8fa6c8"), 0.58))
+	_range_mat.set_shader_parameter("sky_color", haze.lerp(Color("8fa6c8"), 0.62).lightened(0.04))
 	_range_mat.set_shader_parameter("snow_color", Color("eef2f8"))
 	_range_mat.set_shader_parameter("sun_dir", toward_sun)
 	if _cloud_mat:
@@ -169,6 +184,8 @@ func _build_layer(index: int) -> void:
 	mesh.material_override = _range_mat
 	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mesh.extra_cull_margin = 280.0
+	mesh.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	mesh.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	add_child(mesh)
 	if bool(layer["clouds"]):
 		_collect_peaks(layer, massifs, samples, segments)
@@ -527,10 +544,7 @@ func _build_clouds() -> void:
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
 	mm.mesh = quad
-	mm.instance_count = xforms.size()
-	for i in xforms.size():
-		mm.set_instance_transform(i, xforms[i])
-		mm.set_instance_color(i, cols[i])
+	LowPoly.fill_multimesh(mm, xforms, cols)
 	var mmi := MultiMeshInstance3D.new()
 	mmi.name = "Clouds"
 	mmi.multimesh = mm
@@ -538,6 +552,8 @@ func _build_clouds() -> void:
 	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mmi.visibility_range_end = 0.0
 	mmi.extra_cull_margin = 400.0
+	mmi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	mmi.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	add_child(mmi)
 
 
