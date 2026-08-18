@@ -60,22 +60,25 @@ void fragment() {
 
 	vec3 rock = mix(foot_color, crest_color, lift_v);
 
-	float lum = 0.115 + 0.52 * key + 0.36 * key * key;
-	lum += 0.18 * dome * dome;
+	// Floor is high enough that a backlit night face still has a slope, not a
+	// hole. Dome carries most of the form when the key is behind the range.
+	float lum = 0.18 + 0.46 * key + 0.28 * key * key;
+	lum += 0.28 * dome * dome;
 	lum *= mix(0.88, 1.12, rake);
-	lum *= mix(0.82, 1.18, grit_v);
-	lum *= mix(0.90, 1.10, strata);
-	lum *= mix(0.88, 1.12, grain);
-	lum = mix(lum, 0.46, haze_v * 0.40);
+	lum *= mix(0.86, 1.14, grit_v);
+	lum *= mix(0.92, 1.08, strata);
+	lum *= mix(0.90, 1.10, grain);
+	lum = mix(lum, 0.52, haze_v * 0.36);
 
 	vec3 col = rock * lum;
 	col = mix(col * vec3(0.74, 0.81, 1.04), col, key);
-	col += sky_color * (0.06 * dome * dome * (1.0 - key));
+	col += sky_color * (0.12 * dome * dome * (1.0 - key * 0.65));
 	vec3 snow_col = snow_color * mix(0.78, 1.12, key);
 	col = mix(col, snow_col, snow_v);
-	col = mix(col, haze_color, haze_v * 0.26 * (1.0 - snow_v));
-	// Off-axis the ring is a dark slab or a beige foot. Dissolve it into the
-	// air as it leaves the heading so the sides of a wide lens stay sky.
+	col = mix(col, haze_color, haze_v * 0.30 * (1.0 - snow_v));
+	// Soften the ring into the air at the extreme edges of a wide lens, but
+	// keep the mountains when the rider looks aside — the old 0.55 mix turned
+	// a 60° glance into a dark slab of haze.
 	vec3 cam = INV_VIEW_MATRIX[3].xyz;
 	vec3 fwd = -INV_VIEW_MATRIX[2].xyz;
 	vec3 radial = world_p - cam;
@@ -85,7 +88,7 @@ void fragment() {
 	if (dot(radial, radial) > 1.0 && dot(fwd, fwd) > 1e-6) {
 		ahead = dot(normalize(radial), normalize(fwd));
 	}
-	float side = 1.0 - smoothstep(0.35, 0.88, ahead);
-	col = mix(col, haze_color, side * mix(0.55, 0.22, snow_v));
+	float side = 1.0 - smoothstep(0.12, 0.78, ahead);
+	col = mix(col, haze_color, side * mix(0.22, 0.10, snow_v));
 	ALBEDO = col;
 }

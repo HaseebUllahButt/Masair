@@ -557,10 +557,10 @@ static func _protect_scenic_visibility(mood: Dictionary) -> Dictionary:
 	# into a cool blue rather than into nothing. At dusk the key is three degrees
 	# up and the near headland faces away from it — without a real fill that half
 	# of the composition falls to pitch black, which is an absence, not a dark.
-	out["ambient_sky_mix"] = maxf(float(out["ambient_sky_mix"]), 0.62)
-	out["ambient"] = maxf(float(out["ambient"]), 0.98)
-	out["fill_energy"] = maxf(float(out["fill_energy"]), 0.88)
-	out["fill_color"] = (out["fill_color"] as Color).lerp(Color("7a9eb8"), 0.40)
+	out["ambient_sky_mix"] = maxf(float(out["ambient_sky_mix"]), 0.82)
+	out["ambient"] = maxf(float(out["ambient"]), 1.28)
+	out["fill_energy"] = maxf(float(out["fill_energy"]), 1.48)
+	out["fill_color"] = (out["fill_color"] as Color).lerp(Color("8ab0c8"), 0.45)
 	return out
 
 

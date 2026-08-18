@@ -88,7 +88,7 @@ const HEAD_UPRIGHT := 0.56
 ## the way across the frame on every lane change. Physically the frame still
 ## leans the whole amount; only what is drawn is damped.
 const VISUAL_LEAN := 0.72
-const LOOK_YAW := deg_to_rad(90.0)
+const LOOK_YAW := deg_to_rad(62.0)
 const PARKED_SPEED := 2.0
 ## How far the nose swings toward the direction the bike is actually travelling.
 ## On the carriageway this is a few degrees of drift; on the spur, where the
@@ -515,7 +515,20 @@ func _update_view(delta: float) -> void:
 
 	var k := 1.0 - exp(-9.0 * delta)
 	var cam_pitch := frame_pitch * 0.86 - _road_pitch * 0.2
-	camera_pivot.rotation.x = lerpf(camera_pivot.rotation.x, cam_pitch, k)
+	# Q/E is independent head movement: steer one way while looking the other.
+	# Sixty-two degrees is a hard look at the verge that still keeps the road
+	# stretching forward in the frame. Ninety turned the world into stacked
+	# ribbons of tarmac, rail and sky.
+	var look_input := Input.get_axis("look_left", "look_right")
+	var target_look := look_input * LOOK_YAW if absf(look_input) > 0.01 else lean * 0.18
+	_look_yaw = lerpf(_look_yaw, target_look, 1.0 - exp(-7.0 * delta))
+	var look_amount: float = clampf(absf(_look_yaw) / LOOK_YAW, 0.0, 1.0)
+	# Looking aside, the neck also lifts. The authored lens already pitches five
+	# degrees down at the tank; held through a side glance that is a photograph
+	# of the kerb. Pitch up and sit taller so the verge fills the frame.
+	camera_pivot.rotation.x = lerpf(
+		camera_pivot.rotation.x, cam_pitch - look_amount * deg_to_rad(9.0), k
+	)
 	# The rider's head is one rigid thing, so the roll of the view and the swing
 	# of the eye come from the same angle. Rolling the horizon by 0.85 of the lean
 	# while orbiting the eye by the whole of it is two different heads, and the
@@ -528,17 +541,10 @@ func _update_view(delta: float) -> void:
 	# which is the complaint this number answers.
 	var head_lean := lean * (1.0 - HEAD_UPRIGHT)
 	var frame_basis := Basis(Vector3.RIGHT, frame_pitch) * Basis(Vector3.BACK, -head_lean)
-	camera_pivot.position = frame_basis * _pivot_base
+	camera_pivot.position = frame_basis * (_pivot_base + Vector3(0.0, look_amount * 0.28, 0.0))
 	# Slower than the rest of the rig on purpose: the neck settles into a corner
 	# rather than snapping to it, and it is the snap that reads as camera shake.
 	camera_pivot.rotation.z = lerpf(camera_pivot.rotation.z, head_lean, 1.0 - exp(-6.0 * delta))
-	# Q/E is independent head movement: steer one way while looking the other.
-	# Ninety degrees is a hard neck — enough to see the verge, not enough to
-	# spin the camera around behind the bike. The bench at an overlook is the
-	# place for a full turn, and that uses A/D.
-	var look_input := Input.get_axis("look_left", "look_right")
-	var target_look := look_input * LOOK_YAW if absf(look_input) > 0.01 else lean * 0.18
-	_look_yaw = lerpf(_look_yaw, target_look, 1.0 - exp(-7.0 * delta))
 	camera_pivot.rotation.y = PI + _look_yaw
 
 	# Speed still opens the lens, but less far than it did. Fourteen degrees of
@@ -548,9 +554,9 @@ func _update_view(delta: float) -> void:
 	_ride_fov = lerpf(_ride_fov, 76.0 + v * 9.0, 1.0 - exp(-4.0 * delta))
 	camera.fov = _ride_fov
 	var scenic := seated or (_path != null and bool(_path.at_platform(track_z, lateral)))
-	## Riding stays at 2200 m so the spur does not draw three kilometres of
-	## trees. The skyline sits inside that window, so it stays in frame on the
-	## scenic road; the bench opens to 5200 m for the authored lake ranges.
+	## Riding stays at the horizon clip so the spur does not draw three
+	## kilometres of trees. The skyline sits inside that window; the bench
+	## opens to 5200 m for the authored lake ranges.
 	camera.far = 5200.0 if scenic else HorizonMountainsGD.CLIP_FAR
 
 	_bob += delta * (6.0 + speed * 0.5)

@@ -285,7 +285,8 @@ func _initialize() -> void:
 	check(seat.origin.y - surface_y > 0.9 and seat.origin.y - surface_y < 2.0, "the seated eye is at head height above the platform")
 	var out_dir: Vector3 = (path.call("frame_flat_at", centre) as Basis).x * side
 	check(-seat.basis.z.dot(out_dir) > 0.9, "sitting down faces the view, not the road")
-	check((-seat.basis.z).y < -0.18, "sitting down looks into the basin, not at the horizon")
+	check((-seat.basis.z).y < -0.04, "sitting down still dips toward the lake")
+	check((-seat.basis.z).y > -0.16, "sitting down looks out at the far shore, not down at the water")
 
 	# Ground the overlook owns, which the random scenery pass has to keep out of.
 	check(path.call("viewpoint_reserves", centre, platform_mid), "the platform is reserved from scattered scenery")
