@@ -611,5 +611,49 @@ func commit_to(parent: Node3D, name_hint: String = "Mesh") -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.name = name_hint
 	mi.mesh = commit()
+	cheap_draw(mi)
 	parent.add_child(mi)
 	return mi
+
+
+static func cheap_draw(geo: GeometryInstance3D) -> void:
+	## Forward+ still evaluates GI and interpolates every GeometryInstance3D.
+	## Procedural world meshes never need either.
+	geo.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	geo.extra_cull_margin = 0.0
+	geo.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+
+
+static func fill_multimesh(mm: MultiMesh, xforms: Array[Transform3D], cols: Array[Color]) -> void:
+	## One buffer upload instead of per-instance setter traffic. TRANSFORM_3D
+	## stores a row-major 3×4, then RGBA when use_colors is on.
+	var n := xforms.size()
+	mm.instance_count = n
+	if n == 0:
+		return
+	var data := PackedFloat32Array()
+	data.resize(n * 16)
+	var o := 0
+	for i in n:
+		var t: Transform3D = xforms[i]
+		var b := t.basis
+		var p := t.origin
+		data[o] = b.x.x
+		data[o + 1] = b.y.x
+		data[o + 2] = b.z.x
+		data[o + 3] = p.x
+		data[o + 4] = b.x.y
+		data[o + 5] = b.y.y
+		data[o + 6] = b.z.y
+		data[o + 7] = p.y
+		data[o + 8] = b.x.z
+		data[o + 9] = b.y.z
+		data[o + 10] = b.z.z
+		data[o + 11] = p.z
+		var c: Color = cols[i]
+		data[o + 12] = c.r
+		data[o + 13] = c.g
+		data[o + 14] = c.b
+		data[o + 15] = c.a
+		o += 16
+	mm.set_buffer(data)

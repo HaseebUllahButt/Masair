@@ -648,6 +648,7 @@ func _build_steering() -> Node3D:
 	mi.name = "SteeringMesh"
 	mi.mesh = b.commit()
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	LowPoly.cheap_draw(mi)
 	head.add_child(mi)
 	_build_style_fenders(head, o)
 
@@ -727,6 +728,7 @@ func _build_style_fenders(head: Node3D, o: Vector3) -> void:
 		fender.mesh = fb.commit()
 		fender.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		fender.visible = i == 0
+		LowPoly.cheap_draw(fender)
 		head.add_child(fender)
 		_fenders.append(fender)
 
@@ -787,6 +789,7 @@ func _build_needle(head: Node3D, at: Vector3) -> Node3D:
 	var mi := MeshInstance3D.new()
 	mi.mesh = b.commit()
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	LowPoly.cheap_draw(mi)
 	var pivot := Node3D.new()
 	pivot.name = "Needle"
 	pivot.transform = Transform3D(_needle_base, at)
@@ -830,6 +833,7 @@ func _build_wheel(pos: Vector3, is_front: bool) -> MeshInstance3D:
 	mi.name = "FrontWheel" if is_front else "RearWheel"
 	mi.mesh = b.commit()
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	LowPoly.cheap_draw(mi)
 	mi.position = pos
 	if not is_front:
 		add_child(mi)
@@ -849,6 +853,7 @@ func _build_contact_shadow() -> void:
 	shadow.rotation.x = -PI * 0.5
 	shadow.scale = Vector3(0.55, 1.15, 1.0)
 	shadow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	LowPoly.cheap_draw(shadow)
 	add_child(shadow)
 
 
@@ -944,6 +949,7 @@ func _attach(parent: Node, b: LowPoly, node_name: String) -> MeshInstance3D:
 	mi.name = node_name
 	mi.mesh = b.commit()
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	LowPoly.cheap_draw(mi)
 	parent.add_child(mi)
 	return mi
 
