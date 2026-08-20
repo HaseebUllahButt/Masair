@@ -154,7 +154,17 @@ func _follow_player() -> void:
 	if _player == null:
 		return
 	global_position = _player.global_position
-	visible = true
+	## The ring is a skybox the rider cannot approach. At an overlook the
+	## authored range *is* the skyline, and drawing both at the same distance
+	## z-fought into stripes across the lake.
+	visible = not _at_scenic_view()
+
+
+func _at_scenic_view() -> bool:
+	if bool(_player.get("seated")):
+		return true
+	var path := get_node_or_null("/root/RoadPath")
+	return path != null and bool(path.call("at_platform", _player.track_z, _player.lateral))
 
 
 func _build_layer(index: int) -> void:

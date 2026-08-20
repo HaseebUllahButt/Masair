@@ -1,4 +1,4 @@
-[gd_scene load_steps=10 format=3 uid="uid://masair_main"]
+[gd_scene load_steps=11 format=3 uid="uid://masair_main"]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/motorcycle.gd" id="2_bike"]
@@ -31,6 +31,22 @@ border_width_top = 2
 border_width_right = 2
 border_width_bottom = 2
 border_color = Color(0.55, 0.7, 1, 0.7)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+content_margin_left = 44.0
+content_margin_top = 34.0
+content_margin_right = 44.0
+content_margin_bottom = 34.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_confirm"]
+bg_color = Color(0.08, 0.05, 0.04, 0.92)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.95, 0.72, 0.42, 0.75)
 corner_radius_top_left = 10
 corner_radius_top_right = 10
 corner_radius_bottom_right = 10
@@ -218,7 +234,7 @@ grow_horizontal = 2
 grow_vertical = 0
 theme_override_colors/font_color = Color(1, 1, 1, 0.4)
 theme_override_font_sizes/font_size = 14
-text = "W/S ride   ·   A/D lean   ·   Q/E look around   ·   brown VIEWPOINT signs mark a scenic detour   ·   T light   ·   R restart"
+text = "W/S ride   ·   A/D lean   ·   Q/E look around   ·   C cruise   ·   brown VIEWPOINT signs mark a scenic detour   ·   T light   ·   R restart"
 horizontal_alignment = 1
 
 [node name="CrashPanel" type="PanelContainer" parent="HUD/Root"]
@@ -271,5 +287,35 @@ theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 26
 text = "PAUSED\n\nPress ESC or P to resume"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ConfirmPanel" type="PanelContainer" parent="HUD/Root"]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -220.0
+offset_top = -110.0
+offset_right = 220.0
+offset_bottom = 110.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_confirm")
+
+[node name="ConfirmLabel" type="Label" parent="HUD/Root/ConfirmPanel"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.88, 0.7, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 26
+text = "START A NEW RIDE?
+
+R  confirm   ·   ESC  cancel"
 horizontal_alignment = 1
 vertical_alignment = 1

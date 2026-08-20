@@ -14,6 +14,7 @@ extends Node3D
 signal crashed_into_traffic
 
 const AudioGD := preload("res://scripts/audio.gd")
+const BikeCatalog := preload("res://scripts/bike_catalog.gd")
 const HorizonMountainsGD := preload("res://scripts/horizon_mountains.gd")
 
 # Longitudinal
@@ -23,34 +24,41 @@ const HorizonMountainsGD := preload("res://scripts/horizon_mountains.gd")
 @export var engine_brake: float = 3.2
 @export var roll_drag: float = 0.03
 @export var start_speed: float = 16.0
+const CRUISE_MIN_SPEED := 8.0
+var _gears: float = 6.0
+var _idle_pitch: float = 0.64
+var _pitch_span: float = 1.12
+var _voice_id: int = 0
+var _horn_env: float = 0.0
+var _prev_steer: float = 0.0
 
 # Lateral
 ## 45° is racetrack-on-slicks angle and looks absurd on a road bike.
-@export var max_lean_deg: float = 32.0
+@export var max_lean_deg: float = 33.0
 ## About a fifth of a second to full lean, standing up a shade quicker. Faster
 ## than this and the bike does not tip into a corner, it cuts to it — the frame
 ## arrives before the rider has weighted anything, and every steering input
 ## reads on screen as a jolt rather than as a movement.
-@export var lean_in_rate_deg: float = 175.0
-@export var lean_out_rate_deg: float = 215.0
+@export var lean_in_rate_deg: float = 210.0
+@export var lean_out_rate_deg: float = 255.0
 ## How much of that rate survives at speed. A bike at 180 km/h does not flick:
 ## the faster the wheels turn the more they resist being tipped, which is why
 ## motorway lane changes are made with a lean you hold rather than a stab. This
 ## is also most of what stops the view snapping about at the top end.
-@export var high_speed_lean_rate: float = 0.55
+@export var high_speed_lean_rate: float = 0.60
 ## Lateral accel per unit tan(lean). Physically this is g, and a road bike makes
 ## a bit over one of them; this is a road game, not a simulator, so it is nearer
 ## four. Coming down from 50 is what took the skate out of the steering.
-@export var lean_grip: float = 38.0
+@export var lean_grip: float = 40.0
 ## Fraction of the corner's real centrifugal load you have to hold with lean.
 ## The road never steers itself — you do — but this stays well under 1.0 so a
 ## corner costs part of your lean budget instead of all of it.
-@export var corner_load: float = 0.5
-@export var grip_damp: float = 2.2
+@export var corner_load: float = 0.40
+@export var grip_damp: float = 2.45
 ## Absolute sideways speed cap, on top of the heading limit below. This is the
 ## number that decides how far you can actually place the bike.
-@export var max_lat_speed: float = 13.0
-@export var steer_authority_speed: float = 9.0
+@export var max_lat_speed: float = 13.4
+@export var steer_authority_speed: float = 7.5
 	## Usable road width leaves a little room for the tyre and shoulder. The path
 	## can widen this boundary for an authored scenic pull-off.
 @export var road_edge_margin: float = 0.38
@@ -132,6 +140,10 @@ var _seat_pitch: float = 0.0
 ## Fork choice is state, not a nearest-surface query. Once the bike crosses the
 ## lead-off mouth, keep it on that ribbon while the gore widens beneath it.
 var _committed_to_spur: bool = false
+## Held speed while cruise is on. Brake, sitting down, or a crash clears it.
+var cruise_on: bool = false
+var _cruise_speed: float = 0.0
+var _throttle_load: float = 0.0
 
 @onready var visual: Node3D = $Visual
 @onready var camera: Camera3D = $CameraPivot/Camera3D
@@ -165,31 +177,69 @@ func _setup_audio() -> void:
 	# pass at a 40 km/h closing speed barely bends at all.
 	camera.doppler_tracking = Camera3D.DOPPLER_TRACKING_PHYSICS_STEP
 	_horn = AudioStreamPlayer.new()
-	_horn.stream = AudioGD.horn()
-	_horn.volume_db = -2.0
+	_horn.volume_db = -80.0
 	add_child(_horn)
 
 	_engine = AudioStreamPlayer.new()
-	_engine.stream = AudioGD.engine()
 	_engine.volume_db = -12.0
+	_engine.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(_engine)
+	_horn.process_mode = Node.PROCESS_MODE_ALWAYS
+	_apply_voice(_voice_id)
 	_engine.play()
 
 
 func preview_bike(bike_id: int) -> void:
+	_voice_id = clampi(bike_id, 0, BikeCatalog.BIKES.size() - 1)
+	var info: Dictionary = BikeCatalog.BIKES[_voice_id]
+	_idle_pitch = float(info["idle_pitch"])
+	_pitch_span = float(info["pitch_span"])
+	_gears = float(info["gears"])
 	if visual and visual.has_method("set_bike_style"):
-		visual.call("set_bike_style", bike_id)
+		visual.call("set_bike_style", _voice_id)
+	_apply_voice(_voice_id)
+
+
+func _apply_voice(bike_id: int) -> void:
+	var kind := clampi(bike_id, 0, 4)
+	if _horn:
+		var was_honking := _horn.playing
+		_horn.stream = AudioGD.horn(kind)
+		if was_honking:
+			_horn.play()
+	if _engine:
+		var keep := _engine.playing
+		_engine.stream = AudioGD.engine(kind)
+		_engine.pitch_scale = _idle_pitch
+		if keep:
+			_engine.play()
 
 
 func apply_bike_profile(bike_id: int, stats: Dictionary) -> void:
 	top_speed = float(stats["top_speed"])
 	engine_accel = float(stats["engine_accel"])
 	brake_accel = float(stats["brake_accel"])
+	if stats.has("engine_brake"):
+		engine_brake = float(stats["engine_brake"])
 	lean_grip = float(stats["lean_grip"])
 	high_speed_lean_rate = float(stats["high_speed_lean_rate"])
 	max_lat_speed = float(stats["max_lat_speed"])
 	lean_in_rate_deg = float(stats["lean_in_rate_deg"])
 	lean_out_rate_deg = float(stats["lean_out_rate_deg"])
+	if stats.has("grip_damp"):
+		grip_damp = float(stats["grip_damp"])
+	if stats.has("corner_load"):
+		corner_load = float(stats["corner_load"])
+	if stats.has("max_lean_deg"):
+		max_lean_deg = float(stats["max_lean_deg"])
+	if stats.has("steer_authority_speed"):
+		steer_authority_speed = float(stats["steer_authority_speed"])
+	if stats.has("gears"):
+		_gears = float(stats["gears"])
+	if stats.has("idle_pitch"):
+		_idle_pitch = float(stats["idle_pitch"])
+	if stats.has("pitch_span"):
+		_pitch_span = float(stats["pitch_span"])
 	start_speed = float(stats["start_speed"])
 	preview_bike(bike_id)
 
@@ -201,21 +251,12 @@ func _physics_process(delta: float) -> void:
 	_invuln = maxf(0.0, _invuln - delta)
 	_shake = maxf(0.0, _shake - delta * 2.5)
 
-	if Input.is_action_just_pressed("restart") and _game:
-		_game.restart()
-		_update_view(delta)
-		_update_audio(delta)
-		## `_update_view` writes the rig after the teleport. Reset again so
-		## those local camera writes cannot interpolate from the bench pose.
-		reset_physics_interpolation()
-		return
-
 	if Input.is_action_just_pressed("sit"):
 		_toggle_seat()
 
 	if alive and not seated:
 		if Input.is_action_just_pressed("horn"):
-			_sound_horn()
+			_alert_traffic()
 		_drive(delta)
 		_steer(delta)
 		var previous_z := track_z
@@ -248,7 +289,10 @@ func _physics_process(delta: float) -> void:
 
 
 func _sound_horn() -> void:
-	_horn.play()
+	_alert_traffic()
+
+
+func _alert_traffic() -> void:
 	# Only the nearest aligned driver ahead treats the horn as a request to make
 	# room. Broadcasting a lane-change command to a whole queue made traffic look
 	# startled rather than human.
@@ -269,6 +313,20 @@ func _sound_horn() -> void:
 func _drive(delta: float) -> void:
 	var throttle := Input.get_action_strength("throttle")
 	var brake := Input.get_action_strength("brake")
+	_update_cruise(brake)
+	if cruise_on:
+		# Hold the locked speed: enough throttle to cancel engine brake, drag
+		# and grade, plus a catch-up term. Holding W raises the set speed
+		# instead of cancelling.
+		if throttle > 0.05:
+			_cruise_speed = clampf(
+				_cruise_speed + engine_accel * 0.45 * throttle * delta, CRUISE_MIN_SPEED, top_speed
+			)
+		var hold := roll_drag * speed + 9.81 * sin(_road_pitch) * 0.75
+		var curve := engine_accel * maxf(1.0 - pow(speed / top_speed, 2.0), 0.0)
+		var maintain := 0.0 if curve <= 0.001 else clampf(hold / curve, 0.0, 1.0)
+		var error := _cruise_speed - speed
+		throttle = clampf(maintain + error / 3.5, 0.0, 1.0)
 
 	var a := 0.0
 	if throttle > 0.0:
@@ -284,6 +342,24 @@ func _drive(delta: float) -> void:
 	# downhill. The engine curve still makes the final kilometres per hour feel
 	# earned instead of relying on a visible speed limiter.
 	speed = clampf(speed + a * delta, 0.0, top_speed)
+	_throttle_load = throttle
+
+
+func _update_cruise(brake: float) -> void:
+	if seated or not alive:
+		cruise_on = false
+		return
+	if brake > 0.08:
+		cruise_on = false
+		return
+	if Input.is_action_just_pressed("cruise"):
+		if cruise_on:
+			cruise_on = false
+		elif speed >= CRUISE_MIN_SPEED:
+			cruise_on = true
+			_cruise_speed = speed
+	if cruise_on and speed < CRUISE_MIN_SPEED * 0.45:
+		cruise_on = false
 
 
 func _steer(delta: float) -> void:
@@ -298,11 +374,20 @@ func _steer(delta: float) -> void:
 	var target_lean := steer * deg_to_rad(max_lean_deg) * authority
 	var rate := lean_in_rate_deg if absf(target_lean) > absf(lean) else lean_out_rate_deg
 	rate *= lerpf(1.0, high_speed_lean_rate, smoothstep(20.0, 48.0, speed))
+	# A bar flick tips the bike faster than a held lean — that first bite is
+	# what makes a café feel willing instead of delayed.
+	var steer_delta := steer - _prev_steer
+	_prev_steer = steer
+	rate += minf(absf(steer_delta) * 180.0, 140.0)
 	lean = move_toward(lean, target_lean, deg_to_rad(rate) * delta)
 
 	# Lean generates side force; the road's own curve throws you the other way.
 	var a_lat := lean_grip * tan(lean)
 	a_lat -= _path.curvature_at(track_z) * speed * speed * corner_load
+	# Shut the throttle and the bike tucks in; feed it and it runs a little wide.
+	# Coasting (the usual state) stays almost 1:1 so the old line still holds.
+	var drive_load := _throttle_load - Input.get_action_strength("brake")
+	a_lat *= lerpf(1.10, 0.88, clampf(drive_load * 0.5 + 0.5, 0.0, 1.0))
 	# A soft edge force gives the rider a readable warning. The rideable surface
 	# is not one fixed strip — a spur road runs beside it at every overlook — so
 	# query the authored bounds rather than a stored half-width.
@@ -417,6 +502,8 @@ func _toggle_seat() -> void:
 	seated = true
 	speed = 0.0
 	lat_vel = 0.0
+	cruise_on = false
+	_cruise_speed = 0.0
 	_seat_yaw = 0.0
 	_seat_pitch = 0.0
 
@@ -458,6 +545,9 @@ func kill() -> void:
 	alive = false
 	speed = 0.0
 	lat_vel = 0.0
+	cruise_on = false
+	_cruise_speed = 0.0
+	_throttle_load = 0.0
 	_shake = 1.0
 	_fall_dir = signf(lean) if absf(lean) > 0.02 else 1.0
 	crashed_into_traffic.emit()
@@ -483,6 +573,11 @@ func reset_run() -> void:
 	_committed_to_spur = false
 	_invuln = invuln_time
 	_shake = 0.0
+	cruise_on = false
+	_cruise_speed = 0.0
+	_throttle_load = 0.0
+	_horn_env = 0.0
+	_prev_steer = 0.0
 	_road_pitch = _path.pitch_at(0.0)
 	camera_pivot.position = _pivot_base
 	camera_pivot.rotation = Vector3(0.0, PI, 0.0)
@@ -612,12 +707,34 @@ func _update_seat(delta: float) -> void:
 
 
 func _update_audio(delta: float) -> void:
-	# Six fake gears: pitch climbs through each and drops on the shift.
-	var span := top_speed / 6.0
+	_update_horn(delta)
+	if _engine == null:
+		return
+	# Fake gearbox: pitch climbs through each gear and drops on the shift. Gear
+	# count and idle are per café so the Raven lopes while the Mesa buzzes.
+	var span := top_speed / maxf(_gears, 3.0)
 	var frac := fposmod(speed, span) / span
-	var target := 0.55 + frac * 1.25 + minf(speed / top_speed, 1.0) * 0.25
+	var target := _idle_pitch + frac * _pitch_span + minf(speed / top_speed, 1.0) * 0.22
 	if speed < 4.0:
-		target = 0.5
+		target = _idle_pitch * 0.85
 	_engine.pitch_scale = lerpf(_engine.pitch_scale, target, 1.0 - exp(-14.0 * delta))
-	var load := Input.get_action_strength("throttle") if alive else 0.0
-	_engine.volume_db = lerpf(_engine.volume_db, -19.0 + load * 8.0 + minf(speed / top_speed, 1.0) * 6.0, 1.0 - exp(-6.0 * delta))
+	var load := _throttle_load if alive else 0.0
+	var base_vol := -14.0 + minf(speed / top_speed, 1.0) * 6.0 + load * 8.5
+	if not alive:
+		base_vol = -28.0
+	_engine.volume_db = lerpf(_engine.volume_db, base_vol, 1.0 - exp(-6.0 * delta))
+
+
+func _update_horn(delta: float) -> void:
+	if _horn == null:
+		return
+	var honking := alive and not seated and Input.is_action_pressed("horn")
+	var rise := 22.0 if honking else 10.0
+	_horn_env = move_toward(_horn_env, 1.0 if honking else 0.0, delta * rise)
+	if _horn_env > 0.01:
+		if not _horn.playing:
+			_horn.play()
+		_horn.volume_db = linear_to_db(clampf(_horn_env, 0.001, 1.0)) - 1.0
+	elif _horn.playing:
+		_horn.stop()
+		_horn.volume_db = -80.0

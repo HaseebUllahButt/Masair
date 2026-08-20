@@ -780,10 +780,9 @@ func _build_scenic_props_incremental() -> void:
 		await _build_lake_water_incremental()
 		if not await _keep_streaming():
 			return
-	for s in count:
-		_build_spur_woodland(first + s, 1)
-		if not await _keep_streaming():
-			return
+	_build_spur_woodland(first, count)
+	if not await _keep_streaming():
+		return
 	if _on_lake:
 		# Floor and skyline have to run the whole basin. Dressing can stay near
 		# the bench; cutting the range off at 240 m left a blue water strip
@@ -5858,10 +5857,20 @@ const RANGE_LAYERS := [
 	{"lateral": 2100.0, "height": 640.0, "spread": 78.0, "width": 300.0, "haze": 0.36, "pass_width": 460.0, "left": -310.0, "right": 400.0, "cliff": false},
 	{"lateral": 3100.0, "height": 840.0, "spread": 96.0, "width": 360.0, "haze": 0.54, "pass_width": 520.0, "left": -400.0, "right": 270.0, "cliff": false},
 ]
-## Facet size along the crest. Twenty was still fine enough to read as corduroy
-## under a raking dusk key — twenty-eight gives flanks big enough to take a
-## definite side of the light without striping the whole ridge.
+## Target facet size along the crest. Twenty was still fine enough to read as
+## corduroy under a raking dusk key — twenty-eight gives flanks big enough to
+## take a definite side of the light. The step is a *target*: strips are sized
+## so they tile the chunk exactly. `int(LENGTH / 28)` left a 12 m remainder in
+## every lake chunk, and from the bench the skyline was a row of stripes.
 const RANGE_STEP := 28.0
+
+
+static func range_strip_count() -> int:
+	return maxi(1, int(round(LENGTH / RANGE_STEP)))
+
+
+static func range_strip_length() -> float:
+	return LENGTH / float(range_strip_count())
 
 
 func _build_peak_clouds() -> void:
@@ -6010,10 +6019,11 @@ func _append_view_range_layer(b: LowPoly, index: int, ctx: Dictionary) -> void:
 	var fade: float = layer["haze"]
 	var body: Color = rock.lerp(haze, fade)
 	var foot: Color = rock.darkened(0.16).lerp(haze, fade * 0.72)
-	var steps := int(LENGTH / RANGE_STEP)
+	var steps := range_strip_count()
+	var step := range_strip_length()
 	for i in steps:
-		var za := z0 + RANGE_STEP * float(i)
-		var zb := za + RANGE_STEP
+		var za := z0 + step * float(i)
+		var zb := za + step
 		var sample_a: Vector2 = _range_sample(za, layer, phase, index)
 		var sample_b: Vector2 = _range_sample(zb, layer, phase, index)
 		var stack: float = 1.0

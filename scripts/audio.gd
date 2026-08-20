@@ -10,8 +10,8 @@ extends RefCounted
 
 const RATE := 22050
 
-static var _horn_cache: AudioStreamWAV
-static var _engine_cache: AudioStreamWAV
+static var _horn_cache := {}
+static var _engine_cache := {}
 static var _wind_cache: AudioStreamWAV
 static var _tyre_cache: AudioStreamWAV
 static var _rain_cache: AudioStreamWAV
@@ -20,10 +20,10 @@ static var _whoosh_cache: AudioStreamWAV
 static var _drone_cache := {}
 
 
-static func _wav(data: PackedByteArray, loop: bool) -> AudioStreamWAV:
+static func _wav(data: PackedByteArray, loop: bool, mix_rate: int = RATE) -> AudioStreamWAV:
 	var s := AudioStreamWAV.new()
 	s.format = AudioStreamWAV.FORMAT_16_BITS
-	s.mix_rate = RATE
+	s.mix_rate = mix_rate
 	s.stereo = false
 	s.data = data
 	if loop:
@@ -50,7 +50,7 @@ static func _bake(samples: PackedFloat32Array, loop: bool, peak: float) -> Audio
 	var data := PackedByteArray()
 	for s in samples:
 		_push(data, s * gain)
-	return _wav(data, loop)
+	return _wav(data, loop, RATE)
 
 
 static func _seamless(raw: PackedFloat32Array, length: int, tail: int) -> PackedFloat32Array:
@@ -225,57 +225,131 @@ static func whoosh() -> AudioStreamWAV:
 	return _whoosh_cache
 
 
-static func horn() -> AudioStreamWAV:
-	if _horn_cache:
-		return _horn_cache
-	## Two detuned reeds plus their harmonics — a bare pair of sines reads as a
-	## phone beep, not a horn. The slight pitch droop on release is what makes it
-	## sound mechanical.
-	const F1 := 420.0
-	const F2 := 508.0
-	var duration := 0.55
-	var n: int = int(RATE * duration)
-	var data := PackedByteArray()
-	for i in n:
-		var t: float = float(i) / float(RATE)
-		var env := 1.0
-		if t < 0.012:
-			env = t / 0.012  # hard attack
-		elif t > duration - 0.14:
-			env = maxf((duration - t) / 0.14, 0.0)
-		var droop: float = 1.0 - clampf((t - duration + 0.14) / 0.14, 0.0, 1.0) * 0.06
-		var s := 0.0
-		for h in [1.0, 2.0, 3.0, 4.0, 5.0]:
-			var amp: float = 0.42 / (h * h * 0.55 + 0.6)
-			s += sin(t * F1 * h * droop * TAU) * amp
-			s += sin(t * F2 * h * droop * TAU) * amp * 0.85
-		# Reed buzz.
-		s += sin(t * F1 * 0.5 * TAU) * 0.08
-		_push(data, s * env * 0.85)
-	_horn_cache = _wav(data, false)
-	return _horn_cache
-
-
-static func engine() -> AudioStreamWAV:
-	if _engine_cache:
-		return _engine_cache
-	## One seamless loop of a lumpy twin. Pitched at runtime to fake a gearbox —
-	## an integer number of periods, or the loop point clicks.
-	const BASE := 60.0
-	const CYCLES := 8
-	var n: int = int(round(float(RATE) * float(CYCLES) / BASE))
-	var data := PackedByteArray()
+static func horn(kind: int = 0) -> AudioStreamWAV:
+	## Dual-tone electromagnetic horn, looping so the rider can hold H.
+	## A pair of sines is a phone beep; a pair of driven reeds with a mechanical
+	## wobble is the thing on the bars. Each café has its own pitch and bite.
+	kind = clampi(kind, 0, HORN_SPECS.size() - 1)
+	if _horn_cache.has(kind):
+		return _horn_cache[kind]
+	var spec: Dictionary = HORN_SPECS[kind]
+	const HORN_RATE := 44100
+	var f1: float = float(spec["f1"])
+	var f2: float = float(spec["f2"])
+	var grit: float = float(spec["grit"])
+	var buzz: float = float(spec["buzz"])
+	var drive: float = float(spec["drive"])
+	var n: int = int(HORN_RATE * 0.4)
+	var tail: int = int(HORN_RATE * 0.05)
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 7
-	for i in n:
-		var ph: float = float(i) / float(n) * float(CYCLES)
-		var f := fposmod(ph, 1.0)
-		# Asymmetric saw + offbeat second cylinder gives the off-kilter twin beat.
-		var s := (f * 2.0 - 1.0) * 0.45
-		s += (fposmod(ph + 0.27, 1.0) * 2.0 - 1.0) * 0.3
-		s += sin(f * TAU) * 0.22
-		s += sin(f * TAU * 3.0) * 0.08
-		s += rng.randf_range(-0.05, 0.05)
-		_push(data, s * 0.55)
-	_engine_cache = _wav(data, true)
-	return _engine_cache
+	rng.seed = 4400 + kind * 17
+	var raw := PackedFloat32Array()
+	raw.resize(n + tail)
+	for i in n + tail:
+		var t: float = float(i) / float(HORN_RATE)
+		var s := _reed(t, f1, 1.0) + _reed(t, f2, 0.92)
+		# Diaphragm wobble — the disc is oscillating, not a synth hold.
+		s *= 0.86 + buzz * sin(t * 29.0 * TAU + float(kind))
+		s *= 0.94 + 0.06 * sin(t * 7.4 * TAU)
+		s += rng.randf_range(-grit, grit)
+		raw[i] = tanh(s * drive)
+	var looped := _seamless(raw, n, tail)
+	var data := PackedByteArray()
+	var peak := 0.0
+	for s in looped:
+		peak = maxf(peak, absf(s))
+	var gain: float = 0.92 / maxf(peak, 1e-5)
+	for s in looped:
+		_push(data, s * gain)
+	var stream := _wav(data, true, HORN_RATE)
+	_horn_cache[kind] = stream
+	return stream
+
+
+static func _reed(t: float, freq: float, amp: float) -> float:
+	## Odd-heavy partials, the shape of a stamped disc, plus a little even
+	## content from the horn cup. Not a square wave — those alias badly and
+	## read as a toy.
+	var w: float = t * freq * TAU
+	var s: float = sin(w)
+	s += sin(w * 3.0) * 0.36
+	s += sin(w * 5.0) * 0.18
+	s += sin(w * 7.0) * 0.09
+	s += sin(w * 9.0) * 0.04
+	s += sin(w * 2.0) * 0.07
+	return s * amp
+
+
+## f1/f2 in Hz. Mesa is the small high one; Raven is the deep baritone.
+const HORN_SPECS := [
+	{"f1": 496.0, "f2": 592.0, "grit": 0.035, "buzz": 0.16, "drive": 1.28},
+	{"f1": 418.0, "f2": 504.0, "grit": 0.045, "buzz": 0.20, "drive": 1.48},
+	{"f1": 368.0, "f2": 454.0, "grit": 0.040, "buzz": 0.18, "drive": 1.40},
+	{"f1": 388.0, "f2": 476.0, "grit": 0.070, "buzz": 0.24, "drive": 1.70},
+	{"f1": 322.0, "f2": 398.0, "grit": 0.090, "buzz": 0.28, "drive": 1.82},
+]
+
+
+static func engine(kind: int = 0) -> AudioStreamWAV:
+	## One seamless crank-loop per café. Pitched at runtime to fake a gearbox.
+	## Architecture is the whole point: a 360° British twin is not a 270° big
+	## twin is not a loping Vee, and sharing one lumpy sample made every bike
+	## in the garage sound like the Mesa.
+	kind = clampi(kind, 0, ENGINE_SPECS.size() - 1)
+	if _engine_cache.has(kind):
+		return _engine_cache[kind]
+	var spec: Dictionary = ENGINE_SPECS[kind]
+	var base: float = float(spec["base"])
+	var cycles: int = int(spec["cycles"])
+	var n: int = int(round(float(RATE) * float(cycles) / base))
+	var tail: int = mini(n, int(RATE * 0.04))
+	var hiss := _noise(n + tail, 0.28, 0.018, int(spec["seed"]))
+	var clatter := _noise(n + tail, 0.62, 0.08, int(spec["seed"]) + 91)
+	var offset: float = float(spec["offset"])
+	var mix: float = float(spec["mix"])
+	var width: float = float(spec["width"])
+	var odd: float = float(spec["odd"])
+	var even: float = float(spec["even"])
+	var thump: float = float(spec["thump"])
+	var hiss_amt: float = float(spec["hiss"])
+	var clatter_amt: float = float(spec["clatter"])
+	var lope: float = float(spec["lope"])
+	var raw := PackedFloat32Array()
+	raw.resize(n + tail)
+	for i in n + tail:
+		var ph: float = float(i) / float(n) * float(cycles)
+		var f: float = fposmod(ph, 1.0)
+		var fire_a := _combust(f, width)
+		var fire_b := _combust(f + offset, width) * mix
+		var pulse: float = fire_a + fire_b
+		var s: float = pulse * thump * 0.52
+		s += (f * 2.0 - 1.0) * 0.10
+		s += sin(f * TAU) * odd
+		s += sin(f * TAU * 2.0) * even
+		s += sin(f * TAU * 3.0) * odd * 0.38
+		s += sin(f * TAU * 4.0) * even * 0.45
+		s += sin(f * TAU * 6.0) * even * 0.16
+		s += sin(ph * PI) * lope
+		s += hiss[i] * hiss_amt * (0.35 + pulse * 0.8)
+		s += clatter[i] * clatter_amt * pulse
+		raw[i] = tanh(s * 1.15)
+	var stream := _bake(_seamless(raw, n, tail), true, 0.78)
+	_engine_cache[kind] = stream
+	return stream
+
+
+static func _combust(phase: float, width: float) -> float:
+	## Pressure rise and exponential dump — one firing of one pot.
+	var f: float = fposmod(phase, 1.0)
+	return exp(-f / maxf(width, 0.01))
+
+
+## base Hz of the loop, offset = second-cylinder firing as a fraction of a turn.
+## Mesa even-ish twin, Sabre 180°, Halcyon 360° British, Tempest 270°, Raven Vee.
+const ENGINE_SPECS := [
+	{"base": 76.0, "cycles": 12, "offset": 0.48, "mix": 0.70, "odd": 0.24, "even": 0.10, "width": 0.10, "hiss": 0.11, "clatter": 0.07, "thump": 0.58, "lope": 0.00, "seed": 11},
+	{"base": 62.0, "cycles": 10, "offset": 0.50, "mix": 0.88, "odd": 0.16, "even": 0.13, "width": 0.12, "hiss": 0.08, "clatter": 0.05, "thump": 0.66, "lope": 0.00, "seed": 23},
+	{"base": 54.0, "cycles": 9, "offset": 0.04, "mix": 0.94, "odd": 0.13, "even": 0.20, "width": 0.14, "hiss": 0.07, "clatter": 0.09, "thump": 0.84, "lope": 0.04, "seed": 37},
+	{"base": 47.0, "cycles": 8, "offset": 0.27, "mix": 0.86, "odd": 0.12, "even": 0.22, "width": 0.16, "hiss": 0.09, "clatter": 0.08, "thump": 0.98, "lope": 0.06, "seed": 53},
+	{"base": 39.0, "cycles": 8, "offset": 0.17, "mix": 0.76, "odd": 0.10, "even": 0.30, "width": 0.18, "hiss": 0.12, "clatter": 0.11, "thump": 1.18, "lope": 0.16, "seed": 71},
+]

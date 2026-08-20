@@ -249,6 +249,19 @@ func _run() -> void:
 		range_mesh.material_override == LowPolyGD.terrain_material(),
 		"the range uses the landscape material, not a toon-lit prop"
 	)
+	check(
+		is_equal_approx(
+			float(RoadChunkGD.range_strip_count()) * float(RoadChunkGD.range_strip_length()),
+			float(RoadChunkGD.LENGTH)
+		),
+		"range strips tile the chunk instead of leaving a remainder gap"
+	)
+	var range_aabb: AABB = range_mesh.mesh.get_aabb()
+	var along_span: float = minf(range_aabb.size.x, range_aabb.size.z)
+	check(
+		along_span >= float(RoadChunkGD.LENGTH) - 2.0,
+		"the range mesh spans the chunk, not a striped remainder (%.1f m)" % along_span
+	)
 	# Rocky scree runs the length of the far shore, low through the pass.
 	check(viewpoint.get_node_or_null("ViewpointCliffs") != null, "the far shore builds scree that meets the water")
 	var spur_centre: float = float(path.call("spur_offset", RoadPathGD.VIEWPOINT_FIRST)) * float(

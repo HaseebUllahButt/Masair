@@ -4,11 +4,13 @@ extends Node3D
 const RoadChunkGD: GDScript = preload("res://scripts/road_chunk.gd")
 const RoadPathGD: GDScript = preload("res://scripts/road_path.gd")
 const CHUNK_LENGTH: float = 40.0
-@export var chunks_ahead: int = 6
+@export var chunks_ahead: int = 14
 @export var chunks_behind: int = 2
 ## Runtime chunks are built one at a time. setup_incremental() spans many
 ## frames, so merely limiting how many builds *start* per frame still lets the
 ## whole ring overlap and pile its expensive stages onto the same frames.
+## Ribbon slices are cheap enough to run beside one dress job; that keeps the
+## road out in front of the camera without waiting for every tree to land.
 
 var _chunks: Dictionary = {}
 var _player: Node3D
@@ -35,14 +37,15 @@ const UNLOADS_PER_FRAME := 2
 const OPENING_AHEAD := 2
 ## Dress this far ahead of the bike so the corridor looks finished before it
 ## enters the lens. Too tight and the ride reads as pop-in / procedural.
-const DRESS_AHEAD := 5
+const DRESS_AHEAD := 10
 ## Ribbon look-ahead on the scenic spur — must stay ahead of DRESS_AHEAD so
 ## tarmac is ready when the dress window wants to plant.
-const SCENIC_CHUNKS_AHEAD := 7
+const SCENIC_CHUNKS_AHEAD := 12
 ## How far behind the bike spur terrain stays loaded while riding.
 const SCENIC_KEEP_BEHIND := 7
-## Prefer dressing the near corridor over building ribbons beyond this gap.
-const RIBBON_PRIORITY_AHEAD := 2
+## Keep this many strips of tarmac in the pipeline even while trees plant.
+## Tighter than this and top speed watches the road appear.
+const RIBBON_PRIORITY_AHEAD := 10
 ## Spur divergence at which the unused path is culled. Below this, both the
 ## exit and the highway stay drawn so the junction remains readable.
 const CORRIDOR_COMMIT := RoadPathGD.CORRIDOR_COMMIT
@@ -122,6 +125,12 @@ func theme_for_chunk(index: int) -> int:
 
 func _sync(build_all: bool) -> void:
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
+	var keep_bounds := _desired_bounds(current)
+	var keep_min: int = keep_bounds.x
+	var keep_max: int = keep_bounds.y
+	var build_bounds := _desired_build_bounds(current)
+	var build_min: int = maxi(build_bounds.x, keep_min)
+	var build_max: int = mini(build_bounds.y, keep_max)
 	var busy := (
 		_build_in_flight or _props_in_flight or _scenic_in_flight or _highway_in_flight
 	)
@@ -134,26 +143,14 @@ func _sync(build_all: bool) -> void:
 		and _highway_queue.is_empty()
 		and _unload_queue.is_empty()
 		and _open_until < 0
+		and _nearest_missing(current, build_min, build_max) < 0
+		and not _has_undressed_nearby(current)
+		and not _has_undressed_scenic(current)
+		and not _has_undressed_highway(current)
 	):
 		_apply_corridor()
-		if _player_wants_scenic():
-			_enqueue_scenic(current)
-		if _player_wants_highway():
-			_enqueue_highway(current)
-		if not _scenic_queue.is_empty():
-			_scenic_in_flight = true
-			_build_next_scenic(_stream_generation)
-		elif not _highway_queue.is_empty():
-			_highway_in_flight = true
-			_build_next_highway(_stream_generation)
 		return
 	_idle_current = -1
-	var keep_bounds := _desired_bounds(current)
-	var keep_min: int = keep_bounds.x
-	var keep_max: int = keep_bounds.y
-	var build_bounds := _desired_build_bounds(current)
-	var build_min: int = maxi(build_bounds.x, keep_min)
-	var build_max: int = mini(build_bounds.y, keep_max)
 
 	for i in _chunks.keys():
 		if int(i) < keep_min or int(i) > keep_max:
@@ -185,36 +182,24 @@ func _sync(build_all: bool) -> void:
 		return
 	if _fill_opening(current, build_max):
 		return
-	# Near scenery first once the bike's immediate tarmac exists. Waiting for
-	# the whole look-ahead ring to finish ribbons left the camera staring at
-	# bare curb while far strips built — that pop-in read as choppy generation.
-	if not _build_in_flight and not _props_in_flight and not _scenic_in_flight and not _highway_in_flight:
+	# Ribbons and dressing share the pipeline. Exclusive jobs left either a
+	# vanishing road (trees first) or a bare curb (ribbons first). A ribbon
+	# slice is one cross-section; it can run beside one dress job after the
+	# frame that starts it.
+	var started_ribbon := false
+	if not _build_in_flight:
 		var next := _nearest_missing(current, build_min, build_max)
 		var urgent_ribbon := next >= 0 and next <= current + RIBBON_PRIORITY_AHEAD
-		if not urgent_ribbon and (
-			_has_undressed_nearby(current)
-			or _has_undressed_scenic(current)
-			or _has_undressed_highway(current)
+		if next >= 0 and (
+			urgent_ribbon
+			or not (
+				_has_undressed_nearby(current)
+				or _has_undressed_scenic(current)
+				or _has_undressed_highway(current)
+			)
 		):
-			_enqueue_nearby_props(current)
-			if _player_wants_scenic():
-				_enqueue_scenic(current)
-			if _player_wants_highway():
-				_enqueue_highway(current)
-			if not _scenic_queue.is_empty():
-				_scenic_in_flight = true
-				_build_next_scenic(_stream_generation)
-				return
-			if not _highway_queue.is_empty():
-				_highway_in_flight = true
-				_build_next_highway(_stream_generation)
-				return
-			if not _props_queue.is_empty():
-				_props_in_flight = true
-				_build_next_props(_stream_generation)
-				return
-		if next >= 0:
 			_build_in_flight = true
+			started_ribbon = true
 			# Sync only the hole under the wheels. Syncing current+1 paid an
 			# 11–24 ms ribbon hitch every chunk boundary at top speed.
 			var under: Node = _chunks.get(current)
@@ -225,21 +210,8 @@ func _sync(build_all: bool) -> void:
 				_spawn_ribbon_sync(next, _stream_generation)
 			else:
 				_spawn_incremental(next, _stream_generation)
-		else:
-			_enqueue_nearby_props(current)
-			if _player_wants_scenic():
-				_enqueue_scenic(current)
-			if _player_wants_highway():
-				_enqueue_highway(current)
-			if not _scenic_queue.is_empty():
-				_scenic_in_flight = true
-				_build_next_scenic(_stream_generation)
-			elif not _highway_queue.is_empty():
-				_highway_in_flight = true
-				_build_next_highway(_stream_generation)
-			elif not _props_queue.is_empty():
-				_props_in_flight = true
-				_build_next_props(_stream_generation)
+	if not started_ribbon:
+		_start_next_dress(current)
 	if (
 		not _build_in_flight
 		and not _props_in_flight
@@ -275,6 +247,25 @@ func _enqueue_nearby_props(current: int) -> void:
 		if _player_wants_scenic() and on_spur:
 			chunk.set_meta("scenic_requested", true)
 		_props_queue.append(chunk)
+
+
+func _start_next_dress(current: int) -> void:
+	if _props_in_flight or _scenic_in_flight or _highway_in_flight:
+		return
+	_enqueue_nearby_props(current)
+	if _player_wants_scenic():
+		_enqueue_scenic(current)
+	if _player_wants_highway():
+		_enqueue_highway(current)
+	if not _scenic_queue.is_empty():
+		_scenic_in_flight = true
+		_build_next_scenic(_stream_generation)
+	elif not _highway_queue.is_empty():
+		_highway_in_flight = true
+		_build_next_highway(_stream_generation)
+	elif not _props_queue.is_empty():
+		_props_in_flight = true
+		_build_next_props(_stream_generation)
 
 
 func _has_undressed_nearby(current: int) -> bool:
@@ -328,8 +319,6 @@ func _enqueue_scenic(current: int) -> void:
 			continue
 		if chunk.get_node_or_null("RoadSurface") == null:
 			continue
-		if not bool(chunk.get_meta("props_done", false)):
-			continue
 		chunk.set_meta("scenic_queued", true)
 		chunk.set_meta("scenic_requested", true)
 		_scenic_queue.append(chunk)
@@ -348,8 +337,6 @@ func _has_undressed_scenic(current: int) -> bool:
 		if not bool(chunk.get("_on_spur")):
 			continue
 		if chunk.get_node_or_null("RoadSurface") == null:
-			continue
-		if not bool(chunk.get_meta("props_done", false)):
 			continue
 		if bool(chunk.get_meta("scenic_done", false)):
 			continue

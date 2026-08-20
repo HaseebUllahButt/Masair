@@ -29,6 +29,25 @@ func _process(_delta: float) -> bool:
 	check(float(tuned["engine_accel"]) > float(base["engine_accel"]), "engine tuning raises acceleration")
 	check(float(tuned["brake_accel"]) > float(base["brake_accel"]), "brake tuning raises stopping power")
 	check(float(tuned["lean_grip"]) > float(base["lean_grip"]), "handling tuning raises grip")
+	check(
+		float(BikeCatalog.BIKES[4]["lean_grip"]) > float(BikeCatalog.BIKES[0]["lean_grip"]),
+		"the Raven plants harder than the Mesa"
+	)
+	check(
+		float(BikeCatalog.BIKES[4]["lean_in_rate_deg"]) < float(BikeCatalog.BIKES[0]["lean_in_rate_deg"]),
+		"the Raven falls into a lean slower than the Mesa"
+	)
+	var AudioGD: GDScript = load("res://scripts/audio.gd")
+	var mesa_engine: AudioStreamWAV = AudioGD.engine(0)
+	var raven_engine: AudioStreamWAV = AudioGD.engine(4)
+	check(mesa_engine != null and raven_engine != null, "every café bakes an engine loop")
+	check(mesa_engine.data != raven_engine.data, "the Raven does not share the Mesa's engine sample")
+	check(mesa_engine.loop_mode == AudioStreamWAV.LOOP_FORWARD, "the engine loop is seamless")
+	var mesa_horn: AudioStreamWAV = AudioGD.horn(0)
+	var raven_horn: AudioStreamWAV = AudioGD.horn(4)
+	check(mesa_horn.mix_rate >= 44100, "the horn is sampled high enough to bite")
+	check(mesa_horn.data != raven_horn.data, "each café has its own horn")
+	check(mesa_horn.loop_mode == AudioStreamWAV.LOOP_FORWARD, "the horn can be held down")
 	check(BikeCatalog.tune_cost(0, "engine", 1) > BikeCatalog.tune_cost(0, "engine", 0), "later tune levels cost more")
 	check(BikeCatalog.tune_cost(0, "engine", 0) >= 140, "the first engine tune is a real spend")
 	check(BikeCatalog.tune_cost(4, "engine", 0) > BikeCatalog.tune_cost(0, "engine", 0), "open-class tunes cost more")

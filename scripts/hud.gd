@@ -13,6 +13,8 @@ const BikeCatalog := preload("res://scripts/bike_catalog.gd")
 @onready var pause_panel: PanelContainer = $Root/PausePanel
 @onready var pause_label: Label = $Root/PausePanel/PauseLabel
 @onready var hint_label: Label = $Root/HintLabel
+@onready var confirm_panel: PanelContainer = $Root/ConfirmPanel
+@onready var confirm_label: Label = $Root/ConfirmPanel/ConfirmLabel
 
 const COMBO_COLORS := [Color(1, 0.85, 0.2), Color(1, 0.66, 0.25), Color(1, 0.45, 0.35), Color(0.7, 0.95, 1.0)]
 
@@ -47,6 +49,10 @@ var _font_head: Font
 var _font_ui: Font
 var _font_italic: Font
 var _font_kicker: Font
+var _speed_caption: Label
+var _confirming_restart: bool = false
+var _paused_for_confirm: bool = false
+var _restore_pause_on_cancel: bool = false
 
 const MOOD_NAMES := ["GOLDEN DUSK", "DAYLIGHT", "MIDNIGHT"]
 const DIFFICULTY_NAMES := ["OPEN ROAD", "SUNDAY RUN", "THE TON"]
@@ -65,8 +71,10 @@ func _ready() -> void:
 	_game = get_node_or_null("/root/GameManager")
 	crash_panel.visible = false
 	pause_panel.visible = false
+	if confirm_panel:
+		confirm_panel.visible = false
 	flash_label.modulate.a = 0.0
-	hint_label.text = "W/S ride   ·   A/D lean   ·   Q/E look around   ·   T light   ·   R restart"
+	hint_label.text = "W/S ride   ·   A/D lean   ·   H horn   ·   C cruise   ·   T light   ·   R restart"
 	_music = get_node_or_null("/root/MusicPlayer")
 	_build_currency_hud()
 	_build_start_menu()
@@ -95,15 +103,25 @@ func _process(delta: float) -> void:
 		if Input.is_action_just_pressed("toggle_day"):
 			_cycle_menu_mood()
 		return
-	if get_tree().paused and Input.is_action_just_pressed("restart") and _game:
-		_game.restart()
-	if Input.is_action_just_pressed("pause"):
+	if _confirming_restart:
+		if Input.is_action_just_pressed("pause"):
+			_set_confirm_restart(false)
+		elif Input.is_action_just_pressed("restart") and _game:
+			_clear_confirm_restart()
+			_game.restart()
+	elif Input.is_action_just_pressed("restart") and _game:
+		if _game.is_crashed:
+			_game.restart()
+		else:
+			_set_confirm_restart(true)
+	elif Input.is_action_just_pressed("pause"):
 		if _game == null or not _game.is_crashed:
 			_set_paused(not get_tree().paused)
 	if _player:
 		# Ease the readout so the digits do not strobe.
 		_shown_speed = lerpf(_shown_speed, _player.speed * 3.6, 1.0 - exp(-9.0 * delta))
 		speed_label.text = "%d" % int(_shown_speed)
+		_update_cruise_caption()
 		_update_prompt()
 
 	if _flash > 0.0:
@@ -117,7 +135,7 @@ func _process(delta: float) -> void:
 
 	if _game and _game.is_crashed:
 		crash_panel.modulate.a = minf(crash_panel.modulate.a + delta * 3.0, 1.0)
-	if get_tree().paused and Input.is_action_just_pressed("menu"):
+	if get_tree().paused and Input.is_action_just_pressed("menu") and not _confirming_restart:
 		_show_start_menu()
 
 
@@ -149,6 +167,42 @@ func _set_paused(should_pause: bool) -> void:
 		_update_pause_label()
 
 
+func _set_confirm_restart(show: bool) -> void:
+	_confirming_restart = show
+	if confirm_panel:
+		confirm_panel.visible = show
+	if show:
+		_restore_pause_on_cancel = pause_panel.visible
+		_paused_for_confirm = not get_tree().paused
+		get_tree().paused = true
+		pause_panel.visible = false
+		if confirm_label:
+			confirm_label.text = "START A NEW RIDE?\n\nR  confirm   ·   ESC  cancel"
+	else:
+		if _restore_pause_on_cancel:
+			pause_panel.visible = true
+			_restore_pause_on_cancel = false
+		elif _paused_for_confirm:
+			get_tree().paused = false
+		_paused_for_confirm = false
+
+
+func _clear_confirm_restart() -> void:
+	_confirming_restart = false
+	_paused_for_confirm = false
+	_restore_pause_on_cancel = false
+	if confirm_panel:
+		confirm_panel.visible = false
+
+
+func _update_cruise_caption() -> void:
+	if _speed_caption == null:
+		return
+	var cruising: bool = _player != null and bool(_player.get("cruise_on"))
+	_speed_caption.text = "CRUISE" if cruising else "KM/H"
+	_speed_caption.modulate = Color(1, 0.94, 0.72, 0.85) if cruising else Color(1, 0.94, 0.72, 0.55)
+
+
 func _on_distance(d: float) -> void:
 	distance_label.text = "%d m" % int(d)
 
@@ -165,6 +219,7 @@ func _on_currency(balance: int) -> void:
 
 
 func _on_crashed() -> void:
+	_clear_confirm_restart()
 	crash_panel.visible = true
 	crash_panel.modulate.a = 0.0
 	var d := int(_game.distance_m) if _game else 0
@@ -194,6 +249,7 @@ func show_lighting_mode(mode: int) -> void:
 
 
 func _on_restarted() -> void:
+	_clear_confirm_restart()
 	crash_panel.visible = false
 	pause_panel.visible = false
 	flash_label.modulate.a = 0.0
@@ -201,6 +257,7 @@ func _on_restarted() -> void:
 	_shown_speed = 0.0
 	if _player:
 		_update_prompt()
+		_update_cruise_caption()
 
 func _update_pause_label() -> void:
 	if pause_label == null:
@@ -651,6 +708,7 @@ func _show_start_menu() -> void:
 	get_tree().paused = true
 	pause_panel.visible = false
 	crash_panel.visible = false
+	_clear_confirm_restart()
 	hud_root.visible = false
 	_start_menu.visible = true
 	if not _ride_started:
@@ -709,7 +767,7 @@ func _start_ride() -> void:
 	hud_root.visible = true
 	get_tree().paused = false
 	_hint = 6.0
-	hint_label.text = "W/S ride   ·   A/D lean   ·   Q/E look   ·   F scenic bench   ·   T light   ·   R restart"
+	hint_label.text = "W/S ride   ·   A/D lean   ·   Q/E look   ·   H horn   ·   C cruise   ·   F scenic bench   ·   T light   ·   R restart"
 
 
 func _load_type() -> void:
@@ -742,15 +800,17 @@ func _apply_ride_type() -> void:
 	_style_hud_label(hint_label, _font_kicker, 13)
 	_style_hud_label(crash_label, _font_head, 22)
 	_style_hud_label(pause_label, _font_head, 22)
+	if confirm_label:
+		_style_hud_label(confirm_label, _font_head, 22)
 	var distance_caption: Label = hud_root.get_node_or_null("DistanceCaption")
 	var best_caption: Label = hud_root.get_node_or_null("BestCaption")
-	var speed_caption: Label = hud_root.get_node_or_null("SpeedCaption")
+	_speed_caption = hud_root.get_node_or_null("SpeedCaption")
 	if distance_caption:
 		_style_hud_label(distance_caption, _font_kicker, 12)
 	if best_caption:
 		_style_hud_label(best_caption, _font_kicker, 12)
-	if speed_caption:
-		_style_hud_label(speed_caption, _font_kicker, 13)
+	if _speed_caption:
+		_style_hud_label(_speed_caption, _font_kicker, 13)
 
 
 func _style_hud_label(label: Label, font: Font, size: int) -> void:

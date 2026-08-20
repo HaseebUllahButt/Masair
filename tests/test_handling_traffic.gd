@@ -44,6 +44,13 @@ func _process(_delta: float) -> bool:
 	pivot.add_child(camera)
 	root.add_child(bike)
 	bike.set_physics_process(false)
+	# Garage save applies a profile in `_ready`; this file tests the handling
+	# model of the stock 200 km/h machine, not whichever bike is unlocked.
+	bike.top_speed = 55.5556
+	bike.engine_accel = 12.0
+	bike.brake_accel = 16.0
+	bike.engine_brake = 3.2
+	bike.roll_drag = 0.03
 	check(is_equal_approx(float(bike.top_speed), 55.5556), "bike keeps the 200 km/h top speed")
 	check(float(bike.max_lateral) < float(path.HALF_WIDTH), "bike boundary is inside the road edges")
 	bike.lateral = 50.0
@@ -269,6 +276,30 @@ func _process(_delta: float) -> bool:
 	bike.lateral = 0.0
 	traffic.call("_process", 0.016)
 	check(not bool(traffic.get("_scenic_quiet")), "traffic resumes on the main road")
+
+	# Cruise holds speed without the throttle down, and the brake cancels it.
+	bike.speed = 22.0
+	bike.set("alive", true)
+	bike.set("seated", false)
+	bike.set("_road_pitch", 0.0)
+	Input.action_press("cruise")
+	bike.call("_drive", 0.016)
+	Input.action_release("cruise")
+	check(bool(bike.get("cruise_on")), "C engages cruise at the current speed")
+	check(is_equal_approx(float(bike.get("_cruise_speed")), 22.0), "cruise locks the speed it was set at")
+	var held := float(bike.speed)
+	for _i in 24:
+		bike.call("_drive", 0.016)
+	check(absf(bike.speed - held) < 0.8, "cruise holds speed without the throttle held")
+	Input.action_press("brake")
+	bike.call("_drive", 0.016)
+	Input.action_release("brake")
+	check(not bool(bike.get("cruise_on")), "brake cancels cruise")
+	bike.speed = 4.0
+	Input.action_press("cruise")
+	bike.call("_drive", 0.016)
+	Input.action_release("cruise")
+	check(not bool(bike.get("cruise_on")), "cruise does not engage at walking pace")
 
 	print("handling/traffic self-check: %d failures" % failures)
 	quit(1 if failures > 0 else 0)
