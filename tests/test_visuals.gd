@@ -311,12 +311,9 @@ func _run() -> void:
 	var approach_inland := _count_inland_verge_trees(approach, path, approach_chunk)
 	check(approach_inland > 4, "the main road near the scenic turnoff still has trees (%d)" % approach_inland)
 	approach.free()
-	var spur_surface := viewpoint.get_node("RoadSurface") as MeshInstance3D
-	var spur_aabb: AABB = spur_surface.mesh.get_aabb()
-	# Far wider than the 16 m carriageway on its own: the spur and its parking
-	# platform are built into the same ribbon, not bolted on as a separate mesh.
-	check(spur_aabb.size.x > 60.0, "the spur road is part of the chunk's road surface (%.0f m wide)" % spur_aabb.size.x)
-	check(spur_aabb.size.y > 8.0, "the spur road climbs away from the carriageway (%.0f m)" % spur_aabb.size.y)
+	var spur_surface := viewpoint.get_node_or_null("SpurSurface") as MeshInstance3D
+	check(spur_surface != null, "the climb is its own scenic ribbon, not mixed into the highway")
+	check(str(spur_surface.get_meta("corridor")) == "scenic", "the unused climb can be hidden from the bottom road")
 	# The furniture that makes the parking a place rather than a slab. Nothing
 	# guarded this, so resizing the platform could have silently emptied it and
 	# the only symptom would have been a screenshot nobody took.
@@ -363,6 +360,11 @@ func _run() -> void:
 	viewpoint.call("apply_corridor", false, true)
 	var lake_mesh := viewpoint.get_node_or_null("ViewpointLake") as Node3D
 	check(lake_mesh != null and not lake_mesh.visible, "the main road does not draw the unused scenic basin")
+	var unused_spur := viewpoint.get_node_or_null("SpurSurface") as Node3D
+	check(unused_spur != null, "the climb has its own scenic ribbon")
+	check(not unused_spur.visible, "the main road does not draw the unused scenic tarmac")
+	var unused_rail := viewpoint.get_node_or_null("SpurDetails") as Node3D
+	check(unused_rail == null or not unused_rail.visible, "the main road does not draw the unused scenic fence")
 	var highway_shown := false
 	for child in viewpoint.get_children():
 		if str(child.get_meta("corridor", "")) == "highway" and bool(child.visible):

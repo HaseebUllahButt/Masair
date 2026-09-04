@@ -746,6 +746,9 @@ func _build_highway_props_incremental() -> void:
 		_build_junction()
 		if not await _keep_streaming():
 			return
+		_build_highway_spur_screen()
+		if not await _keep_streaming():
+			return
 	if _on_lake:
 		await _plant_inland_carriageway_incremental()
 	else:
@@ -919,6 +922,7 @@ func _build_highway_props() -> void:
 		_build_distant_scenery()
 	if _on_spur:
 		_build_junction()
+		_build_highway_spur_screen()
 	else:
 		_build_set_piece()
 	_commit_props()
@@ -1606,6 +1610,7 @@ func _finish_ribbon(
 	hard: LowPoly, road: LowPoly, soft_left: LowPoly, soft_right: LowPoly, z0: float
 ) -> void:
 	_prepare_ribbon(hard, road, z0)
+	_commit_spur_meshes(z0)
 	_commit_hard_ribbon(hard)
 	_commit_road_ribbon(road)
 	_commit_terrain_ribbon(soft_left, "Terrain")
@@ -1623,13 +1628,11 @@ func _finish_ribbon_incremental(
 	if not await _keep_streaming():
 		return
 	if _on_spur:
-		_build_spur_ribbon(hard, road, z0, 0, 6, false)
+		_build_decel_lane(hard, z0)
+		_build_gore_hatch(hard, z0)
 		if not await _keep_streaming():
 			return
-		_build_spur_ribbon(hard, road, z0, 6, 6, false)
-		if not await _keep_streaming():
-			return
-		_finish_spur_ribbon(hard, z0)
+		_commit_spur_meshes(z0)
 		if not await _keep_streaming():
 			return
 	# Open-coast sea sheet is for the highway ride. On the scenic spur it sits
@@ -1654,9 +1657,34 @@ func _finish_ribbon_incremental(
 func _prepare_ribbon(hard: LowPoly, road: LowPoly, z0: float) -> void:
 	_build_markings(hard, z0)
 	if _on_spur:
-		_build_spur_ribbon(hard, road, z0)
+		# Junction paint stays on the highway ribbon so the exit is still readable
+		# after the unused climb is culled.
+		_build_decel_lane(hard, z0)
+		_build_gore_hatch(hard, z0)
 	if theme == Env.COAST and not _on_spur:
 		_build_sea(hard, z0)
+
+
+func _commit_spur_meshes(z0: float) -> void:
+	## Spur tarmac and the drop barrier are their own meshes, tagged scenic, so
+	## staying on the carriageway can hide the unused climb. Mixing them into
+	## RoadSurface left a fenced empty road hanging over the verge.
+	if not _on_spur:
+		return
+	var spur_hard := LowPoly.new()
+	var spur_road := LowPoly.new()
+	_build_spur_ribbon(spur_hard, spur_road, z0, 0, STEPS, false)
+	_build_platform_bays(spur_hard, z0)
+	_build_spur_barrier(spur_hard, z0)
+	var from_index := get_child_count()
+	var details: MeshInstance3D = spur_hard.commit_to(self, "SpurDetails")
+	if details:
+		details.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var surface: MeshInstance3D = spur_road.commit_to(self, "SpurSurface")
+	if surface:
+		surface.material_override = _road_material()
+		surface.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_tag_new_children(from_index, "scenic")
 
 
 func _commit_hard_ribbon(hard: LowPoly) -> void:
@@ -3614,11 +3642,14 @@ func _scenery_country() -> void:
 	## is meant to feel like nobody lives out here.
 	var z0: float = float(chunk_index) * LENGTH
 
-	# Post-and-rail fence hugging both verges.
+	# Post-and-rail fence hugging both verges. The scenic-side verge is the
+	# exit: a field fence there is the unused climb's barrier seen from below.
 	var fz := z0
 	var fseg := 0
 	while fz < z0 + LENGTH - 0.01:
 		for side in [-1.0, 1.0]:
+			if _on_spur and is_equal_approx(side, _vp_side):
+				continue
 			var lx: float = side * (HALF_WIDTH + 4.0)
 			_cube(fz, lx, Vector3(0.12, 1.15, 0.12), _pal["rail"])
 			# Rails span two post bays (8 m), the way real post-and-rail runs do,
@@ -4199,8 +4230,6 @@ func _build_spur_ribbon(
 
 func _finish_spur_ribbon(hard: LowPoly, z0: float) -> void:
 	_build_platform_bays(hard, z0)
-	_build_decel_lane(hard, z0)
-	_build_gore_hatch(hard, z0)
 	_build_spur_barrier(hard, z0)
 
 
@@ -4431,6 +4460,47 @@ func _build_spur_furniture() -> void:
 			_deck_cube(z, inner, Vector3(0.1, 0.95, 0.1), rail.lightened(0.2), _spur_yaw(z), 0.0)
 			_deck_lamp(z, inner, Vector3(0.1, 0.09, 0.05), REFLECTOR, 0.8)
 		z += 3.0
+
+
+func _build_highway_spur_screen() -> void:
+	## Trees between the carriageway and the unused climb. Once the scenic
+	## corridor is culled, this is what the bottom road looks at instead of a
+	## fenced empty spur.
+	if not _on_spur:
+		return
+	var z0: float = float(chunk_index) * LENGTH
+	for station in 5:
+		var z: float = z0 + 4.0 + float(station) * 7.2
+		if z >= z0 + LENGTH:
+			continue
+		var divergence: float = float(_path.spur_divergence(z))
+		if divergence < 0.10:
+			continue
+		var half: float = float(_path.spur_half_width(z))
+		if half < 2.4:
+			continue
+		var inner: float = _vp_side * (float(_path.spur_offset(z)) - half - 4.2)
+		if absf(inner) <= HALF_WIDTH + 2.4:
+			continue
+		if _on_tarmac(z, inner, 1.6):
+			continue
+		var height: float = _rng.randf_range(9.0, 15.0)
+		var species: int = Flora.CONIFER if _vp_theme == Env.MOUNTAIN else Flora.BROADLEAF
+		if _vp_theme == Env.FOREST:
+			species = Flora.CONIFER if _rng.randf() < 0.55 else Flora.BROADLEAF
+		if _vp_theme == Env.COAST:
+			var s := _rng.randf_range(1.8, 3.4)
+			_blob(
+				z,
+				inner,
+				Vector3(s * 1.8, s * 0.8, s * 1.5),
+				Color("6a8070").lerp(Color("9a8868"), _rng.randf()),
+				0.0,
+				true,
+				true
+			)
+			continue
+		_tree(species, z, inner, height, Color("2a4634").lerp(Color("4a6840"), _rng.randf() * 0.35), true)
 
 
 func _build_junction() -> void:
