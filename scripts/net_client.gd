@@ -53,6 +53,9 @@ func _load_cfg() -> void:
 	if cfg.load(CFG_PATH) == OK:
 		rider_name = str(cfg.get_value("net", "name", rider_name))
 		server_url = str(cfg.get_value("net", "url", server_url))
+	else:
+		# a name you never had to type — one less step before you're in
+		rider_name = "rider %d" % randi_range(100, 999)
 
 
 func _save_cfg() -> void:

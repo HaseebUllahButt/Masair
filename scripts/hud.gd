@@ -784,6 +784,11 @@ func _park_on_road() -> void:
 func _show_initial_menu() -> void:
 	if not _ride_started:
 		_show_start_menu()
+		# Web players almost certainly arrived at a host's address — put the
+		# join box on the table instead of hiding it behind a menu fold.
+		if OS.has_feature("web") and _race_panel and not _race_panel.visible:
+			_race_panel.visible = true
+			_refresh_race_panel()
 
 
 func _start_ride() -> void:
@@ -1140,6 +1145,7 @@ func _update_race_pos() -> void:
 			ahead += 1
 			lead_gap = maxf(lead_gap, d - my_dist)
 	var place := ahead + 1
+	var progress := "%.1f/%.1f km" % [my_dist / 1000.0, _race_dist / 1000.0]
 	var suffix := ""
 	if _my_finish_place > 0:
 		suffix = "  ·  done P%d" % _my_finish_place
@@ -1147,7 +1153,7 @@ func _update_race_pos() -> void:
 		suffix = "  ·  leader"
 	elif lead_gap > 0.0:
 		suffix = "  ·  -%d m" % int(lead_gap)
-	_pos_label.text = "P%d/%d · %d km%s" % [place, count, int(_race_dist / 1000.0), suffix]
+	_pos_label.text = "P%d/%d · %s%s" % [place, count, progress, suffix]
 
 
 func _build_race_hud() -> void:

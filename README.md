@@ -62,17 +62,26 @@ One friend hosts; everyone else plays in a browser.
 1. Build the web export (above).
 2. `./tools/host_server.sh` — serves the game on `:8000` and the race lobby
    on `:8001`.
-3. Forward TCP ports `8000-8001` on the router — or skip forwarding entirely
-   on LAN / Tailscale.
-4. Friends open `http://<host-ip>:8000`. The page derives the websocket
-   address from the URL bar — nobody types an address.
+3. Give friends an address they can reach. Easiest to hardest:
+   - **Same network / Tailscale:** nothing to forward — use the LAN or
+     tailnet IP.
+   - **playit.gg tunnel:** `playit` tunnels TCP without touching the router —
+     share the `xxx.playit.gg:port` it prints for the web port, and run a
+     second tunnel for the ws port (or give friends the ws address the page
+     already pre-fills for them).
+   - **Router forward:** TCP `8000-8001` to the host machine.
+4. Friends open `http://<host>:8000`. The page derives the websocket address
+   from the URL bar — nobody types an address.
 
-**Everyone:** menu → **RACE FRIENDS** → name → **JOIN** → **READY**. The lobby
-leader hits **START RACE**; every client loads the same road (shared world
-seed), waits on a 3-2-1, and the first rider to 5 km wins. Crashing restarts
-you at kilometre zero on the *same* road — you can lose a race, not your lobby.
-Joining mid-race loads the same road and rides along (marked DNF). Race length
-is set server-side: `tools/host_server.sh build/web 8000 --dist=10000`.
+**Everyone:** the join box is already open on the web menu — name is
+pre-filled, hit **JOIN**, then **READY**. The lobby leader hits **START RACE**;
+every client loads the same road (shared world seed), waits on a 3-2-1, and
+the first rider to 5 km wins. Riders are real traffic to each other: clip a
+friend and you both go down; thread past them and it pays near-miss credits.
+Crashing restarts you at kilometre zero on the *same* road — you can lose a
+race, not your lobby. Joining mid-race loads the same road and rides along
+(marked DNF). Race length is set server-side:
+`tools/host_server.sh build/web 8000 --dist=10000`.
 
 Traffic is per-client in this version — close racing, not shared traffic.
 
