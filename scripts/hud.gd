@@ -824,8 +824,9 @@ func _load_type() -> void:
 
 
 func _ttf(path: String) -> FontFile:
-	var font := FontFile.new()
-	font.load_dynamic_font(path)
+	# load() resolves the import remap — the exported build ships the imported
+	# .fontdata, not the raw .ttf, so a runtime file read would find nothing.
+	var font: FontFile = load(path)
 	font.antialiasing = TextServer.FONT_ANTIALIASING_GRAY
 	return font
 
