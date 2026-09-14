@@ -7,7 +7,7 @@ extends SceneTree
 const MotorcycleVisualGD: GDScript = preload("res://scripts/motorcycle_visual.gd")
 const BikeCatalog := preload("res://scripts/bike_catalog.gd")
 
-var out_dir: String = "/tmp/masair-bikes"
+var out_dir: String = "/tmp/splendor-bikes"
 
 
 func _initialize() -> void:

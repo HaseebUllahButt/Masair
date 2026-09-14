@@ -2,7 +2,7 @@ extends SceneTree
 ## Dev tool: boots the real game, rides it, and writes PNG frames to disk.
 ##
 ##   godot --path . --script res://tools/screenshot.gd -- --out=/tmp/shots --shots=6 --gap=4
-##   godot --path . --script res://tools/screenshot.gd -- --catalog --out=/tmp/masair-gallery
+##   godot --path . --script res://tools/screenshot.gd -- --catalog --out=/tmp/splendor-gallery
 ##
 ## Run it through gamescope so it never steals focus or makes noise:
 ##
@@ -13,7 +13,7 @@ extends SceneTree
 ## without a human at the keyboard. It drives the actual main scene through the
 ## same input actions a player uses, so what it captures is what ships.
 
-const DEFAULT_OUT := "/tmp/masair-shots"
+const DEFAULT_OUT := "/tmp/splendor-shots"
 const RoadChunkGD: GDScript = preload("res://scripts/road_chunk.gd")
 const BikeCatalog := preload("res://scripts/bike_catalog.gd")
 

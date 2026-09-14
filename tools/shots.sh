@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Capture Masair frames without a window, focus steal or audio.
+# Capture Splendor frames without a window, focus steal or audio.
 #
 #   tools/shots.sh OUTDIR [mode] [extra screenshot.gd args...]
 set -euo pipefail

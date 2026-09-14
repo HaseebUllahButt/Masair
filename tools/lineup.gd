@@ -8,7 +8,7 @@ extends SceneTree
 const TrafficCarGD: GDScript = preload("res://scripts/traffic_car.gd")
 const LowPolyGD: GDScript = preload("res://scripts/low_poly.gd")
 
-var out_dir: String = "/tmp/masair-lineup"
+var out_dir: String = "/tmp/splendor-lineup"
 
 
 func _initialize() -> void:

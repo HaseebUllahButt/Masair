@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-## Export Masair for Windows and build MasairSetup-*.exe (Inno Setup via Wine).
+## Export Splendor for Windows and build SplendorSetup-*.exe (Inno Setup via Wine).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/build/windows"
 PAYLOAD="$BUILD/payload"
-OUT_ZIP="$BUILD/Masair-windows-x86_64.zip"
+OUT_ZIP="$BUILD/Splendor-windows-x86_64.zip"
 CACHE="$ROOT/packaging/windows/.cache"
 GODOT_WIN_ZIP_URL="https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_win64.exe.zip"
 GODOT_WIN_TEMPLATE="$CACHE/Godot_v4.7.1-stable_win64.exe"
-INNO_DIR="${HOME}/.local/share/masair-tools/inno"
+INNO_DIR="${HOME}/.local/share/splendor-tools/inno"
 INNO_URL="https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
 VERSION="1.1.0"
 PRESET_CFG="$ROOT/export_presets.cfg"
@@ -24,11 +24,11 @@ need_cmd() {
 }
 
 ensure_ico() {
-	local ico="$ROOT/packaging/windows/masair.ico"
+	local ico="$ROOT/packaging/windows/splendor.ico"
 	[[ -f "$ico" ]] && return
 	need_cmd rsvg-convert
 	need_cmd magick
-	log "generating packaging/windows/masair.ico"
+	log "generating packaging/windows/splendor.ico"
 	local tmp
 	tmp="$(mktemp -d)"
 	for s in 16 32 48 64 128 256; do
@@ -114,18 +114,18 @@ export_game() {
 	log "exporting Windows Desktop release"
 	rm -rf "$PAYLOAD"
 	mkdir -p "$PAYLOAD" "$BUILD"
-	godot --headless --path "$ROOT" --export-release "Windows Desktop" "$PAYLOAD/Masair.exe"
-	[[ -f "$PAYLOAD/Masair.exe" ]] || {
-		echo "export failed — Masair.exe missing" >&2
+	godot --headless --path "$ROOT" --export-release "Windows Desktop" "$PAYLOAD/Splendor.exe"
+	[[ -f "$PAYLOAD/Splendor.exe" ]] || {
+		echo "export failed — Splendor.exe missing" >&2
 		exit 1
 	}
-	cp -a "$PAYLOAD/Masair.exe" "$BUILD/Masair.exe"
-	if [[ -f "$PAYLOAD/Masair.pck" ]]; then
-		cp -a "$PAYLOAD/Masair.pck" "$BUILD/Masair.pck"
+	cp -a "$PAYLOAD/Splendor.exe" "$BUILD/Splendor.exe"
+	if [[ -f "$PAYLOAD/Splendor.pck" ]]; then
+		cp -a "$PAYLOAD/Splendor.pck" "$BUILD/Splendor.pck"
 	fi
 	# Copy any side-by-side DLLs Godot may emit
-	find "$PAYLOAD" -maxdepth 1 -type f ! -name 'Masair.exe' -exec cp -a {} "$BUILD"/ \;
-	log "export ok ($(du -h "$PAYLOAD/Masair.exe" | awk '{print $1}'))"
+	find "$PAYLOAD" -maxdepth 1 -type f ! -name 'Splendor.exe' -exec cp -a {} "$BUILD"/ \;
+	log "export ok ($(du -h "$PAYLOAD/Splendor.exe" | awk '{print $1}'))"
 }
 
 make_zip() {
@@ -144,8 +144,8 @@ make_installer() {
 	need_cmd wine
 	log "compiling Inno Setup installer with $iscc"
 	# ISCC resolves Source paths relative to the .iss file location
-	wine "$iscc" "$(winepath -w "$ROOT/packaging/windows/masair.iss")"
-	local setup="$BUILD/MasairSetup-${VERSION}.exe"
+	wine "$iscc" "$(winepath -w "$ROOT/packaging/windows/splendor.iss")"
+	local setup="$BUILD/SplendorSetup-${VERSION}.exe"
 	[[ -f "$setup" ]] || {
 		echo "installer missing at $setup" >&2
 		ls -la "$BUILD" >&2 || true
@@ -162,7 +162,7 @@ main() {
 	make_zip
 	make_installer
 	log "done"
-	ls -lh "$BUILD/Masair.exe" "$OUT_ZIP" "$BUILD/MasairSetup-${VERSION}.exe"
+	ls -lh "$BUILD/Splendor.exe" "$OUT_ZIP" "$BUILD/SplendorSetup-${VERSION}.exe"
 }
 
 main "$@"

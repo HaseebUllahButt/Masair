@@ -10,7 +10,7 @@ signal currency_changed(balance: int)
 signal garage_changed
 
 const BikeCatalog := preload("res://scripts/bike_catalog.gd")
-const SAVE_PATH := "user://masair_save.cfg"
+const SAVE_PATH := "user://splendor_save.cfg"
 const COMBO_WINDOW := 2.6
 const CREDIT_DISTANCE := 70.0
 

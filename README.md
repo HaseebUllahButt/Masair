@@ -1,4 +1,4 @@
-# Masair
+# Splendor
 
 Fast low-poly first-person motorcycle riding game (Godot 4.7). Ride an endless
 streaming road past traffic, forests, coastline and mountains — day, dusk or
@@ -8,19 +8,19 @@ credits.
 ## Play on Windows
 
 1. Open the latest [GitHub Release](https://github.com/HaseebUllahButt/Masair/releases/latest).
-2. Download **`MasairSetup-1.1.0.exe`** (or the newest `MasairSetup-*.exe`).
+2. Download **`SplendorSetup-1.1.0.exe`** (or the newest `SplendorSetup-*.exe`).
 3. Run the installer. Choose an install folder (default is fine).
 4. Optionally tick **Create a desktop icon**.
-5. Finish, then launch **Masair** from the Start Menu or desktop.
+5. Finish, then launch **Splendor** from the Start Menu or desktop.
 
 No Godot install needed. The game is 64-bit Windows.
 
-**Portable option:** download `Masair-windows-x86_64.zip`, unzip it, and run
-`Masair.exe` next to `Masair.pck`. Keep those two files in the same folder.
+**Portable option:** download `Splendor-windows-x86_64.zip`, unzip it, and run
+`Splendor.exe` next to `Splendor.pck`. Keep those two files in the same folder.
 
 ### Music (optional)
 
-On the café menu (top right), pick a music folder. Masair plays **MP3 / OGG /
+On the café menu (top right), pick a music folder. Splendor plays **MP3 / OGG /
 WAV** natively. **FLAC / M4A** work if [ffmpeg](https://ffmpeg.org/download.html)
 is on your PATH — tracks decode in the background to a CD-quality cache, then
 crossfade so a switch never stalls the ride. Playback resumes where you left
@@ -67,9 +67,9 @@ progression and handling.
 
 Writes under `build/windows/`:
 
-- `MasairSetup-1.1.0.exe` — Inno Setup installer
-- `Masair-windows-x86_64.zip` — portable zip
-- `Masair.exe` + `Masair.pck` — raw export
+- `SplendorSetup-1.1.0.exe` — Inno Setup installer
+- `Splendor-windows-x86_64.zip` — portable zip
+- `Splendor.exe` + `Splendor.pck` — raw export
 
 Needs `godot`, `curl`, `unzip`, `zip`, `wine`. First run downloads the Godot
 Windows editor binary (export template) and Inno Setup 6.

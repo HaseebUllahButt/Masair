@@ -1,7 +1,7 @@
 shader_type sky;
 render_mode use_debanding;
 
-// Masair sky.
+// Splendor sky.
 //
 // Analytic: a smooth atmosphere (not a striped three-stop ramp), one celestial
 // body, domain-warped cloud, a distant bank, and a real starfield at night.

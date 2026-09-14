@@ -17,6 +17,6 @@ ios/
 build/
 packaging/windows/.cache/
 packaging/windows/*.ico
-!packaging/windows/masair.ico
-!packaging/windows/masair.iss
+!packaging/windows/splendor.ico
+!packaging/windows/splendor.iss
 

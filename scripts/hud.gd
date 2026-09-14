@@ -301,7 +301,7 @@ void fragment() {
 	_start_menu.add_child(stack)
 
 	stack.add_child(_menu_label("OPEN COUNTRY", 13, Color("e8b089"), _font_kicker))
-	var title := _menu_label("MASAIR", 78, Color("f4efe4"), _font_display)
+	var title := _menu_label("SPLENDOR", 78, Color("f4efe4"), _font_display)
 	title.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45))
 	title.add_theme_constant_override("shadow_offset_x", 0)
 	title.add_theme_constant_override("shadow_offset_y", 4)

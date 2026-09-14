@@ -1,10 +1,10 @@
-; Masair Windows installer — Inno Setup 6
+; Splendor Windows installer — Inno Setup 6
 ; Built by tools/build_windows.sh
 
-#define MyAppName "Masair"
+#define MyAppName "Splendor"
 #define MyAppVersion "1.1.0"
-#define MyAppPublisher "Masair"
-#define MyAppExeName "Masair.exe"
+#define MyAppPublisher "Splendor"
+#define MyAppExeName "Splendor.exe"
 #define MyAppURL "https://github.com/haseeb"
 
 [Setup]
@@ -19,8 +19,8 @@ DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 LicenseFile=
 OutputDir=..\..\build\windows
-OutputBaseFilename=MasairSetup-{#MyAppVersion}
-SetupIconFile=masair.ico
+OutputBaseFilename=SplendorSetup-{#MyAppVersion}
+SetupIconFile=splendor.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64
 SolidCompression=yes

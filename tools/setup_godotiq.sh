@@ -20,5 +20,5 @@ uvx godotiq install-addon "$ROOT"
 echo
 echo "Done. Next steps:"
 echo "  1. Restart Cursor (or toggle the godotiq MCP server off/on)"
-echo "  2. Open Masair in Godot 4.x and enable Project → Project Settings → Plugins → GodotIQ"
+echo "  2. Open Splendor in Godot 4.x and enable Project → Project Settings → Plugins → GodotIQ"
 echo "  3. In Cursor, pick Grok 4.5 and ask: Ping GodotIQ"

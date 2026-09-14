@@ -1,8 +1,8 @@
-# Masair
+# Splendor
 
 ## Vision
 
-Masair is a fast, low-poly motorcycle riding game inspired by the feel of Café Racer: first-person riding, satisfying motorcycle control, moving traffic, and an endless road that stays interesting through visual and route variety.
+Splendor is a fast, low-poly motorcycle riding game inspired by the feel of Café Racer: first-person riding, satisfying motorcycle control, moving traffic, and an endless road that stays interesting through visual and route variety.
 
 The player should be able to launch the game and immediately enjoy riding. The game is about speed, flow, near misses, corners, and the changing world ahead—not about story or complicated systems.
 
@@ -45,14 +45,14 @@ The player should feel that the ride is continuously moving through a world, eve
 - No missions or quests.
 - No open-world walking.
 - No visible character customization.
-- No multiplayer for the initial version.
+- Multiplayer is now in scope (ride-together); keep it from complicating the core single-player ride.
 - No complex motorcycle simulation that hurts playability.
 
 ## Art direction
 
 - Original low-poly style inspired by the simplicity and atmosphere of Café Racer.
 - Readable shapes and bold color palettes over high-detail materials.
-- Motorcycle and important visual identity should become original Masair content.
+- Motorcycle and important visual identity should become original Splendor content.
 - Premade models and assets may be used during private prototyping when they accelerate development.
 
 ## Performance direction
