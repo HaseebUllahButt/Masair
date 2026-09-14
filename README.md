@@ -42,6 +42,40 @@ off, including after quitting the game.
 | Esc / P | Pause |
 | M | Back to the ride menu while paused |
 
+## Play in a browser (no install)
+
+The web build runs anywhere a browser has WebGL2 — no Godot and no strong GPU
+needed (the project renders with the Compatibility renderer).
+
+1. Install the Godot 4.7.2 export templates once (Godot editor → Editor →
+   Manage Export Templates, or drop `Godot_v4.7.2-stable_export_templates.tpz`
+   into `~/.local/share/godot/export_templates/`).
+2. `godot --headless --path . --export-release "Web" build/web/index.html`
+3. `build/web/` is a static site — host it anywhere, or let SplendorServer
+   serve it (below). Serve over plain `http://` so in-game `ws://` works.
+
+## Race friends
+
+One friend hosts; everyone else plays in a browser.
+
+**Host:**
+1. Build the web export (above).
+2. `./tools/host_server.sh` — serves the game on `:8000` and the race lobby
+   on `:8001`.
+3. Forward TCP ports `8000-8001` on the router — or skip forwarding entirely
+   on LAN / Tailscale.
+4. Friends open `http://<host-ip>:8000`. The page derives the websocket
+   address from the URL bar — nobody types an address.
+
+**Everyone:** menu → **RACE FRIENDS** → name → **JOIN** → **READY**. The lobby
+leader hits **START RACE**; every client loads the same road (shared world
+seed), waits on a 3-2-1, and the first rider to 5 km wins. Crashing restarts
+you at kilometre zero on the *same* road — you can lose a race, not your lobby.
+Joining mid-race loads the same road and rides along (marked DNF). Race length
+is set server-side: `tools/host_server.sh build/web 8000 --dist=10000`.
+
+Traffic is per-client in this version — close racing, not shared traffic.
+
 ## Run from source (Linux / Godot)
 
 ```bash

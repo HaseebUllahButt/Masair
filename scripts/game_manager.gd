@@ -30,6 +30,7 @@ var _combo_timer: float = 0.0
 var _next_credit_distance: float = CREDIT_DISTANCE
 var _unbanked_credits: int = 0
 var persist_progress: bool = true
+var race_seed: int = -1 ## >= 0 while a shared-road race is live
 
 
 func _ready() -> void:
@@ -111,8 +112,13 @@ func restart() -> void:
 	# reset_run() has to happen before reset_world() so the streamer rebuilds
 	# chunk 0 rather than the overlook the bike just left.
 	var path := get_node_or_null("/root/RoadPath")
-	if path and path.has_method("randomize_world"):
-		path.call("randomize_world")
+	if path:
+		# In a race every rider shares the server's world seed — R respawns on
+		# the same road, it must not randomize into a different world.
+		if race_seed >= 0 and path.has_method("set_world_seed"):
+			path.call("set_world_seed", race_seed)
+		elif path.has_method("randomize_world"):
+			path.call("randomize_world")
 	if _player and _player.has_method("reset_run"):
 		_player.call("reset_run")
 	if scene:
@@ -130,6 +136,19 @@ func restart() -> void:
 	if _player:
 		_player.reset_physics_interpolation()
 	restarted.emit()
+
+
+func in_race() -> bool:
+	return race_seed >= 0
+
+
+func begin_race(seed: int) -> void:
+	race_seed = seed
+	restart()
+
+
+func end_race() -> void:
+	race_seed = -1
 
 
 func bank_progress() -> void:
