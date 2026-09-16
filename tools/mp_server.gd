@@ -31,6 +31,7 @@ const MIME := {
 	"wav": "audio/wav",
 	"woff2": "font/woff2",
 }
+const GZIP_EXTS := ["html", "js", "wasm", "pck", "css", "json", "svg"]
 const MAX_HTTP_HEAD := 16384
 const HTTP_READ_TIMEOUT_S := 5.0
 const JOIN_TIMEOUT_S := 10.0
@@ -70,6 +71,7 @@ func _initialize() -> void:
 		printerr("ws listen failed on %d" % ws_port)
 		quit(1)
 		return
+	_precompress_dir(_webroot)
 	print("SplendorServer up: files http://0.0.0.0:%d  ws :%d  root=%s  race=%dm" % [
 		http_port, ws_port, _webroot, int(_race_dist)])
 
@@ -143,19 +145,61 @@ func _serve_http(sock: StreamPeerTCP, head: String) -> void:
 	if not FileAccess.file_exists(file_path):
 		_send_http(sock, 404, "text/plain", "not found".to_utf8_buffer())
 		return
+	var encoding := ""
+	if _accepts_gzip(head) and FileAccess.file_exists(file_path + ".gz"):
+		file_path += ".gz"
+		encoding = "gzip"
 	var f := FileAccess.open(file_path, FileAccess.READ)
 	if f == null:
 		_send_http(sock, 500, "text/plain", "read error".to_utf8_buffer())
 		return
 	var body := f.get_buffer(f.get_length())
 	var ext := clean.get_extension().to_lower()
-	_send_http(sock, 200, MIME.get(ext, "application/octet-stream"), body)
+	_send_http(sock, 200, MIME.get(ext, "application/octet-stream"), body, encoding)
 
 
-func _send_http(sock: StreamPeerTCP, code: int, mime: String, body: PackedByteArray) -> void:
+func _accepts_gzip(head: String) -> bool:
+	for l in head.split("\r\n"):
+		if l.to_lower().begins_with("accept-encoding:"):
+			return "gzip" in l.to_lower()
+	return false
+
+
+func _precompress_dir(dir_path: String) -> void:
+	var d := DirAccess.open(dir_path)
+	if d == null:
+		return
+	for sub in d.get_directories():
+		_precompress_dir(dir_path.path_join(sub))
+	for name in d.get_files():
+		var ext := name.get_extension().to_lower()
+		if ext == "gz" or not (ext in GZIP_EXTS):
+			continue
+		var src := dir_path.path_join(name)
+		var dst := src + ".gz"
+		if FileAccess.file_exists(dst) and FileAccess.get_modified_time(dst) >= FileAccess.get_modified_time(src):
+			continue
+		var f := FileAccess.open(src, FileAccess.READ)
+		if f == null:
+			continue
+		var raw := f.get_buffer(f.get_length())
+		f = null
+		var gz := raw.compress(FileAccess.COMPRESSION_GZIP)
+		var out := FileAccess.open(dst, FileAccess.WRITE)
+		if out == null:
+			continue
+		out.store_buffer(gz)
+		out = null
+		print("gzip: %s (%d KB -> %d KB)" % [src, raw.size() / 1024, gz.size() / 1024])
+
+
+func _send_http(sock: StreamPeerTCP, code: int, mime: String, body: PackedByteArray, encoding: String = "") -> void:
 	var reason: String = {200: "OK", 403: "Forbidden", 404: "Not Found", 431: "Header Too Large", 500: "Error"}.get(code, "OK")
-	var head := "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\nCross-Origin-Opener-Policy: same-origin\r\nCross-Origin-Embedder-Policy: require-corp\r\n\r\n" % [
-		code, reason, mime, body.size()]
+	var enc_head := ""
+	if not encoding.is_empty():
+		enc_head = "Content-Encoding: %s\r\n" % encoding
+	var head := "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\n%sConnection: close\r\nVary: Accept-Encoding\r\nCross-Origin-Opener-Policy: same-origin\r\nCross-Origin-Embedder-Policy: require-corp\r\n\r\n" % [
+		code, reason, mime, body.size(), enc_head]
 	sock.put_data(head.to_ascii_buffer())
 	sock.put_data(body)
 	# give the socket a moment to flush before disconnecting
