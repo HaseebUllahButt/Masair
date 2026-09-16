@@ -185,15 +185,16 @@ func _on_msg(m: Dictionary) -> void:
 
 func _send_pose() -> void:
 	var player: Node = get_tree().root.find_child("Player", true, false)
-	var game := get_node_or_null("/root/GameManager")
 	if player == null:
 		return
+	# Race distance is road distance: distance_m carries near-miss bonus_m,
+	# which would let credits shorten a race that is meant to run to --dist.
 	_send({"t": "pose", "d": [
 		_snapped(player.get("track_z")), _snapped(player.get("lateral")),
 		_snapped(player.get("_heading")), _snapped(player.get("lean")),
 		_snapped(player.get("wheelie")), _snapped(player.get("speed")),
 		1.0 if bool(player.get("alive")) else 0.0,
-		_snapped(game.distance_m if game else 0.0),
+		_snapped(maxf(float(player.get("track_z")), 0.0)),
 	]})
 
 
