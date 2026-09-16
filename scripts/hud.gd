@@ -70,6 +70,9 @@ var _my_finish_place: int = 0
 var _pos_label: Label
 var _results_panel: PanelContainer
 var _results_label: Label
+var _touch_controls: Control
+var _touch_held: Dictionary = {}
+var _touch_seen: bool = false
 
 const MOOD_NAMES := ["GOLDEN DUSK", "DAYLIGHT", "MIDNIGHT"]
 const DIFFICULTY_NAMES := ["OPEN ROAD", "SUNDAY RUN", "THE TON"]
@@ -91,7 +94,10 @@ func _ready() -> void:
 	if confirm_panel:
 		confirm_panel.visible = false
 	flash_label.modulate.a = 0.0
-	hint_label.text = "W/S ride   ·   A/D lean   ·   H horn   ·   C cruise   ·   T light   ·   R restart"
+	if _touch_controls_wanted():
+		_build_touch_controls()
+	hint_label.text = _ride_hint()
+	crash_panel.gui_input.connect(_on_crash_panel_input)
 	_music = get_node_or_null("/root/MusicPlayer")
 	_build_currency_hud()
 	_build_start_menu()
@@ -173,10 +179,11 @@ func _update_prompt() -> void:
 	var seated: bool = bool(_player.get("seated"))
 	var can_sit: bool = _player.has_method("can_sit") and bool(_player.call("can_sit"))
 	var wanted := ""
-	if seated:
-		wanted = "A/D  turn   ·   W/S  look up and down   ·   F  back to the bike"
-	elif can_sit:
-		wanted = "F  get off and sit down"
+	if _touch_controls == null:
+		if seated:
+			wanted = "A/D  turn   ·   W/S  look up and down   ·   F  back to the bike"
+		elif can_sit:
+			wanted = "F  get off and sit down"
 	if wanted == "":
 		if _prompt_shown:
 			_prompt_shown = false
@@ -248,12 +255,14 @@ func _on_currency(balance: int) -> void:
 
 func _on_crashed() -> void:
 	_clear_confirm_restart()
+	_release_touch_actions()
 	crash_panel.visible = true
 	crash_panel.modulate.a = 0.0
 	var d := int(_game.distance_m) if _game else 0
 	var n: int = _game.near_miss_count if _game else 0
 	var balance: int = int(_game.credits) if _game else 0
-	crash_label.text = "RIDE OVER\n\n%d m   ·   %d near misses   ·   CR %d\n\nR  ride again" % [d, n, balance]
+	var again := "TAP TO RIDE AGAIN" if _touch_controls else "R  ride again"
+	crash_label.text = "RIDE OVER\n\n%d m   ·   %d near misses   ·   CR %d\n\n%s" % [d, n, balance, again]
 
 
 func _on_near_miss(bonus: float, combo: int) -> void:
@@ -742,6 +751,7 @@ func _main_scene() -> Node:
 
 
 func _show_start_menu() -> void:
+	_release_touch_actions()
 	if _game:
 		_game.bank_progress()
 		_bike_index = _game.selected_bike
@@ -812,7 +822,7 @@ func _start_ride() -> void:
 	hud_root.visible = true
 	get_tree().paused = false
 	_hint = 6.0
-	hint_label.text = "W/S ride   ·   A/D lean   ·   Q/E look   ·   H horn   ·   C cruise   ·   F scenic bench   ·   T light   ·   R restart"
+	hint_label.text = _ride_hint()
 
 
 func _load_type() -> void:
@@ -864,6 +874,134 @@ func _style_hud_label(label: Label, font: Font, size: int) -> void:
 		return
 	label.add_theme_font_override("font", font)
 	label.add_theme_font_size_override("font_size", size)
+
+
+# -------------------------------------------------------------------- touch
+
+
+func _input(event: InputEvent) -> void:
+	## A real finger on the glass is the only reliable signal — iPads announce
+	## themselves as macOS and plenty of laptops carry touchscreens nobody
+	## steers with. Build the pads lazily on first touch, never on pure desktop.
+	if event is InputEventScreenTouch and event.pressed:
+		_touch_seen = true
+		if _touch_controls == null:
+			_build_touch_controls()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		_release_touch_actions()
+
+
+func _touch_controls_wanted() -> bool:
+	if _touch_seen:
+		return true
+	if OS.has_feature("web"):
+		return OS.has_feature("web_android") or OS.has_feature("web_ios")
+	return OS.has_feature("mobile")
+
+
+func _ride_hint() -> String:
+	if _touch_controls != null:
+		return "hold GAS to ride   ·   ‹ › lean   ·   MENU for the garage"
+	return "W/S ride   ·   A/D lean   ·   Q/E look   ·   H horn   ·   C cruise   ·   F scenic bench   ·   T light   ·   R restart"
+
+
+func _build_touch_controls() -> void:
+	## Lives inside hud_root, so the pads follow the ride HUD: gone in the menu,
+	## up while riding and through the countdown lights. HUD runs ALWAYS so the
+	## pads still take input while the countdown holds the tree paused.
+	_touch_controls = Control.new()
+	_touch_controls.name = "TouchControls"
+	_touch_controls.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_touch_controls.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_touch_controls.hidden.connect(_release_touch_actions)
+	hud_root.add_child(_touch_controls)
+
+	var steer := HBoxContainer.new()
+	steer.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT, Control.PRESET_MODE_MINSIZE, 24)
+	steer.add_theme_constant_override("separation", 16)
+	steer.add_child(_hold_pad("‹", &"steer_left", Vector2(132.0, 124.0), 54))
+	steer.add_child(_hold_pad("›", &"steer_right", Vector2(132.0, 124.0), 54))
+	_touch_controls.add_child(steer)
+
+	var pedals := VBoxContainer.new()
+	pedals.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT, Control.PRESET_MODE_MINSIZE, 24)
+	pedals.add_theme_constant_override("separation", 10)
+	var horn := _hold_pad("HORN", &"horn", Vector2(96.0, 48.0), 20)
+	horn.size_flags_horizontal = Control.SIZE_SHRINK_END
+	pedals.add_child(horn)
+	var pedal_row := HBoxContainer.new()
+	pedal_row.add_theme_constant_override("separation", 16)
+	pedal_row.add_child(_hold_pad("BRAKE", &"brake", Vector2(130.0, 124.0), 24))
+	pedal_row.add_child(_hold_pad("GAS", &"throttle", Vector2(158.0, 124.0), 30))
+	pedals.add_child(pedal_row)
+	_touch_controls.add_child(pedals)
+
+	var menu := _pad("MENU", Vector2(104.0, 42.0), 16)
+	menu.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	menu.position = Vector2(28.0, 96.0)
+	menu.pressed.connect(_on_touch_menu)
+	_touch_controls.add_child(menu)
+
+
+func _pad(copy: String, pad_size: Vector2, font_size: int) -> Button:
+	var pad := Button.new()
+	pad.text = copy
+	pad.custom_minimum_size = pad_size
+	pad.focus_mode = Control.FOCUS_NONE
+	pad.add_theme_font_override("font", _font_display)
+	pad.add_theme_font_size_override("font_size", font_size)
+	pad.add_theme_color_override("font_color", Color(0.96, 0.93, 0.86, 0.92))
+	var box := StyleBoxFlat.new()
+	box.bg_color = Color(0.04, 0.05, 0.07, 0.42)
+	box.border_color = Color(0.90, 0.68, 0.42, 0.50)
+	box.set_border_width_all(2)
+	box.set_corner_radius_all(16)
+	pad.add_theme_stylebox_override("normal", box)
+	var held := box.duplicate() as StyleBoxFlat
+	held.bg_color = Color(0.79, 0.47, 0.28, 0.58)
+	held.border_color = Color(1.0, 0.82, 0.55, 0.85)
+	pad.add_theme_stylebox_override("pressed", held)
+	return pad
+
+
+func _hold_pad(copy: String, action: StringName, pad_size: Vector2, font_size: int) -> Button:
+	var pad := _pad(copy, pad_size, font_size)
+	pad.button_down.connect(_pad_down.bind(action))
+	pad.button_up.connect(_pad_up.bind(action))
+	return pad
+
+
+func _pad_down(action: StringName) -> void:
+	_touch_held[action] = true
+	Input.action_press(action)
+
+
+func _pad_up(action: StringName) -> void:
+	_touch_held.erase(action)
+	Input.action_release(action)
+
+
+func _release_touch_actions() -> void:
+	## A pad's finger can be lost — panel opened over it, tab backgrounded —
+	## and a phantom held GAS is a crash on the next spawn. Release what we held.
+	for action in _touch_held:
+		Input.action_release(action)
+	_touch_held.clear()
+
+
+func _on_touch_menu() -> void:
+	_countdown_left = -1.0
+	_show_start_menu()
+
+
+func _on_crash_panel_input(event: InputEvent) -> void:
+	if _touch_controls == null or _game == null or not _game.is_crashed:
+		return
+	if event is InputEventScreenTouch and event.pressed:
+		_game.restart()
 
 
 # --------------------------------------------------------------------- race
@@ -1133,7 +1271,8 @@ func _update_race_pos() -> void:
 		_pos_label.visible = false
 		return
 	_pos_label.visible = true
-	var my_dist: float = _game.distance_m
+	# same number net_client reports: road distance, not distance_m + bonus
+	var my_dist: float = maxf(float(_player.get("track_z")), 0.0) if _player else 0.0
 	var ahead := 0
 	var lead_gap := 0.0
 	var count := 1
