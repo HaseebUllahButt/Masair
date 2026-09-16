@@ -13,6 +13,7 @@ const BikeCatalog := preload("res://scripts/bike_catalog.gd")
 const SAVE_PATH := "user://splendor_save.cfg"
 const COMBO_WINDOW := 2.6
 const CREDIT_DISTANCE := 70.0
+const SAVE_INTERVAL_S := 5.0
 
 var distance_m: float = 0.0
 var best_m: float = 0.0
@@ -29,6 +30,8 @@ var _player: Node3D
 var _combo_timer: float = 0.0
 var _next_credit_distance: float = CREDIT_DISTANCE
 var _unbanked_credits: int = 0
+var _progress_dirty: bool = false
+var _save_cooldown: float = 0.0
 var persist_progress: bool = true
 var race_seed: int = -1 ## >= 0 while a shared-road race is live
 
@@ -37,6 +40,14 @@ func _ready() -> void:
 	_load_progress()
 	best_changed.emit(best_m)
 	currency_changed.emit(credits)
+
+
+func _notification(what: int) -> void:
+	## Quitting the window — or a browser tab going away — used to drop every
+	## metre ridden since the last crash: best_m only banked on crash/restart/
+	## menu, so the garage "km more" counter never moved for careful riders.
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED:
+		bank_progress()
 
 
 func bind_player(player: Node3D) -> void:
@@ -49,12 +60,23 @@ func _process(delta: float) -> void:
 		_combo_timer -= delta
 		if _combo_timer <= 0.0:
 			combo = 0
+	if _progress_dirty:
+		_save_cooldown -= delta
+		if _save_cooldown <= 0.0:
+			_save_cooldown = SAVE_INTERVAL_S
+			_flush_progress()
 	if is_crashed or _player == null:
 		return
 	var d: float = maxf(_player.track_z, 0.0) + bonus_m
 	if d > distance_m:
 		distance_m = d
 		distance_changed.emit(distance_m)
+		## Bank the best as it happens: the garage counter climbs during the
+		## ride instead of only when a crash or restart flushes it.
+		if distance_m > best_m:
+			best_m = distance_m
+			best_changed.emit(best_m)
+			_progress_dirty = true
 	var route_m := maxf(float(_player.track_z), 0.0)
 	var earned := 0
 	while route_m >= _next_credit_distance:
@@ -152,15 +174,19 @@ func end_race() -> void:
 
 
 func bank_progress() -> void:
-	var changed := false
 	if distance_m > best_m:
 		best_m = distance_m
 		best_changed.emit(best_m)
-		changed = true
-	if changed or _unbanked_credits > 0:
-		_save_progress()
-		_unbanked_credits = 0
+		_progress_dirty = true
+	if _progress_dirty or _unbanked_credits > 0:
+		_flush_progress()
 	garage_changed.emit()
+
+
+func _flush_progress() -> void:
+	_save_progress()
+	_progress_dirty = false
+	_unbanked_credits = 0
 
 
 func bike_count() -> int:
@@ -240,8 +266,7 @@ func _award_credits(amount: int) -> void:
 	# Save every few hundred metres' worth. The UI updates every award, but
 	# normal riding does not hammer the save file twice a second at top speed.
 	if _unbanked_credits >= 4:
-		_save_progress()
-		_unbanked_credits = 0
+		_flush_progress()
 
 
 func _ensure_tuning() -> void:
