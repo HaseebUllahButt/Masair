@@ -100,6 +100,47 @@ elif [[ "$want_hotspot" == 1 ]]; then
 	echo "!! no wifi interface found — staying on the current network"
 fi
 
+# ------------------------------------------------------------- firewall ----
+# A live firewall looks exactly like a broken hotspot. Phones hang on
+# "obtaining IP address" because DHCPDISCOVER arrives from 0.0.0.0 — no
+# subnet rule can ever match it, the port itself has to be open — and the
+# game page never loads because 8000/8001 are closed. ufw's rule file is
+# world-readable, so checking costs nothing and needs no sudo.
+firewall_preflight() {
+	command -v ufw >/dev/null 2>&1 || return 0
+	systemctl is-active --quiet ufw 2>/dev/null || return 0
+	local rules=/etc/ufw/user.rules
+	[[ -r "$rules" ]] || return 0
+
+	local -a need=()
+	if [[ "$hotspot_up" == 1 ]]; then
+		grep -qE -- "--dport 67" "$rules" \
+			|| need+=("ufw allow in on ${wifi_if} to any port 67 proto udp comment 'splendor dhcp'")
+		grep -qE -- "-s 10\.42\.0\.0/24" "$rules" \
+			|| need+=("ufw allow from 10.42.0.0/24 comment 'splendor hotspot'")
+	else
+		grep -qE -- "--dport ${http}\b|--dport ${http}:${ws}\b" "$rules" \
+			|| need+=("ufw allow ${http}:${ws}/tcp comment 'splendor'")
+	fi
+	((${#need[@]})) || return 0
+
+	echo
+	echo "  !! ufw is active and will block friends. Needed:"
+	printf '       sudo %s\n' "${need[@]}"
+	echo
+	local ans=""
+	read -r -p "  run these now? [Y/n] " ans || true
+	if [[ -z "$ans" || "$ans" =~ ^[Yy] ]]; then
+		local c
+		for c in "${need[@]}"; do
+			eval "sudo $c" || echo "  !! failed: sudo $c"
+		done
+	else
+		echo "  ok — skipping. Friends will not get in until those rules exist."
+	fi
+}
+firewall_preflight
+
 ips() {
 	# "iface ip" per useful interface — LAN and tailscale reach friends,
 	# docker/bridge ranges do not.
@@ -130,6 +171,7 @@ if [[ "$hotspot_up" == 1 ]]; then
 		qrencode -t ANSIUTF8 -m 2 "WIFI:T:WPA;S:${ssid};P:${pass};;"
 	fi
 	echo "      network: $ssid    password: $pass"
+	echo "      (phones warn \"no internet\" — expected, tell them to stay connected)"
 	echo
 	echo "  2. then open the game:"
 else
