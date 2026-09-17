@@ -44,7 +44,8 @@ func suggested_url() -> String:
 		if bridge:
 			var loc: Variant = bridge.get_interface("location")
 			if loc and loc.hostname:
-				return "ws://%s:%d" % [loc.hostname, 8001]
+				var scheme := "wss" if str(loc.protocol) == "https:" else "ws"
+				return "%s://%s:%d" % [scheme, loc.hostname, 8001]
 	return "ws://127.0.0.1:8001"
 
 

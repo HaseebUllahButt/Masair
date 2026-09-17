@@ -306,8 +306,14 @@ class Capture:
 		var centre: float = path.call("viewpoint_centre_for", 800.0)
 		var side: float = path.call("viewpoint_side_for", centre)
 		var player := get_tree().root.find_child("Player", true, false)
-		player.track_z = centre
-		player.lateral = side * (float(path.call("spur_offset", centre)) + 10.0)
+		if overview == "junction" or overview == "mouth":
+			# The streamer builds around the player, not the camera — parked on
+			# the platform, a camera at the mouth photographs unstreamed ground.
+			player.track_z = centre - float(path.get("SPUR_HALF_SPAN")) + 100.0
+			player.lateral = 0.0
+		else:
+			player.track_z = centre
+			player.lateral = side * (float(path.call("spur_offset", centre)) + 10.0)
 		player.speed = 0.0
 		player.call("_place")
 		var streamer := get_tree().root.find_child("RoadStreamer", true, false)
@@ -335,6 +341,23 @@ class Capture:
 				var entry: float = centre - float(path.get("SPUR_HALF_SPAN"))
 				subject = path.call("point_at", entry + 70.0, side * 10.0)
 				eye = path.call("point_at", entry - 30.0, -side * 6.0) + Vector3(0, 22.0, 0)
+			"mouth":
+				# The deceleration lane and gore at rider height, from the saddle.
+				var entry_m: float = centre - float(path.get("SPUR_HALF_SPAN"))
+				subject = path.call("point_at", entry_m + 160.0, side * 8.0)
+				eye = path.call("point_at", entry_m + 30.0, side * 3.0) + Vector3(0, 2.2, 0)
+			"parapet":
+				# The terrace rail and masonry from out over the drop, held at
+				# deck height — the angle a floating skirt or gapped wall shows on.
+				var off: float = float(path.call("spur_offset", centre))
+				subject = path.call("point_at", centre, side * (off + 9.0))
+				eye = path.call("point_at", centre + 14.0, side * (off + 42.0)) + Vector3(0, 3.0, 0)
+			"bay":
+				# Standing on the platform looking back at the parking, kerb and
+				# parapet line — what the rider sees walking to the bench.
+				var off_b: float = float(path.call("spur_offset", centre))
+				subject = path.call("point_at", centre - 6.0, side * off_b)
+				eye = path.call("point_at", centre + 18.0, side * (off_b + 6.5)) + Vector3(0, 1.7, 0)
 			_:
 				eye = path.call("point_at", centre - 70.0, side * (float(path.call("spur_offset", centre)) - 40.0)) + Vector3(0, 55.0, 0)
 		var cam := Camera3D.new()
@@ -393,6 +416,7 @@ class Capture:
 			# The bike's own camera keeps taking the viewport back when the player
 			# is placed, and setting `current` again is a no-op once it is true.
 			_cam.make_current()
+
 		if detour:
 			_autopilot()
 		if _ignore_next_frame:

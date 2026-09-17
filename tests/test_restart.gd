@@ -277,18 +277,9 @@ func _process(_delta: float) -> bool:
 		main.set("lighting_mode", 0)
 		main.call("_apply_lighting")
 		check(environment.fog_density > day_fog, "dusk mode restores evening atmosphere")
-		var obscured: Dictionary = main.MOODS[0].duplicate()
-		obscured["fog_density"] = 0.004
-		obscured["fog_aerial"] = 0.45
-		obscured["fog_sky"] = 0.28
-		obscured["fog_height_density"] = 0.02
-		obscured["contrast"] = 1.0
-		obscured["saturation"] = 0.72
-		var scenic: Dictionary = main.call("_protect_scenic_visibility", obscured)
-		check(float(scenic["fog_density"]) <= 0.00018, "viewpoint weather preserves the distant view")
 		check(
-			float(scenic["contrast"]) >= 1.2 and float(scenic["saturation"]) >= 1.1,
-			"viewpoint weather preserves scenic colour separation"
+			not main.has_method("_protect_scenic_visibility"),
+			"the overlook does not swap the riding mood for a scenic one"
 		)
 
 		main.call("begin_ride", 2, 2)

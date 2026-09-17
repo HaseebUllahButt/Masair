@@ -220,6 +220,10 @@ const SPUR_RAMP := 1480.0  # climb and peel; the last stretch each side rides th
 ## spur peels away at all. This is the deceleration lane: time to notice the
 ## sign, come off the throttle and move across before the gore opens.
 const SPUR_HOLD := 0.08
+## Fraction of the divergence the spur stays level for. The lane peels off flat
+## beside the carriageway and only starts climbing once the two roads are a
+## real gore apart — 14% of the swing is twenty metres of separation.
+const SPUR_LIFT_HOLD := 0.14
 ## Spur divergence at which the unused corridor is culled. Below this, the
 ## junction keeps both the exit and the highway drawn so the signs stay readable.
 const CORRIDOR_COMMIT := 0.22
@@ -250,6 +254,12 @@ const PLATFORM_HALF_LENGTH := 23.0
 ## it reads as a road opening into a car park rather than as the road suddenly
 ## trebling in width.
 const PLATFORM_TAPER := 44.0
+## Made ground kept flat past the parapet line before the headland is allowed
+## to fall. At 0.9 the shelf ended less than a metre beyond the wall face, and
+## the terrace — paving, wall, benches — was a masonry shelf hung in the air
+## over the drop. A few metres of level ledge is what lets the parapet stand
+## *on* the hilltop instead of flying off it.
+const PLATFORM_LIP_SHELF := 4.2
 
 ## The landscape the platform exists to look at.
 const HEADLAND_RISE := 32.0  # natural ground under the platform, above road level
@@ -487,8 +497,12 @@ func _spur_full_lift(z: float, lateral: float) -> float:
 	## platform, which is wide enough to reach back over the road, would pick the
 	## road up with it.
 	# Climbs with the divergence, not before it: an exit lane still running
-	# alongside the carriageway cannot be thirteen metres above it.
-	var shape := spur_divergence(z)
+	# alongside the carriageway cannot be thirteen metres above it. Held further
+	# still — until the gore is open ground rather than a paint-wide sliver — so
+	# the ramp does not lift a wedge of made ground out of the middle of the
+	# junction. That wedge is what made the detour look like a road erupting
+	# from the running lanes.
+	var shape := _taper(clampf((spur_divergence(z) - SPUR_LIFT_HOLD) / (1.0 - SPUR_LIFT_HOLD), 0.0, 1.0))
 	if shape <= 0.0:
 		return 0.0
 	if lateral * viewpoint_side_for(viewpoint_centre_for(z)) <= 0.0:
@@ -534,21 +548,48 @@ func spur_deck_blend(z: float, lateral: float) -> float:
 	var fill: float = maxf(full - headland_rise(z, absf(lateral)), 0.0)
 	var skirt := 5.0 + fill * 1.5
 	if outward:
-		# On the drop side of the platform the made ground simply stops. An
-		# embankment is for blending fill into a hillside that carries on, and past
-		# the terrace lip there is no hillside to blend into — leaving it here hung
-		# an eight-metre shelf of flat ground over the edge, which from the bench
-		# is a grey slab across the bottom third of the view with the drop behind
-		# it. Along the ramp there *is* a hillside, so it keeps its embankment.
-		skirt = lerpf(skirt, 0.9, platform_blend(z))
+		# On the drop side of the platform the embankment stops blending into a
+		# hillside — past the terrace lip there is no hillside to blend into —
+		# and becomes a ledge instead: a few metres of level made ground past
+		# the parapet, so the terrace stands *on* the hilltop. At under a metre
+		# it ended inside the wall face and the whole belvedere hung in the air
+		# over the drop. Along the ramp there *is* a hillside, so the skirt stays.
+		skirt = lerpf(skirt, PLATFORM_LIP_SHELF, platform_blend(z))
 	return inside * (1.0 - smoothstep(edge, edge + skirt, out))
+
+
+func headland_crest(z: float) -> float:
+	return _crest_line(z, viewpoint_centre_for(z))
+
+
+func _crest_line(z: float, centre: float) -> float:
+	## The lip of the headland's flat top, in plan. A fixed lateral made the
+	## whole landform a straight-edged strip — from the seat that reads as a
+	## pier, not a point. Instead the top is lens-shaped like the basin itself:
+	## full width opposite the platform, tailing away along the shore each way,
+	## with a wander so the edge is a coastline rather than a french curve.
+	var u := clampf(absf(z - centre) / LAKE_SPAN, 0.0, 1.0)
+	var point := sqrt(maxf(1.0 - u * u, 0.0))
+	return (
+		HEADLAND_INNER
+		+ (HEADLAND_CREST - HEADLAND_INNER) * (0.32 + 0.68 * point)
+		+ 7.0 * sin(z * 0.017 + _terrain_phase * 0.9)
+	)
 
 
 func headland_rise(z: float, out: float) -> float:
 	## Natural ground above the carriageway plane on the view side: the hillside
 	## the spur climbs and the headland the platform sits on.
-	var along := 1.0 - smoothstep(PLATFORM_HALF_LENGTH + 80.0, SPUR_HALF_SPAN + 60.0, absf(z - viewpoint_centre_for(z)))
-	return HEADLAND_RISE * (0.35 + 0.65 * along) * smoothstep(HEADLAND_INNER, HEADLAND_CREST, out)
+	var centre := viewpoint_centre_for(z)
+	var distance := absf(z - centre)
+	# The nose dives as it tails: past the platform the ridge loses height along
+	# the route as well as width, ending as a low point where its own slope
+	# meets the water instead of running on as a level bank. A slow sway keeps
+	# the top a back rather than a mesa, held off the platform so the made
+	# ground the terrace stands on is not undermined beside the parapet.
+	var along := 1.0 - smoothstep(PLATFORM_HALF_LENGTH + 80.0, LAKE_SPAN + 100.0, distance)
+	var sway := 1.0 + 0.14 * sin(z * 0.021 + _terrain_phase * 1.3) * smoothstep(50.0, 150.0, distance)
+	return HEADLAND_RISE * (0.35 + 0.65 * along) * sway * smoothstep(HEADLAND_INNER, _crest_line(z, centre), out)
 
 
 func spur_lift(z: float, lateral: float) -> float:
@@ -660,7 +701,7 @@ func viewpoint_reserves(z: float, lateral: float) -> bool:
 	if lateral * viewpoint_side_for(centre) <= 0.0:
 		return false
 	var out := absf(lateral)
-	if out > HEADLAND_CREST - 6.0:
+	if out > _crest_line(z, centre) - 6.0:
 		return true  # the drop, the water, the far shore
 	if distance > SPUR_HALF_SPAN:
 		return false
@@ -707,9 +748,12 @@ func _viewpoint_land_drop(z: float, out: float, centre_z: float) -> float:
 	var near := viewpoint_near_shore(z)
 	var far := viewpoint_far_shore(z, centre_z)
 	# The headland is a hill, not a plateau: it falls away along the route as
-	# well as across it, so the platform sits on a nose of land.
-	var crest := -headland_rise(z, HEADLAND_CREST)
-	if out <= HEADLAND_CREST:
+	# well as across it, so the platform sits on a nose of land. Its lip moves
+	# with the plan taper — the flat top is wide opposite the platform and
+	# pinches to a tail each way, and the face hangs off that moving edge.
+	var crest_line := _crest_line(z, centre_z)
+	var crest := -headland_rise(z, crest_line)
+	if out <= crest_line:
 		return -headland_rise(z, out)
 	if out <= near:
 		# The face: from the crest down past the waterline. It goes over the edge
@@ -718,7 +762,7 @@ func _viewpoint_land_drop(z: float, out: float, centre_z: float) -> float:
 		# that disappears from under them in the first few metres. Easing out of
 		# the crest instead put a shoulder of gentle grass between the platform
 		# and anything worth looking at.
-		var t := clampf((out - HEADLAND_CREST) / maxf(near - HEADLAND_CREST, 1.0), 0.0, 1.0)
+		var t := clampf((out - crest_line) / maxf(near - crest_line, 1.0), 0.0, 1.0)
 		# Coast and forest fall faster so the water is a drop, not a beach. Country
 		# keeps the Wastwater talus. Mountain is a tarn: steep, then a shelf.
 		var fall_exp := 1.5
@@ -732,10 +776,14 @@ func _viewpoint_land_drop(z: float, out: float, centre_z: float) -> float:
 			3:
 				fall_exp = 1.32
 		var fall := 1.0 - pow(1.0 - t, fall_exp)
-		# A ledge two thirds of the way down: one break in the face reads as rock
-		# rather than as a ramp, and it catches light differently from the slope
-		# above and below it.
-		fall -= 0.09 * sin(PI * clampf((t - 0.35) / 0.5, 0.0, 1.0))
+		var benches := 4.0 + 1.2 * sin(z * 0.0041 + 0.7)
+		var seg := (
+			fall + 0.14 * sin(z * 0.008 + out * 0.019) + 0.08 * sin(z * 0.021 + 1.3)
+		) * benches
+		var tread := floorf(seg)
+		var riser_at := 0.52 + 0.16 * sin(tread * 2.9 + z * 0.017)
+		var riser_len := 0.30 + 0.10 * sin(tread * 1.7 + 4.1)
+		fall = (tread + smoothstep(riser_at, riser_at + riser_len, seg - tread)) / benches
 		# The face carries on under the surface rather than stopping at it, so the
 		# waterline lands on the steep part of the slope instead of on the shelf
 		# at the end of it.

@@ -341,7 +341,7 @@ func _on_msg(from_id: int, m: Dictionary, limbo: Dictionary) -> void:
 				_players[from_id]["bike"] = int(m.get("i", 0))
 				_broadcast_lobby()
 		"start":
-			if _phase == "lobby" and from_id == _leader_id():
+			if _phase == "lobby" and from_id == _leader_id() and _all_players_ready():
 				_start_race()
 		"pose":
 			if _phase == "racing" and _players.has(from_id):
@@ -361,6 +361,15 @@ func _on_msg(from_id: int, m: Dictionary, limbo: Dictionary) -> void:
 
 func _leader_id() -> int:
 	return _players.keys().min() if not _players.is_empty() else -1
+
+
+func _all_players_ready() -> bool:
+	if _players.size() < 2:
+		return false
+	for id in _players:
+		if not bool(_players[id].get("ready", false)):
+			return false
+	return true
 
 
 func _start_race() -> void:

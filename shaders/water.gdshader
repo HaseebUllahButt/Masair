@@ -5,8 +5,39 @@ uniform float wave_height = 0.18;
 uniform float wave_speed = 0.72;
 uniform float wave_scale = 1.0;
 uniform float shimmer_amount = 1.0;
+// The colour of the sky at the horizon, pushed per-mood by main.gd. Water is a
+// mirror long before it is a substance: from the seat the far surface sits at
+// a grazing angle, so the fresnel term below lays the sky's own colour across
+// the distance and leaves the near water deep. Without it the lake was its
+// albedo times whatever little light reached it — a black floor under every
+// sunset.
+uniform vec3 sky_mirror : source_color = vec3(0.10, 0.11, 0.12);
 
 varying vec3 world_position;
+
+// Glitter needs irregular cells — a single sine at this scale reads as parallel
+// bands (corduroy) across the whole basin, not sparkle. Two drifting octaves of
+// value noise give a broken, shifting texture instead.
+float whash(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float wnoise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(
+		mix(whash(i), whash(i + vec2(1.0, 0.0)), u.x),
+		mix(whash(i + vec2(0.0, 1.0)), whash(i + vec2(1.0, 1.0)), u.x),
+		u.y
+	);
+}
+
+float glitter(vec2 p, float t) {
+	vec2 q = p * wave_scale;
+	return wnoise(q * vec2(0.55, 0.9) + vec2(t * 0.30, -t * 0.21))
+		* 0.65 + wnoise(q * vec2(1.3, 0.7) + vec2(-t * 0.17, t * 0.26)) * 0.35;
+}
 
 float water_height(vec2 p, float t) {
 	float broad = sin(dot(p, normalize(vec2(0.82, 0.57))) * 0.055 * wave_scale + t * 0.55) * 0.48;
@@ -31,9 +62,27 @@ void fragment() {
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	float facing = clamp(dot(NORMAL, VIEW), 0.0, 1.0);
 	float fresnel = pow(1.0 - facing, 4.0);
-	float shimmer = 0.5 + 0.5 * sin(world_position.x * 0.42 * wave_scale + world_position.z * 0.16 * wave_scale + t * 1.4);
+	float shimmer = glitter(world_position.xz, t);
 	vec3 water_color = COLOR.rgb * vec3(0.54, 0.84, 1.08);
-	ALBEDO = water_color + vec3(0.018, 0.035, 0.045) * fresnel + vec3(0.012, 0.020, 0.022) * shimmer * shimmer_amount;
+	ALBEDO = water_color + vec3(0.012, 0.020, 0.022) * shimmer * shimmer_amount;
+	// At grazing angles a lake is a mirror, not a surface: the far half of the
+	// sheet carries the sky back to the eye. That light arrives as radiance, not
+	// albedo — after dark the lit term on this mesh is a rounding error, so the
+	// sky goes on EMISSION where the dusk can actually be seen. Keyed on view
+	// distance rather than the wave normal's fresnel: from the seat the grazing
+	// angle IS the distance, and this ramp needs no sign convention luck.
+	//
+	// It is never the full uniform colour, though — a flat sheet of horizon
+	// paint reads as fog or a floor, not water. The swell phase and the shimmer
+	// streaks ride on the mirror so the far surface keeps moving structure:
+	// long bands where the swell rolls and a finer glitter on top.
+	float dist_mirror = smoothstep(80.0, 420.0, length(VERTEX));
+	float wave_phase = center / max(wave_height, 0.001);
+	// Broad wash at the far grazing angle, kept under the material's own
+	// shimmer_amount so the sea — kilometres of it — does not carry the lake's
+	// sparkle density as stripes; the swell phase lays the darker lanes between
+	// crests instead of brightening them.
+	EMISSION = sky_mirror * dist_mirror * (0.46 + 0.55 * shimmer * shimmer_amount + 0.12 * wave_phase) * mix(vec3(1.0), water_color * 2.2, 0.45);
 	METALLIC = 0.12;
 	ROUGHNESS = mix(0.16, 0.055, fresnel);
 	SPECULAR = 0.92;
@@ -66,8 +115,6 @@ void light() {
 	// over from fragment(): a varying written in fragment() and read in light()
 	// is not something to rely on, and this is two instructions.
 	float glance = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 4.0);
-	float sparkle = 0.5 + 0.5 * sin(
-		world_position.x * 0.42 * wave_scale + world_position.z * 0.16 * wave_scale + TIME * wave_speed * 1.4
-	);
+	float sparkle = glitter(world_position.xz, TIME * wave_speed);
 	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * spec * mix(1.0, 3.4, glance) * (0.55 + 0.75 * sparkle * shimmer_amount);
 }

@@ -183,6 +183,14 @@ static func terrain_material() -> StandardMaterial3D:
 ## round bike parts want this; flat panels and road markings do not.
 var smooth: bool = false
 
+## Normals arrive with each vertex instead of being generated at commit. The
+## terrain ribbons use this: generate_normals() can only average the quads a
+## mesh actually owns, so the first and last row of every chunk shade with a
+## different normal than the rows beside them — a faint seam every LENGTH
+## metres that reads as corduroy at grazing angles. Normals sampled from the
+## surface itself are identical on both sides of a chunk seam.
+var explicit_normals: bool = false
+
 ## Centre used by add_hull_* to decide which way is "out". Set to the shape's
 ## own origin before building a convex primitive.
 var hull_origin: Vector3 = Vector3.ZERO
@@ -240,6 +248,25 @@ func add_quad_shaded(
 	_tri_shaded(q0, q2, q3, c0, c2, c3)
 
 
+func add_quad_shaded_n(
+	q0: Vector3,
+	q1: Vector3,
+	q2: Vector3,
+	q3: Vector3,
+	c0: Color,
+	c1: Color,
+	c2: Color,
+	c3: Color,
+	n0: Vector3,
+	n1: Vector3,
+	n2: Vector3,
+	n3: Vector3
+) -> void:
+	## Per-vertex colour and normal — for explicit_normals builders.
+	_tri_shaded_n(q0, q1, q2, c0, c1, c2, n0, n1, n2)
+	_tri_shaded_n(q0, q2, q3, c0, c2, c3, n0, n2, n3)
+
+
 func add_quad_uv(
 	q0: Vector3,
 	q1: Vector3,
@@ -288,6 +315,30 @@ func _tri_shaded(a: Vector3, b: Vector3, c: Vector3, ca: Color, cb: Color, cc: C
 	var verts := [a, b, c]
 	var cols := [ca, cb, cc]
 	for i in 3:
+		st.set_color(cols[i])
+		st.add_vertex(verts[i])
+
+
+func _tri_shaded_n(
+	a: Vector3,
+	b: Vector3,
+	c: Vector3,
+	ca: Color,
+	cb: Color,
+	cc: Color,
+	na: Vector3,
+	nb: Vector3,
+	nc: Vector3
+) -> void:
+	var st := _tool(false)
+	var n := (c - a).cross(b - a)
+	if n.length_squared() < 1e-12:
+		return
+	var verts := [a, b, c]
+	var cols := [ca, cb, cc]
+	var norms := [na, nb, nc]
+	for i in 3:
+		st.set_normal(norms[i])
 		st.set_color(cols[i])
 		st.add_vertex(verts[i])
 
@@ -596,8 +647,9 @@ func commit() -> ArrayMesh:
 	channels.sort()
 	for key in channels:
 		var st: SurfaceTool = _st[key]
-		if smooth:
+		if smooth or explicit_normals:
 			st.index()  # merge coincident verts so normals can average across them
+		if smooth:
 			st.generate_normals()
 		st.commit(mesh)
 		mesh.surface_set_material(mesh.get_surface_count() - 1, material_for(key))

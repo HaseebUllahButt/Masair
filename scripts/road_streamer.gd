@@ -21,6 +21,12 @@ var _props_queue: Array[Node3D] = []
 var _scenic_queue: Array[Node3D] = []
 var _highway_queue: Array[Node3D] = []
 var _unload_queue: Array[Node] = []
+## Nodes retired this frame, counted down before free. A chunk dropped while a
+## build coroutine is still parked on `process_frame` logs "resumed function
+## but class instance is gone" if it is freed outright; out of the tree the
+## pending resume just reads `is_inside_tree()` as false and exits, and the
+## memory goes three frames later once that has happened.
+var _dying: Dictionary = {}
 var _stream_generation: int = 0
 var _open_until: int = -1
 var _defer_stream: bool = false
@@ -88,11 +94,11 @@ func reset_world() -> void:
 	_idle_current = -1
 	for dropped in _unload_queue:
 		if is_instance_valid(dropped):
-			dropped.free()
+			_retire(dropped)
 	_unload_queue.clear()
 	for chunk in _chunks.values():
 		if is_instance_valid(chunk):
-			(chunk as Node).free()
+			_retire(chunk as Node)
 	_chunks.clear()
 	if _player == null:
 		return
@@ -103,6 +109,9 @@ func reset_world() -> void:
 
 
 func _process(_delta: float) -> void:
+	# Runs even while the streamer is otherwise idle: a retired chunk must not
+	# wait for the next un-load before its memory actually goes.
+	_drain_dying()
 	if _player == null:
 		return
 	# Spawn already paid for the chunk under the bike this frame. Starting the
@@ -162,7 +171,7 @@ func _sync(build_all: bool) -> void:
 				_highway_queue.erase(dropped as Node3D)
 			if is_instance_valid(dropped):
 				if build_all:
-					dropped.free()
+					_retire(dropped)
 				else:
 					(dropped as Node3D).visible = false
 					_unload_queue.append(dropped)
@@ -228,8 +237,8 @@ func _sync(build_all: bool) -> void:
 
 func _enqueue_nearby_props(current: int) -> void:
 	## Far spur chunks stay ribbon-only until they enter the dress window.
-	var dress_max := current + DRESS_AHEAD
-	for i in range(maxi(current - 1, 0), dress_max + 1):
+	var bounds := _dress_bounds(current)
+	for i in range(bounds.x, bounds.y + 1):
 		if not _chunks.has(i):
 			continue
 		var chunk: Node3D = _chunks[i]
@@ -270,8 +279,8 @@ func _start_next_dress(current: int) -> void:
 
 func _has_undressed_nearby(current: int) -> bool:
 	## True when the camera corridor still has bare ribbons waiting for props.
-	var dress_max := current + DRESS_AHEAD
-	for i in range(maxi(current - 1, 0), dress_max + 1):
+	var bounds := _dress_bounds(current)
+	for i in range(bounds.x, bounds.y + 1):
 		if not _chunks.has(i):
 			continue
 		var chunk: Node3D = _chunks[i]
@@ -302,8 +311,8 @@ func _player_wants_highway() -> bool:
 
 
 func _enqueue_scenic(current: int) -> void:
-	var dress_max := current + DRESS_AHEAD
-	for i in range(maxi(current - 1, 0), dress_max + 1):
+	var bounds := _dress_bounds(current)
+	for i in range(bounds.x, bounds.y + 1):
 		if not _chunks.has(i):
 			continue
 		var chunk: Node3D = _chunks[i]
@@ -327,8 +336,8 @@ func _enqueue_scenic(current: int) -> void:
 func _has_undressed_scenic(current: int) -> bool:
 	if not _player_wants_scenic():
 		return false
-	var dress_max := current + DRESS_AHEAD
-	for i in range(maxi(current - 1, 0), dress_max + 1):
+	var bounds := _dress_bounds(current)
+	for i in range(bounds.x, bounds.y + 1):
 		if not _chunks.has(i):
 			continue
 		var chunk: Node3D = _chunks[i]
@@ -428,8 +437,31 @@ func _drain_unloads() -> void:
 	while n < UNLOADS_PER_FRAME and not _unload_queue.is_empty():
 		var dropped: Node = _unload_queue.pop_front()
 		if is_instance_valid(dropped):
-			dropped.free()
+			_retire(dropped)
 		n += 1
+
+
+func _retire(node: Node) -> void:
+	## Out of the tree now — a parked build coroutine's next resume reads
+	## `is_inside_tree()` as false and stops — then gone for real a few frames
+	## later, once nothing can still be parked on it.
+	if node is Node3D:
+		(node as Node3D).visible = false
+	if node.get_parent() != null:
+		node.get_parent().remove_child(node)
+	_dying[node] = 3
+
+
+func _drain_dying() -> void:
+	var dead: Array[Node] = []
+	for node in _dying:
+		_dying[node] = int(_dying[node]) - 1
+		if int(_dying[node]) <= 0:
+			dead.append(node)
+	for node in dead:
+		_dying.erase(node)
+		if is_instance_valid(node):
+			node.free()
 
 
 func _desired_bounds(current: int) -> Vector2i:
@@ -451,8 +483,38 @@ func _desired_bounds(current: int) -> Vector2i:
 	return Vector2i(min_i, max_i)
 
 
+func _at_platform() -> bool:
+	return (
+		_player != null
+		and _path != null
+		and _path.has_method("at_platform")
+		and bool(_path.call("at_platform", _player.track_z, _player.lateral))
+	)
+
+
+func _dress_bounds(current: int) -> Vector2i:
+	## Chunks worth dressing right now. Riding keeps it a sliding window ahead
+	## of the bike; parked at the overlook the camera turns ninety degrees to
+	## the route and sees the whole basin, so the window swings round to the
+	## keep range centred on the lake. Without that swing the half of the view
+	## behind the bike is bare ribbon and then open sky — a black floor under
+	## the far shore.
+	if _at_platform():
+		var centre: float = float(_path.call("viewpoint_centre_for", _player.track_z))
+		var half_span: float = RoadPathGD.LAKE_SPAN + 60.0
+		return Vector2i(
+			maxi(floori((centre - half_span) / CHUNK_LENGTH), 0),
+			ceili((centre + half_span) / CHUNK_LENGTH)
+		)
+	return Vector2i(maxi(current - 1, 0), current + DRESS_AHEAD)
+
+
 func _desired_build_bounds(current: int) -> Vector2i:
-	## Building stays around the rider even on a scenic spur.
+	## Building stays around the rider even on a scenic spur. At the platform
+	## the keep window is the vista itself — a chunk kept but never built is
+	## the black hole the lake pours into, so the build range covers it.
+	if _at_platform():
+		return _desired_bounds(current)
 	var ahead := chunks_ahead
 	var behind := chunks_behind
 	if _path and _path.has_method("on_spur") and _path.call("on_spur", _player.track_z, _player.lateral):
@@ -552,7 +614,7 @@ func _take_nearest_props() -> Node3D:
 	if _props_queue.is_empty() or _player == null:
 		return _props_queue.pop_front() if not _props_queue.is_empty() else null
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
-	var dress_max := current + DRESS_AHEAD
+	var bounds := _dress_bounds(current)
 	var best_i := -1
 	var best_d := INF
 	for i in _props_queue.size():
@@ -560,7 +622,7 @@ func _take_nearest_props() -> Node3D:
 		if not is_instance_valid(chunk):
 			continue
 		var index := int(chunk.get("chunk_index"))
-		if index < current - 1 or index > dress_max:
+		if index < bounds.x or index > bounds.y:
 			continue
 		var d: float = float(index - current) if index >= current else 0.5 + float(current - index)
 		if d < best_d:
@@ -600,7 +662,7 @@ func _take_nearest_scenic() -> Node3D:
 	if _scenic_queue.is_empty() or _player == null:
 		return _scenic_queue.pop_front() if not _scenic_queue.is_empty() else null
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
-	var dress_max := current + DRESS_AHEAD
+	var bounds := _dress_bounds(current)
 	var best_i := -1
 	var best_d := INF
 	for i in _scenic_queue.size():
@@ -608,7 +670,7 @@ func _take_nearest_scenic() -> Node3D:
 		if not is_instance_valid(chunk):
 			continue
 		var index := int(chunk.get("chunk_index"))
-		if index < current - 1 or index > dress_max:
+		if index < bounds.x or index > bounds.y:
 			continue
 		var d: float = float(index - current) if index >= current else 0.5 + float(current - index)
 		if d < best_d:

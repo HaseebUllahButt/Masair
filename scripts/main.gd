@@ -69,7 +69,7 @@ const MOODS := {
 		"zenith_color": Color("12183c"),
 		"mid_color": Color("c45e78"),
 		"horizon_color": Color("f6b06a"),
-		"ground_color": Color("111a20"),
+		"ground_color": Color("1e2a30"),
 		"band_low": 0.08,
 		"band_high": 0.50,
 		"horizon_glow": 0.34,
@@ -304,7 +304,6 @@ var _rain_fx: GPUParticles3D
 var _rain_process: ParticleProcessMaterial
 var _road_material: ShaderMaterial
 var _applied_rain: float = -1.0
-var _applied_scenic: bool = false
 
 
 func _ready() -> void:
@@ -335,18 +334,8 @@ func _process(delta: float) -> void:
 	_update_weather(delta)
 	# Realtime sky can absorb a uniform write every frame, so rain eases the
 	# overcast instead of jumping the deck in fifths.
-	#
-	# Riding onto the platform has to count as a change too. `_mood_now()` reads
-	# the scenic state, but the only thing that used to trigger a re-apply was the
-	# rain value moving — and dry weather pins that to exactly 0.0 and holds it
-	# there, so `is_equal_approx` was true every frame and the scenic mood never
-	# arrived. On a dry run the overlook was being lit by the riding mood for the
-	# whole time the rider was parked at it, which is the one place in the game
-	# that has a mood of its own.
-	var scenic := _at_scenic_view()
-	if _applied_rain < 0.0 or scenic != _applied_scenic or not is_equal_approx(rain, _applied_rain):
+	if _applied_rain < 0.0 or not is_equal_approx(rain, _applied_rain):
 		_applied_rain = rain
-		_applied_scenic = scenic
 		_apply_lighting()
 
 
@@ -496,72 +485,13 @@ func _hour_mood() -> Dictionary:
 func _mood_now() -> Dictionary:
 	## The one place a mood is resolved. The hour, and then the weather on top of
 	## it — so rain works at every hour instead of being a fourth preset that
-	## throws the time of day away.
+	## throws the time of day away. The overlook keeps the riding mood: a place
+	## whose lighting steps as you cross its boundary reads as a zone trigger,
+	## not as a view.
 	var mood: Dictionary = _hour_mood()
 	if rain > 0.001:
 		mood = _overcast(mood, rain)
-	# The overlook is the route's earned reveal. Weather may recolour it, but it
-	# must not erase it. From the parking as well as the bench: looking at the
-	# lake from the bike used the riding fog and the far shore vanished.
-	if _at_scenic_view():
-		mood = _protect_scenic_visibility(mood)
 	return mood
-
-
-func _at_scenic_view() -> bool:
-	## Sitting on the bench, or parked on the platform beside it. Both are the
-	## overlook being looked at rather than ridden past, and both want its mood.
-	if bool(player.get("seated")):
-		return true
-	var path := get_node_or_null("/root/RoadPath")
-	return path != null and bool(path.call("at_platform", player.track_z, player.lateral))
-
-
-static func _protect_scenic_visibility(mood: Dictionary) -> Dictionary:
-	## Aerial perspective, not clarity.
-	##
-	## This used to clamp the fog off — density down 7x, aerial down 5x — on the
-	## theory that a view you have ridden a 3 km detour to reach should be seen
-	## rather than hidden. What it actually removed was the one cue that tells a
-	## human eye how far away anything is: each successive ridge stepping paler,
-	## bluer and lower in contrast toward the sky. Every layer arrived at the same
-	## value, and a lake basin, a far shore and four mountain ranges collapsed
-	## into a single flat card. The riding view keeps its fog and reads as deep;
-	## the overlook threw its own depth away.
-	##
-	## So: density *low* — an exponential curve dense enough to eat the far range
-	## is not perspective, it is weather — and `fog_aerial` high, because aerial
-	## perspective blends toward the sky rather than toward a flat fog colour, so
-	## distant ridges take the sky's own hue and the relationship holds at every
-	## time of day. Roughly 7% haze on the near shore, 14% on the far, half on the
-	## furthest range: a ladder the eye reads as kilometres.
-	var out: Dictionary = mood.duplicate()
-	out["fog_density"] = minf(float(out["fog_density"]), 0.00016)
-	out["fog_aerial"] = maxf(float(out["fog_aerial"]), 0.55)
-	# The sky is the far end of that ladder and must not be fogged onto itself.
-	out["fog_sky"] = minf(float(out["fog_sky"]), 0.02)
-	# No ground layer. A haze slab lying in the basin is a horizontal band across
-	# the middle of the view, which is the one place a vista cannot afford one.
-	out["fog_height_density"] = 0.0
-	# Agree with the sky rather than fighting it: the dusk fog colour is a muddy
-	# mauve that reads as dirt on the lens when it is carrying a whole valley.
-	out["fog_color"] = (out["fog_color"] as Color).lerp(out["mid_color"], 0.55)
-	out["contrast"] = maxf(float(out["contrast"]), 1.20)
-	out["saturation"] = maxf(float(out["saturation"]), 1.10)
-	# A small lift only. The old +1.02 exposure and +0.42 sky ambient were there
-	# to rescue detail out of silhouette back when the light had no darks in it
-	# to begin with; now that shaded slopes land honestly dark, lifting this hard
-	# just flattens the form the light is finally producing.
-	out["exposure"] = maxf(float(out["exposure"]), 1.04)
-	# Enough sky in the ambient that a slope turned away from a low sun settles
-	# into a cool blue rather than into nothing. At dusk the key is three degrees
-	# up and the near headland faces away from it — without a real fill that half
-	# of the composition falls to pitch black, which is an absence, not a dark.
-	out["ambient_sky_mix"] = maxf(float(out["ambient_sky_mix"]), 0.82)
-	out["ambient"] = maxf(float(out["ambient"]), 1.28)
-	out["fill_energy"] = maxf(float(out["fill_energy"]), 1.48)
-	out["fill_color"] = (out["fill_color"] as Color).lerp(Color("8ab0c8"), 0.45)
-	return out
 
 
 static func _blend(a: Dictionary, b: Dictionary, t: float) -> Dictionary:
@@ -824,6 +754,13 @@ func _apply_lighting() -> void:
 	sun.light_angular_distance = mood["angular_distance"]
 	_fill.light_color = mood["fill_color"]
 	_fill.light_energy = mood["fill_energy"]
+	# The lake is a mirror before it is water: at the grazing angle a seated
+	# rider sees it from, its far half carries the horizon colour back to the
+	# eye. Dimmed by the mood's own horizon glow so a flat grey sky still reads
+	# as flat grey water.
+	RoadChunkGD.set_water_sky(
+		(mood["horizon_color"] as Color) * (0.30 + 0.80 * float(mood["horizon_glow"]))
+	)
 	var horizon := get_node_or_null("HorizonMountains")
 	if horizon and horizon.has_method("apply_mood"):
 		horizon.call("apply_mood", mood)

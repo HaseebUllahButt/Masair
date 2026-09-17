@@ -1,14 +1,18 @@
-[gd_scene load_steps=11 format=3 uid="uid://masair_main"]
+[gd_scene format=3 uid="uid://d0g0s5wbhchtx"]
 
-[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
-[ext_resource type="Script" path="res://scripts/motorcycle.gd" id="2_bike"]
-[ext_resource type="Script" path="res://scripts/motorcycle_visual.gd" id="3_vis"]
-[ext_resource type="Script" path="res://scripts/road_streamer.gd" id="4_road"]
-[ext_resource type="Script" path="res://scripts/traffic_manager.gd" id="5_traffic"]
-[ext_resource type="Script" path="res://scripts/hud.gd" id="6_hud"]
-[ext_resource type="Script" path="res://scripts/horizon_mountains.gd" id="7_horizon"]
+[ext_resource type="Script" uid="uid://c5emstcin0e6t" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" uid="uid://fkayx2x8nxat" path="res://scripts/motorcycle.gd" id="2_bike"]
+[ext_resource type="Script" uid="uid://dixvmbrhhjghy" path="res://scripts/motorcycle_visual.gd" id="3_vis"]
+[ext_resource type="Script" uid="uid://357w1morrnus" path="res://scripts/road_streamer.gd" id="4_road"]
+[ext_resource type="Script" uid="uid://cbgvjxf1jc71v" path="res://scripts/traffic_manager.gd" id="5_traffic"]
+[ext_resource type="Script" uid="uid://c1h1gf84jlr6x" path="res://scripts/hud.gd" id="6_hud"]
+[ext_resource type="Script" uid="uid://6yay1oqe2m0q" path="res://scripts/horizon_mountains.gd" id="7_horizon"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_crash"]
+content_margin_left = 40.0
+content_margin_top = 30.0
+content_margin_right = 40.0
+content_margin_bottom = 30.0
 bg_color = Color(0.05, 0.05, 0.08, 0.86)
 border_width_left = 2
 border_width_top = 2
@@ -19,12 +23,12 @@ corner_radius_top_left = 10
 corner_radius_top_right = 10
 corner_radius_bottom_right = 10
 corner_radius_bottom_left = 10
-content_margin_left = 40.0
-content_margin_top = 30.0
-content_margin_right = 40.0
-content_margin_bottom = 30.0
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_pause"]
+content_margin_left = 44.0
+content_margin_top = 34.0
+content_margin_right = 44.0
+content_margin_bottom = 34.0
 bg_color = Color(0.04, 0.05, 0.11, 0.9)
 border_width_left = 2
 border_width_top = 2
@@ -35,12 +39,12 @@ corner_radius_top_left = 10
 corner_radius_top_right = 10
 corner_radius_bottom_right = 10
 corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_confirm"]
 content_margin_left = 44.0
 content_margin_top = 34.0
 content_margin_right = 44.0
 content_margin_bottom = 34.0
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_confirm"]
 bg_color = Color(0.08, 0.05, 0.04, 0.92)
 border_width_left = 2
 border_width_top = 2
@@ -51,49 +55,43 @@ corner_radius_top_left = 10
 corner_radius_top_right = 10
 corner_radius_bottom_right = 10
 corner_radius_bottom_left = 10
-content_margin_left = 44.0
-content_margin_top = 34.0
-content_margin_right = 44.0
-content_margin_bottom = 34.0
 
-[node name="Main" type="Node3D"]
+[node name="Main" type="Node3D" unique_id=565067190]
 script = ExtResource("1_main")
 
-[node name="Sun" type="DirectionalLight3D" parent="."]
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1822638377]
 transform = Transform3D(0.819152, -0.40558, 0.40558, 0, 0.707107, 0.707107, -0.573576, -0.579228, 0.579228, 0, 20, 0)
-shadow_enabled = false
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=79141440]
 
-[node name="HorizonMountains" type="Node3D" parent="."]
+[node name="HorizonMountains" type="Node3D" parent="." unique_id=1255430528]
 script = ExtResource("7_horizon")
 
-[node name="RoadStreamer" type="Node3D" parent="."]
+[node name="RoadStreamer" type="Node3D" parent="." unique_id=1455119710]
 script = ExtResource("4_road")
 
-[node name="TrafficManager" type="Node3D" parent="."]
+[node name="TrafficManager" type="Node3D" parent="." unique_id=2038529050]
 script = ExtResource("5_traffic")
 
-[node name="Player" type="Node3D" parent="."]
+[node name="Player" type="Node3D" parent="." unique_id=1777569591]
 script = ExtResource("2_bike")
 
-[node name="Visual" type="Node3D" parent="Player"]
+[node name="Visual" type="Node3D" parent="Player" unique_id=1497853316]
 script = ExtResource("3_vis")
 
-[node name="CameraPivot" type="Node3D" parent="Player"]
+[node name="CameraPivot" type="Node3D" parent="Player" unique_id=2025855701]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.44, 0)
 
-[node name="Camera3D" type="Camera3D" parent="Player/CameraPivot"]
+[node name="Camera3D" type="Camera3D" parent="Player/CameraPivot" unique_id=1364502424]
 transform = Transform3D(1, 0, 0, 0, 0.996195, 0.0871557, 0, -0.0871557, 0.996195, 0, 0.1, 0.34)
 current = true
 fov = 74.0
-near = 0.05
 far = 5200.0
 
-[node name="HUD" type="CanvasLayer" parent="."]
+[node name="HUD" type="CanvasLayer" parent="." unique_id=558714347]
 script = ExtResource("6_hud")
 
-[node name="Root" type="Control" parent="HUD"]
+[node name="Root" type="Control" parent="HUD" unique_id=343729693]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -102,9 +100,8 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="DistanceLabel" type="Label" parent="HUD/Root"]
+[node name="DistanceLabel" type="Label" parent="HUD/Root" unique_id=715596003]
 layout_mode = 1
-anchors_preset = 0
 offset_left = 32.0
 offset_top = 24.0
 offset_right = 332.0
@@ -116,9 +113,8 @@ theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 30
 text = "0 m"
 
-[node name="DistanceCaption" type="Label" parent="HUD/Root"]
+[node name="DistanceCaption" type="Label" parent="HUD/Root" unique_id=774888499]
 layout_mode = 1
-anchors_preset = 0
 offset_left = 33.0
 offset_top = 60.0
 offset_right = 333.0
@@ -127,7 +123,7 @@ theme_override_colors/font_color = Color(1, 1, 1, 0.45)
 theme_override_font_sizes/font_size = 14
 text = "DISTANCE"
 
-[node name="BestLabel" type="Label" parent="HUD/Root"]
+[node name="BestLabel" type="Label" parent="HUD/Root" unique_id=1132085126]
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
@@ -145,7 +141,7 @@ theme_override_font_sizes/font_size = 30
 text = "0 m"
 horizontal_alignment = 2
 
-[node name="BestCaption" type="Label" parent="HUD/Root"]
+[node name="BestCaption" type="Label" parent="HUD/Root" unique_id=445200745]
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
@@ -160,7 +156,7 @@ theme_override_font_sizes/font_size = 14
 text = "BEST"
 horizontal_alignment = 2
 
-[node name="SpeedLabel" type="Label" parent="HUD/Root"]
+[node name="SpeedLabel" type="Label" parent="HUD/Root" unique_id=599586434]
 layout_mode = 1
 anchors_preset = 7
 anchor_left = 0.5
@@ -181,7 +177,7 @@ theme_override_font_sizes/font_size = 70
 text = "0"
 horizontal_alignment = 1
 
-[node name="SpeedCaption" type="Label" parent="HUD/Root"]
+[node name="SpeedCaption" type="Label" parent="HUD/Root" unique_id=495893335]
 layout_mode = 1
 anchors_preset = 7
 anchor_left = 0.5
@@ -199,7 +195,7 @@ theme_override_font_sizes/font_size = 15
 text = "KM/H"
 horizontal_alignment = 1
 
-[node name="FlashLabel" type="Label" parent="HUD/Root"]
+[node name="FlashLabel" type="Label" parent="HUD/Root" unique_id=1099975080]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -220,7 +216,7 @@ theme_override_font_sizes/font_size = 38
 text = "NEAR MISS"
 horizontal_alignment = 1
 
-[node name="HintLabel" type="Label" parent="HUD/Root"]
+[node name="HintLabel" type="Label" parent="HUD/Root" unique_id=1399727002]
 layout_mode = 1
 anchors_preset = 12
 anchor_top = 1.0
@@ -237,7 +233,7 @@ theme_override_font_sizes/font_size = 14
 text = "W/S ride   ·   A/D lean   ·   Q/E look around   ·   C cruise   ·   brown VIEWPOINT signs mark a scenic detour   ·   T light   ·   R restart"
 horizontal_alignment = 1
 
-[node name="CrashPanel" type="PanelContainer" parent="HUD/Root"]
+[node name="CrashPanel" type="PanelContainer" parent="HUD/Root" unique_id=959493636]
 visible = false
 modulate = Color(1, 1, 1, 0)
 layout_mode = 1
@@ -254,7 +250,7 @@ grow_horizontal = 2
 grow_vertical = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_crash")
 
-[node name="CrashLabel" type="Label" parent="HUD/Root/CrashPanel"]
+[node name="CrashLabel" type="Label" parent="HUD/Root/CrashPanel" unique_id=1651851809]
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 0.5, 0.5, 1)
 theme_override_font_sizes/font_size = 26
@@ -262,7 +258,7 @@ text = "CRASHED"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="PausePanel" type="PanelContainer" parent="HUD/Root"]
+[node name="PausePanel" type="PanelContainer" parent="HUD/Root" unique_id=947233626]
 visible = false
 layout_mode = 1
 anchors_preset = 8
@@ -279,18 +275,20 @@ grow_vertical = 2
 mouse_filter = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_pause")
 
-[node name="PauseLabel" type="Label" parent="HUD/Root/PausePanel"]
+[node name="PauseLabel" type="Label" parent="HUD/Root/PausePanel" unique_id=1492772190]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.82, 0.9, 1, 1)
 theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 26
-text = "PAUSED\n\nPress ESC or P to resume"
+text = "PAUSED
+
+Press ESC or P to resume"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="ConfirmPanel" type="PanelContainer" parent="HUD/Root"]
+[node name="ConfirmPanel" type="PanelContainer" parent="HUD/Root" unique_id=346899332]
 visible = false
 layout_mode = 1
 anchors_preset = 8
@@ -307,7 +305,7 @@ grow_vertical = 2
 mouse_filter = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_confirm")
 
-[node name="ConfirmLabel" type="Label" parent="HUD/Root/ConfirmPanel"]
+[node name="ConfirmLabel" type="Label" parent="HUD/Root/ConfirmPanel" unique_id=272768957]
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 0.88, 0.7, 1)
 theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)

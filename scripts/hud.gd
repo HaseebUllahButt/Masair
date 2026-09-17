@@ -73,6 +73,18 @@ var _results_label: Label
 var _touch_controls: Control
 var _touch_held: Dictionary = {}
 var _touch_seen: bool = false
+var _race_hud_card: PanelContainer
+var _race_progress: ProgressBar
+var _race_remaining: Label
+var _race_gap: Label
+var _results_button: Button
+var _touch_steer: Control
+var _touch_steer_thumb: ColorRect
+var _touch_steer_pointer: int = -1
+var _touch_steer_axis: float = 0.0
+var _touch_auto_throttle: bool = false
+var _menu_scroll: ScrollContainer
+var _menu_stack: VBoxContainer
 
 const MOOD_NAMES := ["GOLDEN DUSK", "DAYLIGHT", "MIDNIGHT"]
 const DIFFICULTY_NAMES := ["OPEN ROAD", "SUNDAY RUN", "THE TON"]
@@ -132,7 +144,9 @@ func bind_player(player: Node) -> void:
 func _process(delta: float) -> void:
 	if _countdown_left > 0.0:
 		_tick_countdown(delta)
+	_sync_touch_drive()
 	if _start_menu and _start_menu.visible:
+		_layout_start_menu()
 		if Input.is_action_just_pressed("toggle_day"):
 			_cycle_menu_mood()
 		return
@@ -258,6 +272,12 @@ func _on_crashed() -> void:
 	_release_touch_actions()
 	crash_panel.visible = true
 	crash_panel.modulate.a = 0.0
+	if _game and _game.in_race():
+		var my_z := maxf(float(_player.get("track_z")), 0.0) if _player else 0.0
+		var remaining := maxi(0, int(_race_dist - my_z))
+		var action := "TAP TO REJOIN THE RACE" if _touch_controls else "R  rejoin the race"
+		crash_label.text = "BIKE DOWN\n\n%d m to finish\n\n%s" % [remaining, action]
+		return
 	var d := int(_game.distance_m) if _game else 0
 	var n: int = _game.near_miss_count if _game else 0
 	var balance: int = int(_game.credits) if _game else 0
@@ -300,7 +320,10 @@ func _on_restarted() -> void:
 func _update_pause_label() -> void:
 	if pause_label == null:
 		return
-	pause_label.text = "ROADSIDE PAUSE\n\nESC / P  resume   ·   M  ride menu"
+	if _touch_controls:
+		pause_label.text = "ROADSIDE PAUSE\n\nTap MENU to resume"
+	else:
+		pause_label.text = "ROADSIDE PAUSE\n\nESC / P  resume   ·   M  ride menu"
 
 
 func _build_start_menu() -> void:
@@ -329,14 +352,23 @@ void fragment() {
 	veil.color = Color.WHITE
 	_start_menu.add_child(veil)
 
+	var scroll := ScrollContainer.new()
+	_menu_scroll = scroll
+	scroll.set_anchors_preset(Control.PRESET_LEFT_WIDE)
+	scroll.offset_left = 40.0
+	scroll.offset_top = 36.0
+	scroll.offset_right = 480.0
+	scroll.offset_bottom = -36.0
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_start_menu.add_child(scroll)
+
 	var stack := VBoxContainer.new()
-	stack.set_anchors_preset(Control.PRESET_LEFT_WIDE)
-	stack.offset_left = 56.0
-	stack.offset_top = 64.0
-	stack.offset_right = 460.0
-	stack.offset_bottom = -56.0
+	_menu_stack = stack
+	stack.custom_minimum_size.x = 404.0
+	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	stack.add_theme_constant_override("separation", 10)
-	_start_menu.add_child(stack)
+	scroll.add_child(stack)
 
 	stack.add_child(_menu_label("OPEN COUNTRY", 13, Color("e8b089"), _font_kicker))
 	var title := _menu_label("SPLENDOR", 78, Color("f4efe4"), _font_display)
@@ -388,12 +420,14 @@ void fragment() {
 	_start_button.pressed.connect(_start_ride)
 	stack.add_child(_start_button)
 
-	_race_toggle = _menu_button("RACE FRIENDS", 20)
-	_race_toggle.custom_minimum_size = Vector2(0.0, 40.0)
+	stack.add_child(_menu_label("MULTIPLAYER", 11, Color("9a9588"), _font_kicker))
+	_race_toggle = _menu_button("PLAY WITH FRIENDS", 20)
+	_race_toggle.custom_minimum_size = Vector2(0.0, 50.0)
 	_race_toggle.pressed.connect(func() -> void:
 		_race_panel.visible = not _race_panel.visible
 		if _race_panel.visible:
-			_refresh_race_panel())
+			_refresh_race_panel()
+			call_deferred("_focus_race_panel"))
 	stack.add_child(_race_toggle)
 	_build_race_panel(stack)
 
@@ -796,9 +830,33 @@ func _show_initial_menu() -> void:
 		_show_start_menu()
 		# Web players almost certainly arrived at a host's address — put the
 		# join box on the table instead of hiding it behind a menu fold.
-		if OS.has_feature("web") and _race_panel and not _race_panel.visible:
+		if _touch_controls_wanted() and _race_panel and not _race_panel.visible:
 			_race_panel.visible = true
 			_refresh_race_panel()
+			call_deferred("_layout_start_menu")
+
+
+func _focus_race_panel() -> void:
+	if _menu_scroll == null or _race_panel == null or not _race_panel.visible:
+		return
+	_menu_scroll.ensure_control_visible(_race_panel)
+
+
+func _layout_start_menu() -> void:
+	if _menu_scroll == null or _menu_stack == null or _start_menu == null:
+		return
+	var viewport_size := get_viewport().get_visible_rect().size
+	var narrow := viewport_size.x < 760.0
+	var margin := 24.0 if narrow else 40.0
+	var panel_width := maxf(1.0, minf(440.0, viewport_size.x - margin * 2.0))
+	var panel_height := maxf(1.0, viewport_size.y - 72.0)
+	_menu_scroll.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_menu_scroll.position = Vector2(margin, 36.0)
+	_menu_scroll.size = Vector2(panel_width, panel_height)
+	_menu_stack.custom_minimum_size.x = panel_width
+	var music := _start_menu.get_node_or_null("MusicPanel") as Control
+	if music:
+		music.visible = not narrow
 
 
 func _start_ride() -> void:
@@ -880,13 +938,27 @@ func _style_hud_label(label: Label, font: Font, size: int) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	## A real finger on the glass is the only reliable signal — iPads announce
-	## themselves as macOS and plenty of laptops carry touchscreens nobody
-	## steers with. Build the pads lazily on first touch, never on pure desktop.
-	if event is InputEventScreenTouch and event.pressed:
+	## Build lazily when the first touch arrives, then keep steering on the global
+	## input path so a finger can drag beyond the pad without losing the bike.
+	if event is InputEventScreenTouch:
 		_touch_seen = true
 		if _touch_controls == null:
 			_build_touch_controls()
+			return
+		if not _touch_controls.visible or not _ride_started or _touch_steer == null:
+			return
+		if event.pressed:
+			if _touch_steer_pointer == -1 and _touch_steer.get_global_rect().has_point(event.position):
+				_touch_steer_pointer = event.index
+				_apply_touch_steer_global(event.position)
+				get_viewport().set_input_as_handled()
+		elif event.index == _touch_steer_pointer:
+			_touch_steer_pointer = -1
+			_set_touch_steer(0.0)
+			get_viewport().set_input_as_handled()
+	elif event is InputEventScreenDrag and event.index == _touch_steer_pointer:
+		_apply_touch_steer_global(event.position)
+		get_viewport().set_input_as_handled()
 
 
 func _notification(what: int) -> void:
@@ -895,16 +967,25 @@ func _notification(what: int) -> void:
 
 
 func _touch_controls_wanted() -> bool:
-	if _touch_seen:
+	if _touch_seen or OS.has_feature("mobile"):
 		return true
-	if OS.has_feature("web"):
-		return OS.has_feature("web_android") or OS.has_feature("web_ios")
-	return OS.has_feature("mobile")
+	if not OS.has_feature("web"):
+		return false
+	if OS.has_feature("web_android") or OS.has_feature("web_ios"):
+		return true
+	return _browser_has_touch()
+
+
+func _browser_has_touch() -> bool:
+	var bridge := Engine.get_singleton("JavaScriptBridge")
+	if bridge == null:
+		return false
+	return bool(bridge.eval("navigator.maxTouchPoints > 0 || ('ontouchstart' in window)"))
 
 
 func _ride_hint() -> String:
 	if _touch_controls != null:
-		return "hold GAS to ride   ·   ‹ › lean   ·   MENU for the garage"
+		return "AUTO GAS  ·  slide LEAN to steer  ·  hold BRAKE  ·  tap HORN"
 	return "W/S ride   ·   A/D lean   ·   Q/E look   ·   H horn   ·   C cruise   ·   F scenic bench   ·   T light   ·   R restart"
 
 
@@ -915,33 +996,57 @@ func _build_touch_controls() -> void:
 	_touch_controls = Control.new()
 	_touch_controls.name = "TouchControls"
 	_touch_controls.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_touch_controls.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_touch_controls.mouse_filter = Control.MOUSE_FILTER_PASS
+	_touch_controls.z_index = 20
 	_touch_controls.hidden.connect(_release_touch_actions)
 	hud_root.add_child(_touch_controls)
 
-	var steer := HBoxContainer.new()
-	steer.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT, Control.PRESET_MODE_MINSIZE, 24)
-	steer.add_theme_constant_override("separation", 16)
-	steer.add_child(_hold_pad("‹", &"steer_left", Vector2(132.0, 124.0), 54))
-	steer.add_child(_hold_pad("›", &"steer_right", Vector2(132.0, 124.0), 54))
-	_touch_controls.add_child(steer)
+	var viewport_width := get_viewport().get_visible_rect().size.x
+	var narrow := viewport_width < 760.0
+	var steer_width := 300.0 if not narrow else maxf(132.0, viewport_width * 0.36)
+	var steer_copy := "‹   SLIDE TO LEAN   ›" if not narrow else "‹  LEAN  ›"
+	var steer_font := 19 if not narrow else 15
+	_touch_steer = _pad(steer_copy, Vector2(steer_width, 116.0), steer_font)
+	_touch_steer.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT, Control.PRESET_MODE_MINSIZE, 24)
+	_touch_steer.gui_input.connect(_on_touch_steer_input)
+	_touch_controls.add_child(_touch_steer)
+
+	var track := ColorRect.new()
+	track.position = Vector2(24.0, 79.0)
+	track.size = Vector2(maxf(_touch_steer.size.x - 48.0, 84.0), 3.0)
+	track.color = Color(0.90, 0.68, 0.42, 0.38)
+	track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_touch_steer.add_child(track)
+
+	_touch_steer_thumb = ColorRect.new()
+	_touch_steer_thumb.position = Vector2((_touch_steer.size.x - 42.0) * 0.5, 76.0)
+	_touch_steer_thumb.size = Vector2(42.0, 8.0)
+	_touch_steer_thumb.color = Color("e8b089")
+	_touch_steer_thumb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_touch_steer.add_child(_touch_steer_thumb)
 
 	var pedals := VBoxContainer.new()
 	pedals.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT, Control.PRESET_MODE_MINSIZE, 24)
 	pedals.add_theme_constant_override("separation", 10)
-	var horn := _hold_pad("HORN", &"horn", Vector2(96.0, 48.0), 20)
+	var pedal_top := HBoxContainer.new()
+	pedal_top.alignment = BoxContainer.ALIGNMENT_END
+	pedal_top.add_theme_constant_override("separation", 10)
+	var auto_gas := _menu_label("AUTO GAS", 13, Color(0.56, 0.82, 0.48, 0.9), _font_kicker)
+	auto_gas.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	pedal_top.add_child(auto_gas)
+	var horn := _hold_pad("HORN", &"horn", Vector2(96.0, 48.0), 17)
 	horn.size_flags_horizontal = Control.SIZE_SHRINK_END
-	pedals.add_child(horn)
-	var pedal_row := HBoxContainer.new()
-	pedal_row.add_theme_constant_override("separation", 16)
-	pedal_row.add_child(_hold_pad("BRAKE", &"brake", Vector2(130.0, 124.0), 24))
-	pedal_row.add_child(_hold_pad("GAS", &"throttle", Vector2(158.0, 124.0), 30))
-	pedals.add_child(pedal_row)
+	pedal_top.add_child(horn)
+	pedals.add_child(pedal_top)
+	var brake_width := 164.0 if not narrow else maxf(120.0, viewport_width * 0.34)
+	var brake := _hold_pad("BRAKE", &"brake", Vector2(brake_width, 116.0), 23)
+	brake.size_flags_horizontal = Control.SIZE_SHRINK_END
+	pedals.add_child(brake)
 	_touch_controls.add_child(pedals)
 
-	var menu := _pad("MENU", Vector2(104.0, 42.0), 16)
+	var menu := _pad("MENU", Vector2(112.0, 48.0), 16)
 	menu.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	menu.position = Vector2(28.0, 96.0)
+	menu.position = Vector2(24.0, 88.0)
 	menu.pressed.connect(_on_touch_menu)
 	_touch_controls.add_child(menu)
 
@@ -949,7 +1054,7 @@ func _build_touch_controls() -> void:
 func _pad(copy: String, pad_size: Vector2, font_size: int) -> Button:
 	var pad := Button.new()
 	pad.text = copy
-	pad.custom_minimum_size = pad_size
+	pad.custom_minimum_size = Vector2(maxf(pad_size.x, 48.0), maxf(pad_size.y, 48.0))
 	pad.focus_mode = Control.FOCUS_NONE
 	pad.add_theme_font_override("font", _font_display)
 	pad.add_theme_font_size_override("font_size", font_size)
@@ -987,6 +1092,11 @@ func _pad_up(action: StringName) -> void:
 func _release_touch_actions() -> void:
 	## A pad's finger can be lost — panel opened over it, tab backgrounded —
 	## and a phantom held GAS is a crash on the next spawn. Release what we held.
+	_touch_steer_pointer = -1
+	_set_touch_steer(0.0)
+	if _touch_auto_throttle:
+		Input.action_release(&"throttle")
+		_touch_auto_throttle = false
 	for action in _touch_held:
 		Input.action_release(action)
 	_touch_held.clear()
@@ -994,7 +1104,82 @@ func _release_touch_actions() -> void:
 
 func _on_touch_menu() -> void:
 	_countdown_left = -1.0
-	_show_start_menu()
+	if _game and _game.in_race():
+		_set_paused(not get_tree().paused)
+	else:
+		_show_start_menu()
+
+
+func _sync_touch_drive() -> void:
+	if _touch_controls == null:
+		return
+	var active: bool = (
+		_touch_controls.visible and _ride_started and not get_tree().paused
+		and (_game == null or not _game.is_crashed)
+	)
+	var braking := Input.get_action_strength("brake") > 0.05
+	var want := active and not braking
+	if want and not _touch_auto_throttle:
+		Input.action_press(&"throttle")
+		_touch_auto_throttle = true
+	elif not want and _touch_auto_throttle:
+		Input.action_release(&"throttle")
+		_touch_auto_throttle = false
+
+
+func _on_touch_steer_input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		if event.pressed and _touch_steer_pointer == -1:
+			_touch_steer_pointer = event.index
+			_apply_touch_steer_position(event.position.x)
+			_touch_steer.accept_event()
+		elif not event.pressed and event.index == _touch_steer_pointer:
+			_touch_steer_pointer = -1
+			_set_touch_steer(0.0)
+			_touch_steer.accept_event()
+	elif event is InputEventScreenDrag and event.index == _touch_steer_pointer:
+		_apply_touch_steer_position(event.position.x)
+		_touch_steer.accept_event()
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed and _touch_steer_pointer == -1:
+			_touch_steer_pointer = -2
+			_apply_touch_steer_position(event.position.x)
+		elif not event.pressed and _touch_steer_pointer == -2:
+			_touch_steer_pointer = -1
+			_set_touch_steer(0.0)
+		_touch_steer.accept_event()
+	elif event is InputEventMouseMotion and _touch_steer_pointer == -2:
+		_apply_touch_steer_position(event.position.x)
+		_touch_steer.accept_event()
+
+
+func _apply_touch_steer_global(position: Vector2) -> void:
+	if _touch_steer == null:
+		return
+	_apply_touch_steer_position(_touch_steer.to_local(position).x)
+
+
+func _apply_touch_steer_position(x: float) -> void:
+	if _touch_steer == null:
+		return
+	var half := maxf(_touch_steer.size.x * 0.5, 1.0)
+	var raw := clampf((x - half) / (half * 0.86), -1.0, 1.0)
+	var magnitude := 0.0
+	if absf(raw) > 0.12:
+		magnitude = clampf(inverse_lerp(0.12, 1.0, absf(raw)), 0.0, 1.0)
+	_set_touch_steer(signf(raw) * magnitude)
+
+
+func _set_touch_steer(axis: float) -> void:
+	_touch_steer_axis = clampf(axis, -1.0, 1.0)
+	Input.action_release(&"steer_left")
+	Input.action_release(&"steer_right")
+	if _touch_steer_axis < 0.0:
+		Input.action_press(&"steer_left", -_touch_steer_axis)
+	elif _touch_steer_axis > 0.0:
+		Input.action_press(&"steer_right", _touch_steer_axis)
+	if _touch_steer != null and _touch_steer_thumb != null:
+		_touch_steer_thumb.position.x = lerpf(18.0, maxf(_touch_steer.size.x - 60.0, 18.0), (_touch_steer_axis + 1.0) * 0.5)
 
 
 func _on_crash_panel_input(event: InputEvent) -> void:
@@ -1024,7 +1209,7 @@ func _menu_button(copy: String, size: int) -> Button:
 func _race_edit(placeholder: String) -> LineEdit:
 	var edit := LineEdit.new()
 	edit.placeholder_text = placeholder
-	edit.custom_minimum_size = Vector2(0.0, 34.0)
+	edit.custom_minimum_size = Vector2(0.0, 48.0)
 	edit.add_theme_font_override("font", _font_ui)
 	edit.add_theme_font_size_override("font_size", 15)
 	edit.add_theme_color_override("font_color", Color("f4efe4"))
@@ -1070,23 +1255,28 @@ func _build_race_panel(stack: VBoxContainer) -> void:
 	_race_panel.add_theme_constant_override("separation", 6)
 	stack.add_child(_race_panel)
 
-	_race_status = _menu_label("not connected", 13, Color("9a9588"), _font_kicker)
+	_race_panel.add_child(_menu_label("RACE BRIEF", 11, Color("9a9588"), _font_kicker))
+	_race_panel.add_child(_menu_label("HOST ONCE · FRIENDS OPEN THE LINK · READY · START", 14, Color("e8b089"), _font_head))
+
+	_race_status = _menu_label("STEP 1 · JOIN OR HOST A LOBBY", 13, Color("9a9588"), _font_kicker)
 	_race_panel.add_child(_race_status)
 
+	_race_panel.add_child(_menu_label("RIDER NAME", 11, Color("9a9588"), _font_kicker))
 	_name_edit = _race_edit("your name")
 	_race_panel.add_child(_name_edit)
-	_server_edit = _race_edit("ws://host:8001")
+	_race_panel.add_child(_menu_label("RACE SERVER ADDRESS", 11, Color("9a9588"), _font_kicker))
+	_server_edit = _race_edit("ws://your-host:8001")
 	_race_panel.add_child(_server_edit)
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	_join_button = _accent_button("JOIN", 17)
-	_join_button.custom_minimum_size = Vector2(0.0, 38.0)
+	_join_button.custom_minimum_size = Vector2(0.0, 50.0)
 	_join_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_join_button.pressed.connect(_on_join_pressed)
 	row.add_child(_join_button)
 	_ready_button = _menu_button("READY", 17)
-	_ready_button.custom_minimum_size = Vector2(0.0, 38.0)
+	_ready_button.custom_minimum_size = Vector2(0.0, 50.0)
 	_ready_button.pressed.connect(_on_ready_pressed)
 	_ready_button.visible = false
 	row.add_child(_ready_button)
@@ -1096,8 +1286,8 @@ func _build_race_panel(stack: VBoxContainer) -> void:
 	_lobby_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_race_panel.add_child(_lobby_label)
 
-	_race_start_button = _accent_button("START RACE", 17)
-	_race_start_button.custom_minimum_size = Vector2(0.0, 38.0)
+	_race_start_button = _accent_button("WAITING FOR RIDER", 17)
+	_race_start_button.custom_minimum_size = Vector2(0.0, 50.0)
 	_race_start_button.visible = false
 	_race_start_button.pressed.connect(func() -> void:
 		if _net:
@@ -1105,7 +1295,7 @@ func _build_race_panel(stack: VBoxContainer) -> void:
 	_race_panel.add_child(_race_start_button)
 
 	var host := _menu_label(
-		"to host: run SplendorServer, forward ports 8000-8001, friends open http://you:8000",
+		"HOST: run SplendorServer and share http://your-address:8000. Friends open that link, choose a name, and tap JOIN RACE.",
 		12, Color("9a9588"), _font_ui)
 	host.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_race_panel.add_child(host)
@@ -1126,12 +1316,76 @@ func _refresh_race_panel() -> void:
 func _sync_race_widgets() -> void:
 	var online: bool = _net != null and _net.online()
 	var connecting: bool = _net != null and _net.state == "connecting"
-	_join_button.text = "LEAVE" if online else "JOIN"
+	_join_button.text = "LEAVE LOBBY" if online else "JOIN RACE"
 	_join_button.disabled = connecting
 	_name_edit.editable = not online and not connecting
 	_server_edit.editable = not online and not connecting
-	_ready_button.visible = online
-	_race_status.text = _net.state if _net else "off"
+	if not online:
+		_race_toggle.text = "PLAY WITH FRIENDS"
+		_ready_button.visible = false
+		_race_start_button.visible = false
+		_race_status.add_theme_color_override("font_color", Color("9a9588"))
+		if connecting:
+			_race_status.text = "CONNECTING TO RACE SERVER..."
+		elif _net != null and str(_net.state).begins_with("error:"):
+			_race_status.text = "COULDN'T CONNECT · CHECK THE ADDRESS"
+		else:
+			_race_status.text = "STEP 1 · JOIN OR HOST A LOBBY"
+		return
+	_update_lobby_state()
+
+
+func _update_lobby_state() -> void:
+	var total := 0
+	var ready_count := 0
+	var own_ready := false
+	var leader_name := "THE LEADER"
+	for id in _net.players:
+		var p: Dictionary = _net.players[id]
+		total += 1
+		var rider_ready := bool(p.get("ready", false))
+		if rider_ready:
+			ready_count += 1
+		if int(id) == _net.my_id:
+			own_ready = rider_ready
+		if int(id) == _net.leader_id:
+			leader_name = str(p.get("name", "the leader")).to_upper()
+	_ready_state = own_ready
+	var is_leader: bool = _net.my_id >= 0 and _net.my_id == _net.leader_id
+	var in_lobby: bool = _net.phase == "lobby"
+	var all_ready := total >= 2 and ready_count == total
+	_race_toggle.text = "RACE LOBBY · %d" % total
+	_ready_button.visible = in_lobby
+	_ready_button.text = "READY ✓" if own_ready else "READY"
+	_race_start_button.visible = is_leader and in_lobby
+	_race_start_button.disabled = not all_ready
+	if total < 2:
+		_race_start_button.text = "WAITING FOR RIDER"
+	elif not all_ready:
+		_race_start_button.text = "WAITING FOR READY"
+	else:
+		_race_start_button.text = "START RACE"
+	var muted := Color("9a9588")
+	var green := Color("8fd07a")
+	if _net.phase == "racing":
+		_race_status.text = "RACE IN PROGRESS"
+		_race_status.add_theme_color_override("font_color", muted)
+	elif total < 2:
+		_race_status.text = "STEP 2 · SHARE THE LINK — WAITING FOR A RIDER"
+		_race_status.add_theme_color_override("font_color", muted)
+	elif not own_ready:
+		_race_status.text = "STEP 2 · TAP READY WHEN YOUR BIKE IS SET"
+		_race_status.add_theme_color_override("font_color", muted)
+	elif not all_ready:
+		var waiting := total - ready_count
+		_race_status.text = "STEP 2 · WAITING FOR %d RIDER%s" % [waiting, "" if waiting == 1 else "S"]
+		_race_status.add_theme_color_override("font_color", muted)
+	elif is_leader:
+		_race_status.text = "STEP 3 · EVERYONE IS READY — START THE RACE"
+		_race_status.add_theme_color_override("font_color", green)
+	else:
+		_race_status.text = "READY · WAITING FOR %s TO START" % leader_name
+		_race_status.add_theme_color_override("font_color", green)
 
 
 func _on_join_pressed() -> void:
@@ -1140,7 +1394,15 @@ func _on_join_pressed() -> void:
 	if _net.online():
 		_leave_lobby()
 		return
-	_net.connect_to(_server_edit.text.strip_edges(), _name_edit.text.strip_edges())
+	var server := _server_edit.text.strip_edges()
+	var rider := _name_edit.text.strip_edges()
+	if server.is_empty():
+		_race_status.text = "ENTER THE RACE SERVER ADDRESS"
+		return
+	if rider.is_empty():
+		_race_status.text = "ENTER A RIDER NAME"
+		return
+	_net.connect_to(server, rider)
 
 
 func _leave_lobby() -> void:
@@ -1159,10 +1421,11 @@ func _on_ready_pressed() -> void:
 	if _net:
 		_net.set_ready(_ready_state)
 	_ready_button.text = "READY ✓" if _ready_state else "READY"
+	if _ready_state:
+		_race_status.text = "READY SENT · WAITING FOR THE LOBBY"
 
 
 func _on_conn_state(state: String) -> void:
-	_race_status.text = state
 	_sync_race_widgets()
 	if state != "online":
 		_ready_state = false
@@ -1180,13 +1443,11 @@ func _on_lobby(list: Array, my_id: int, leader_id: int, phase: String) -> void:
 			tags.append("you")
 		if int(p["id"]) == leader_id:
 			tags.append("leader")
-		var mark := "✓" if bool(p.get("ready", false)) else "·"
 		var tag := " (%s)" % ", ".join(tags) if not tags.is_empty() else ""
+		var mark := "READY " if bool(p.get("ready", false)) else "WAIT  "
 		lines.append("%s %s%s" % [mark, p["name"], tag])
 	_lobby_label.text = "\n".join(lines)
-	var can_start := _net and my_id == leader_id and list.size() >= 2 and phase == "lobby"
-	_race_start_button.visible = can_start
-	_race_start_button.disabled = false
+	_sync_race_widgets()
 
 
 func _on_race_starting(seed: int, delay_s: float, dist: float) -> void:
@@ -1207,7 +1468,10 @@ func _on_race_starting(seed: int, delay_s: float, dist: float) -> void:
 		_game.begin_race(seed)
 	_ride_started = true
 	get_tree().paused = true # restart() unpauses; hold everyone on the lights
-	_countdown_left = delay_s + 0.99
+	hint_label.text = "RACE TO %.1f KM · FIRST RIDER TO THE FINISH" % (dist / 1000.0)
+	_hint = delay_s + 0.5
+	_countdown_left = maxf(delay_s, 0.01)
+	_update_race_pos()
 
 
 func _tick_countdown(delta: float) -> void:
@@ -1226,6 +1490,8 @@ func _tick_countdown(delta: float) -> void:
 		flash_label.modulate = Color("8fd07a")
 		flash_label.modulate.a = 1.0
 		_flash = 0.55
+		hint_label.text = "RACE LIVE · %d M TO THE FINISH" % int(_race_dist)
+		_hint = 2.0
 
 
 func _on_race_finish(id: int, place: int) -> void:
@@ -1234,6 +1500,8 @@ func _on_race_finish(id: int, place: int) -> void:
 		flash_label.text = "P%d — YOU FINISHED" % place
 		flash_label.modulate = Color("8fd07a")
 		_flash = 1.2
+		if _race_gap:
+			_race_gap.text = "FINISHED P%d · WAITING FOR THE FIELD" % place
 	else:
 		var info: Dictionary = _net.players.get(id, {}) if _net else {}
 		flash_label.text = "%s finished P%d" % [str(info.get("name", "rider")), place]
@@ -1246,7 +1514,8 @@ func _on_race_results(order: Array) -> void:
 		_game.end_race()
 	_my_finish_place = 0
 	_ready_state = false
-	var lines: Array[String] = ["RACE OVER", ""]
+	_release_touch_actions()
+	var lines: Array[String] = ["RACE RESULTS", ""]
 	for p in order:
 		var me := "  ← you" if _net and int(p["id"]) == _net.my_id else ""
 		if bool(p.get("dnf", false)):
@@ -1254,23 +1523,27 @@ func _on_race_results(order: Array) -> void:
 		else:
 			lines.append("P%d  %s%s" % [int(p["place"]), p["name"], me])
 	lines.append("")
-	lines.append("leader starts the rematch from the lobby")
+	lines.append("Ready up in the lobby for a rematch.")
 	_results_label.text = "\n".join(lines)
 	_results_panel.visible = true
+	if _race_hud_card:
+		_race_hud_card.visible = false
+	get_tree().paused = true
+	pause_panel.visible = false
 	_update_race_pos()
 
 
 func _update_race_pos() -> void:
-	if _pos_label == null:
+	if _race_hud_card == null:
 		return
 	var racing: bool = (
 		_net != null and _net.online() and _net.phase == "racing"
 		and _game != null and _game.in_race()
 	)
 	if not racing:
-		_pos_label.visible = false
+		_race_hud_card.visible = false
 		return
-	_pos_label.visible = true
+	_race_hud_card.visible = true
 	# same number net_client reports: road distance, not distance_m + bonus
 	var my_dist: float = maxf(float(_player.get("track_z")), 0.0) if _player else 0.0
 	var ahead := 0
@@ -1285,30 +1558,81 @@ func _update_race_pos() -> void:
 			ahead += 1
 			lead_gap = maxf(lead_gap, d - my_dist)
 	var place := ahead + 1
-	var progress := "%.1f/%.1f km" % [my_dist / 1000.0, _race_dist / 1000.0]
-	var suffix := ""
+	_pos_label.text = "P%d / %d" % [place, count]
+	_race_remaining.text = "%d M TO FINISH" % int(maxf(_race_dist - my_dist, 0.0))
+	_race_progress.max_value = maxf(_race_dist, 1.0)
+	_race_progress.value = clampf(my_dist, 0.0, _race_dist)
 	if _my_finish_place > 0:
-		suffix = "  ·  done P%d" % _my_finish_place
+		_race_gap.text = "FINISHED P%d" % _my_finish_place
 	elif place == 1 and count > 1:
-		suffix = "  ·  leader"
+		_race_gap.text = "LEADING THE RACE"
 	elif lead_gap > 0.0:
-		suffix = "  ·  -%d m" % int(lead_gap)
-	_pos_label.text = "P%d/%d · %s%s" % [place, count, progress, suffix]
+		_race_gap.text = "%d M TO THE LEADER" % int(lead_gap)
+	else:
+		_race_gap.text = "RACE TO THE FINISH"
 
 
 func _build_race_hud() -> void:
+	_race_hud_card = PanelContainer.new()
+	_race_hud_card.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_race_hud_card.offset_left = -356.0
+	_race_hud_card.offset_top = 52.0
+	_race_hud_card.offset_right = -24.0
+	_race_hud_card.offset_bottom = 148.0
+	_race_hud_card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_race_hud_card.visible = false
+	var card := StyleBoxFlat.new()
+	card.bg_color = Color(0.03, 0.035, 0.04, 0.78)
+	card.border_color = Color(0.90, 0.68, 0.42, 0.45)
+	card.set_border_width_all(1)
+	card.set_corner_radius_all(4)
+	card.content_margin_left = 14
+	card.content_margin_right = 14
+	card.content_margin_top = 12
+	card.content_margin_bottom = 12
+	_race_hud_card.add_theme_stylebox_override("panel", card)
+
+	var card_box := VBoxContainer.new()
+	card_box.add_theme_constant_override("separation", 5)
+	_race_hud_card.add_child(card_box)
+
+	var top_row := HBoxContainer.new()
+	top_row.add_theme_constant_override("separation", 8)
 	_pos_label = Label.new()
-	_pos_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_pos_label.position = Vector2(-300.0, 60.0)
-	_pos_label.size = Vector2(280.0, 32.0)
-	_pos_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_pos_label.visible = false
-	_style_hud_label(_pos_label, _font_head, 22)
-	hud_root.add_child(_pos_label)
+	_pos_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_pos_label.add_theme_color_override("font_color", Color("f4efe4"))
+	_style_hud_label(_pos_label, _font_display if _font_display != null else _font_head, 24)
+	top_row.add_child(_pos_label)
+	_race_remaining = Label.new()
+	_race_remaining.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_race_remaining.add_theme_color_override("font_color", Color("c8c2b4"))
+	_race_remaining.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_style_hud_label(_race_remaining, _font_head, 15)
+	top_row.add_child(_race_remaining)
+	card_box.add_child(top_row)
+
+	_race_progress = ProgressBar.new()
+	_race_progress.min_value = 0.0
+	_race_progress.max_value = 100.0
+	_race_progress.custom_minimum_size.y = 8.0
+	_race_progress.show_percentage = false
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color(0.06, 0.06, 0.07, 0.9)
+	bar_bg.set_corner_radius_all(3)
+	_race_progress.add_theme_stylebox_override("background", bar_bg)
+	var bar_fill := StyleBoxFlat.new()
+	bar_fill.bg_color = Color("c92a38")
+	bar_fill.set_corner_radius_all(3)
+	_race_progress.add_theme_stylebox_override("fill", bar_fill)
+	card_box.add_child(_race_progress)
+
+	_race_gap = _menu_label("", 13, Color("9a9588"), _font_head)
+	card_box.add_child(_race_gap)
+	hud_root.add_child(_race_hud_card)
 
 	_results_panel = PanelContainer.new()
 	_results_panel.set_anchors_preset(Control.PRESET_CENTER)
-	_results_panel.custom_minimum_size = Vector2(360.0, 0.0)
+	_results_panel.custom_minimum_size = Vector2(380.0, 0.0)
 	var box := StyleBoxFlat.new()
 	box.bg_color = Color(0.03, 0.035, 0.04, 0.88)
 	box.border_color = Color(0.76, 0.47, 0.28, 0.35)
@@ -1318,7 +1642,21 @@ func _build_race_hud() -> void:
 	box.content_margin_top = 20
 	box.content_margin_bottom = 20
 	_results_panel.add_theme_stylebox_override("panel", box)
+	var results_box := VBoxContainer.new()
+	results_box.add_theme_constant_override("separation", 14)
+	_results_panel.add_child(results_box)
 	_results_label = _menu_label("", 19, Color("f4efe4"), _font_head)
-	_results_panel.add_child(_results_label)
+	results_box.add_child(_results_label)
+	_results_button = _accent_button("BACK TO RACE LOBBY", 17)
+	_results_button.custom_minimum_size = Vector2(0.0, 42.0)
+	_results_button.pressed.connect(_return_to_race_lobby)
+	results_box.add_child(_results_button)
 	_results_panel.visible = false
 	hud_root.add_child(_results_panel)
+
+
+func _return_to_race_lobby() -> void:
+	_results_panel.visible = false
+	_show_start_menu()
+	_race_panel.visible = true
+	_refresh_race_panel()
