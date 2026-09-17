@@ -34,6 +34,9 @@ const MIME := {
 const GZIP_EXTS := ["html", "js", "wasm", "pck", "css", "json", "svg"]
 const MAX_HTTP_HEAD := 16384
 const HTTP_READ_TIMEOUT_S := 5.0
+const HTTP_WRITE_TIMEOUT_S := 30.0
+const HTTP_CHUNK := 65536
+const HTTP_TICK_BUDGET := 1 << 20 # bytes per socket per frame
 const JOIN_TIMEOUT_S := 10.0
 const RESULTS_TIMEOUT_S := 60.0
 
@@ -42,6 +45,7 @@ var _ws_srv := TCPServer.new()
 var _webroot := "build/web"
 var _race_dist := 5000.0
 var _http_pending: Array = [] # [{s:StreamPeerTCP, buf:PackedByteArray, t:float}]
+var _http_out: Array = [] # [{s:StreamPeerTCP, buf:PackedByteArray, off:int, t:float}]
 var _ws_pending: Array = [] # [{ws:WebSocketPeer, t:float}] handshake done, not yet joined
 var _players := {} # id -> {ws, name, bike, ready, dist, finished, ms}
 var _next_id := 1
@@ -82,6 +86,7 @@ func _now() -> float:
 
 func _process(delta: float) -> bool:
 	_poll_http(delta)
+	_pump_http_out(delta)
 	_poll_ws()
 	_poll_players()
 	_check_results_timeout()
@@ -200,12 +205,50 @@ func _send_http(sock: StreamPeerTCP, code: int, mime: String, body: PackedByteAr
 		enc_head = "Content-Encoding: %s\r\n" % encoding
 	var head := "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\n%sConnection: close\r\nVary: Accept-Encoding\r\nCross-Origin-Opener-Policy: same-origin\r\nCross-Origin-Embedder-Policy: require-corp\r\n\r\n" % [
 		code, reason, mime, body.size(), enc_head]
-	sock.put_data(head.to_ascii_buffer())
-	sock.put_data(body)
-	# give the socket a moment to flush before disconnecting
-	for i in 8:
+	# Queue rather than put_data(): that blocks until the peer has taken every
+	# byte, and a friend pulling the 10 MB wasm over a hotspot would freeze the
+	# whole loop — no page for the next joiner, no pose updates for riders
+	# already racing. _pump_http_out() dribbles it out across frames instead.
+	var out := head.to_ascii_buffer()
+	out.append_array(body)
+	_http_out.append({"s": sock, "buf": out, "off": 0, "t": 0.0})
+
+
+func _pump_http_out(delta: float) -> void:
+	for i in range(_http_out.size() - 1, -1, -1):
+		var c: Dictionary = _http_out[i]
+		var sock: StreamPeerTCP = c["s"]
 		sock.poll()
-		OS.delay_msec(4)
+		if sock.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+			_http_out.remove_at(i)
+			continue
+		var buf: PackedByteArray = c["buf"]
+		var off: int = c["off"]
+		var budget := HTTP_TICK_BUDGET
+		var stalled := false
+		while off < buf.size() and budget > 0:
+			var end: int = mini(off + mini(HTTP_CHUNK, budget), buf.size())
+			var r: Array = sock.put_partial_data(buf.slice(off, end))
+			if r[0] != OK:
+				off = -1 # peer went away mid-body
+				break
+			if int(r[1]) <= 0:
+				stalled = true # kernel buffer full, pick it up next frame
+				break
+			budget -= int(r[1])
+			off += int(r[1])
+		if off < 0:
+			_http_out.remove_at(i)
+			continue
+		c["off"] = off
+		if off >= buf.size():
+			# Everything is in the kernel's send buffer; close(2) still flushes it.
+			sock.disconnect_from_host()
+			_http_out.remove_at(i)
+			continue
+		c["t"] = float(c["t"]) + delta if stalled else 0.0
+		if float(c["t"]) > HTTP_WRITE_TIMEOUT_S:
+			_http_out.remove_at(i)
 
 
 # ------------------------------------------------------------------- lobby
@@ -408,5 +451,6 @@ func _send(ws: WebSocketPeer, m: Dictionary) -> void:
 func _finalize() -> void:
 	for id in _players:
 		_players[id]["ws"].close()
+	_http_out.clear()
 	_http.stop()
 	_ws_srv.stop()
