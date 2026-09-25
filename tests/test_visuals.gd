@@ -245,9 +245,10 @@ func _run() -> void:
 		check(left.x > mid.x * 1.35, "range has a left peak, not a central blob (%.0f vs %.0f)" % [left.x, mid.x])
 		check(right.x > mid.x * 1.35, "range has a right peak, not a central blob (%.0f vs %.0f)" % [right.x, mid.x])
 	var range_mesh := viewpoint.get_node("ViewpointRange") as MeshInstance3D
+	var overlook_mat := range_mesh.material_override as ShaderMaterial
 	check(
-		range_mesh.material_override == LowPolyGD.terrain_material(),
-		"the range uses the landscape material, not a toon-lit prop"
+		overlook_mat != null and overlook_mat.shader.resource_path.ends_with("horizon.gdshader"),
+		"the overlook range is painted like the ride's skyline, not lit as clay terrain"
 	)
 	check(
 		is_equal_approx(
@@ -286,8 +287,9 @@ func _run() -> void:
 	check(on_road_trees == 0, "the platform chunk does not plant trees on the scenic road (%d)" % on_road_trees)
 	var platform_grass: int = (viewpoint.get("_grass") as Array).size()
 	check(platform_grass < 100, "the platform does not scatter field grass over the lake (%d)" % platform_grass)
-	check(viewpoint.get_node_or_null("Birds") != null, "country overlooks have a small flock over the water")
-	check(viewpoint.is_processing(), "country flock keeps the platform chunk awake")
+	check(viewpoint.get_node_or_null("Birds") == null, "overlooks run no flock")
+	check(viewpoint.get_node_or_null("Clouds") == null, "overlook peaks wear no cloud collars")
+	check(not viewpoint.is_processing(), "the platform chunk does not process")
 	var climb: Node3D = RoadChunkGD.new()
 	climb.name = "SpurWoodlandTest"
 	get_root().add_child(climb)
@@ -459,15 +461,14 @@ func _run() -> void:
 			check(themed.get_node_or_null("ViewpointRange") != null, "the coast keeps a distant headland on the horizon")
 			check(themed.get_node_or_null("ViewpointCliffs") == null, "the coast overlook has no far-shore wall in the water")
 			check(themed.get_node_or_null("ViewpointHeadland") != null, "the coast overlook has a cliff under the bench")
-			check(themed.get_node_or_null("ViewpointCypress") != null, "the coast view has a framing sea-stack")
-			check(themed.get_node_or_null("Birds") != null, "gulls circle the coast water")
-			check(themed.is_processing(), "the coast flock keeps the chunk awake")
+			check(themed.get_node_or_null("Birds") == null, "the coast view runs no gulls")
+			check(not themed.is_processing(), "a coast platform does not process")
 		if env == RoadChunkGD.Env.MOUNTAIN:
-			check(themed.get_node_or_null("Birds") != null, "raptors circle the mountain col")
-			check(themed.is_processing(), "the mountain flock keeps the chunk awake")
+			check(themed.get_node_or_null("Birds") == null, "the mountain col runs no raptors")
+			check(not themed.is_processing(), "a mountain platform does not process")
 		if env == RoadChunkGD.Env.FOREST:
 			check(themed.get_node_or_null("Birds") == null, "the forest gorge does not run a flock")
-			check(not themed.is_processing(), "a forest platform with no clouds or birds does not process")
+			check(not themed.is_processing(), "a forest platform does not process")
 		check(not themed.has_method("_build_islands"), "biome %d lake has no wooded islands" % env)
 		check(not themed.has_method("_build_far_settlement"), "biome %d far shore has no hamlet" % env)
 		themed.free()
@@ -488,27 +489,38 @@ func _run() -> void:
 	check(forest_far < country_far * 0.72, "forest is a gorge, not a lake (%.0f vs %.0f)" % [forest_far, country_far])
 	check(mountain_far < country_far * 0.82, "mountain is a tarn in a pass (%.0f vs %.0f)" % [mountain_far, country_far])
 
-	var cairn_index := int(floor((mountain_view + 200.0) / RoadChunkGD.LENGTH))
+	var cairn_index := int(floor((mountain_view + 150.0) / RoadChunkGD.LENGTH))
 	var cairn: Node3D = RoadChunkGD.new()
 	cairn.name = "ViewpointCairnTest"
 	get_root().add_child(cairn)
 	cairn.call("setup", cairn_index, RoadChunkGD.Env.MOUNTAIN)
 	check(cairn.get_node_or_null("ViewpointCairn") != null, "the mountain view has a cairn on the far shore")
 	cairn.free()
-	var wall_index := int(floor((country_view + 200.0) / RoadChunkGD.LENGTH))
+	var wall_index := int(floor((country_view + 160.0) / RoadChunkGD.LENGTH))
 	var wall: Node3D = RoadChunkGD.new()
 	wall.name = "ViewpointWallTest"
 	get_root().add_child(wall)
 	wall.call("setup", wall_index, RoadChunkGD.Env.COUNTRY)
 	check(wall.get_node_or_null("ViewpointWall") != null, "the country view has a dry-stone wall on the far shore")
 	wall.free()
+	# Like the cairn and wall, the sea-stack cluster plants on whichever vista
+	# chunk covers its z — with forty-metre chunks that is usually a neighbour
+	# of the platform chunk, not the platform chunk itself.
+	var cypress_index := int(floor((coast_view + 42.0) / RoadChunkGD.LENGTH))
+	var stacks: Node3D = RoadChunkGD.new()
+	stacks.name = "ViewpointCypressTest"
+	get_root().add_child(stacks)
+	stacks.call("setup", cypress_index, RoadChunkGD.Env.COAST)
+	check(stacks.get_node_or_null("ViewpointCypress") != null, "the coast view has a framing sea-stack")
+	stacks.free()
 	var peak_index := int(floor((mountain_view + float(RoadChunkGD.RANGE_LAYERS[0]["left"])) / RoadChunkGD.LENGTH))
 	var peak: Node3D = RoadChunkGD.new()
-	peak.name = "PeakCloudTest"
+	peak.name = "PeakRangeTest"
 	get_root().add_child(peak)
 	peak.call("setup", peak_index, RoadChunkGD.Env.MOUNTAIN)
-	check(peak.get_node_or_null("Clouds") != null, "planted summits wear a collar of cloud")
-	check(peak.is_processing(), "peak clouds drift, so their chunk processes")
+	check(peak.get_node_or_null("ViewpointRange") != null, "the planted-summit chunk still builds its range")
+	check(peak.get_node_or_null("Clouds") == null, "planted summits wear no collar of cloud")
+	check(not peak.is_processing(), "a static vista chunk does not process")
 	peak.free()
 
 	# Forest, coast and mountain roadside scenery still builds when those biomes
@@ -563,8 +575,9 @@ func _run() -> void:
 	check(ridge.get_node_or_null("RidgeWall") != null, "country landmarks are a dry-stone wall")
 	ridge.free()
 
-	# The café racer has to exist as a complete machine: title shot and bench
-	# both see the whole bike, so a headlight-only cockpit is a regression.
+	# The selected café racer has to exist as a complete machine: title shot and
+	# bench both see the whole bike. Other garage variants keep named shells and
+	# are built when selected so they do not all stall the first frame.
 	var bike_vis := Node3D.new()
 	bike_vis.set_script(MotorcycleVisualGD)
 	bike_vis.name = "BikeVisualTest"
@@ -578,14 +591,15 @@ func _run() -> void:
 	const KITS := ["MesaKit", "SabreKit", "HalcyonKit", "TempestKit", "RavenKit"]
 	for kit_name in KITS:
 		var kit := bike_vis.get_node_or_null(kit_name)
-		check(kit != null, "%s is a built café, not a missing overlay" % kit_name)
-		if kit:
-			var body := kit.get_child(0) as MeshInstance3D
-			check(body != null and body.mesh != null and body.mesh.get_surface_count() > 0, "%s has painted bodywork" % kit_name)
+		check(kit != null, "%s keeps a named garage slot" % kit_name)
 	for style in KITS.size():
 		bike_vis.call("set_bike_style", style)
 		for i in KITS.size():
-			var shown: bool = bike_vis.get_node(KITS[i]).visible
+			var kit := bike_vis.get_node(KITS[i]) as Node3D
+			if i == style:
+				var body := kit.get_child(0) as MeshInstance3D
+				check(body != null and body.mesh != null and body.mesh.get_surface_count() > 0, "%s builds bodywork on preview" % KITS[i])
+			var shown: bool = kit.visible
 			check(shown == (i == style), "%s visibility matches style %d" % [KITS[i], style])
 	bike_vis.free()
 

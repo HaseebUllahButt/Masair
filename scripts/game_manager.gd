@@ -17,6 +17,9 @@ const SAVE_INTERVAL_S := 5.0
 
 var distance_m: float = 0.0
 var best_m: float = 0.0
+## Lifetime route distance used for garage unlocks. `best_m` remains the best
+## single-run score shown on the HUD.
+var lifetime_m: float = 0.0
 var bonus_m: float = 0.0
 var is_crashed: bool = false
 var near_miss_count: int = 0
@@ -27,6 +30,7 @@ var selected_bike: int = 0
 var tuning: Array[Dictionary] = []
 
 var _player: Node3D
+var _last_route_m: float = 0.0
 var _combo_timer: float = 0.0
 var _next_credit_distance: float = CREDIT_DISTANCE
 var _unbanked_credits: int = 0
@@ -52,6 +56,7 @@ func _notification(what: int) -> void:
 
 func bind_player(player: Node3D) -> void:
 	_player = player
+	_last_route_m = maxf(float(player.track_z), 0.0)
 	apply_selected_bike()
 
 
@@ -67,7 +72,18 @@ func _process(delta: float) -> void:
 			_flush_progress()
 	if is_crashed or _player == null:
 		return
-	var d: float = maxf(_player.track_z, 0.0) + bonus_m
+	var route_m: float = maxf(float(_player.track_z), 0.0)
+	if route_m < _last_route_m:
+		# Restarts and menu teleports reset the route; do not count that jump as
+		# distance, and let the next frame establish the new baseline.
+		_last_route_m = route_m
+	else:
+		var forward_m: float = route_m - _last_route_m
+		if forward_m > 0.0:
+			lifetime_m += forward_m
+			_progress_dirty = true
+		_last_route_m = route_m
+	var d: float = route_m + bonus_m
 	if d > distance_m:
 		distance_m = d
 		distance_changed.emit(distance_m)
@@ -77,7 +93,6 @@ func _process(delta: float) -> void:
 			best_m = distance_m
 			best_changed.emit(best_m)
 			_progress_dirty = true
-	var route_m := maxf(float(_player.track_z), 0.0)
 	var earned := 0
 	while route_m >= _next_credit_distance:
 		earned += 1
@@ -116,6 +131,7 @@ func restart() -> void:
 	get_tree().paused = false
 	Engine.time_scale = 1.0
 	distance_m = 0.0
+	_last_route_m = 0.0
 	bonus_m = 0.0
 	near_miss_count = 0
 	combo = 0
@@ -202,10 +218,14 @@ func bike_stats(bike_id: int) -> Dictionary:
 	return BikeCatalog.stats(safe_id, tuning[safe_id])
 
 
+func unlock_progress_m() -> float:
+	return maxf(best_m, lifetime_m)
+
+
 func is_bike_unlocked(bike_id: int) -> bool:
 	if bike_id < 0 or bike_id >= BikeCatalog.BIKES.size():
 		return false
-	return best_m >= float(BikeCatalog.BIKES[bike_id]["unlock_m"])
+	return unlock_progress_m() >= float(BikeCatalog.BIKES[bike_id]["unlock_m"])
 
 
 func preview_bike(bike_id: int) -> void:
@@ -278,12 +298,16 @@ func load_music_config() -> Dictionary:
 	var cfg := ConfigFile.new()
 	var folder := ""
 	var preset_index := 0
+	var music_volume := 0.90
+	var engine_volume := 0.65
 	var track_index := 0
 	var want_playing := false
 	var playback_position := 0.0
 	var track_path := ""
 	if cfg.load(SAVE_PATH) == OK:
 		preset_index = int(cfg.get_value("music", "preset_index", 0))
+		music_volume = clampf(float(cfg.get_value("music", "music_volume", music_volume)), 0.0, 1.0)
+		engine_volume = clampf(float(cfg.get_value("music", "engine_volume", engine_volume)), 0.0, 1.0)
 		track_index = int(cfg.get_value("music", "track_index", 0))
 		want_playing = bool(cfg.get_value("music", "want_playing", false))
 		folder = str(cfg.get_value("music", "folder", ""))
@@ -300,6 +324,8 @@ func load_music_config() -> Dictionary:
 						break
 	return {
 		"preset_index": preset_index,
+		"music_volume": music_volume,
+		"engine_volume": engine_volume,
 		"track_index": track_index,
 		"want_playing": want_playing,
 		"folder": folder,
@@ -312,6 +338,8 @@ func save_music_config(data: Dictionary) -> void:
 	var cfg := ConfigFile.new()
 	cfg.load(SAVE_PATH)
 	cfg.set_value("music", "preset_index", int(data.get("preset_index", 0)))
+	cfg.set_value("music", "music_volume", clampf(float(data.get("music_volume", 0.90)), 0.0, 1.0))
+	cfg.set_value("music", "engine_volume", clampf(float(data.get("engine_volume", 0.65)), 0.0, 1.0))
 	cfg.set_value("music", "track_index", int(data.get("track_index", 0)))
 	cfg.set_value("music", "want_playing", bool(data.get("want_playing", false)))
 	cfg.set_value("music", "folder", str(data.get("folder", "")))
@@ -327,6 +355,7 @@ func _load_progress() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(SAVE_PATH) == OK:
 		best_m = float(cfg.get_value("score", "best_m", 0.0))
+		lifetime_m = maxf(float(cfg.get_value("score", "lifetime_m", best_m)), best_m)
 		credits = maxi(0, int(cfg.get_value("economy", "credits", 0)))
 		selected_bike = clampi(int(cfg.get_value("garage", "selected_bike", 0)), 0, BikeCatalog.BIKES.size() - 1)
 		for bike_id in BikeCatalog.BIKES.size():
@@ -346,6 +375,7 @@ func _save_progress() -> void:
 	var cfg := ConfigFile.new()
 	cfg.load(SAVE_PATH)
 	cfg.set_value("score", "best_m", best_m)
+	cfg.set_value("score", "lifetime_m", lifetime_m)
 	cfg.set_value("economy", "credits", credits)
 	cfg.set_value("garage", "selected_bike", selected_bike)
 	for bike_id in BikeCatalog.BIKES.size():

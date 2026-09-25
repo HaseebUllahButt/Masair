@@ -25,6 +25,9 @@ const HorizonMountainsGD := preload("res://scripts/horizon_mountains.gd")
 @export var roll_drag: float = 0.03
 @export var start_speed: float = 16.0
 const CRUISE_MIN_SPEED := 8.0
+## Keep the synthetic crank from climbing into a thin, abrasive buzz. The
+## gearbox still rises with speed, but the whole voice sits a little lower.
+const ENGINE_PITCH_RATE := 0.88
 var _gears: float = 6.0
 var _idle_pitch: float = 0.64
 var _pitch_span: float = 1.12
@@ -181,6 +184,7 @@ func _setup_audio() -> void:
 	add_child(_horn)
 
 	_engine = AudioStreamPlayer.new()
+	_engine.bus = "Engine"
 	_engine.volume_db = -12.0
 	_engine.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(_engine)
@@ -210,7 +214,7 @@ func _apply_voice(bike_id: int) -> void:
 	if _engine:
 		var keep := _engine.playing
 		_engine.stream = AudioGD.engine(kind)
-		_engine.pitch_scale = _idle_pitch
+		_engine.pitch_scale = _idle_pitch * ENGINE_PITCH_RATE
 		if keep:
 			_engine.play()
 
@@ -648,11 +652,10 @@ func _update_view(delta: float) -> void:
 	var v := speed / top_speed
 	_ride_fov = lerpf(_ride_fov, 76.0 + v * 9.0, 1.0 - exp(-4.0 * delta))
 	camera.fov = _ride_fov
-	var scenic := seated or (_path != null and bool(_path.at_platform(track_z, lateral)))
-	## Riding stays at the horizon clip so the spur does not draw three
-	## kilometres of trees. The skyline sits inside that window; the bench
-	## opens to 5200 m for the authored lake ranges.
-	camera.far = 5200.0 if scenic else HorizonMountainsGD.CLIP_FAR
+	## One clip everywhere, bench included. The skyline ring and the authored
+	## lake ranges both sit inside it, so nothing appears or disappears when the
+	## rider stops at an overlook.
+	camera.far = HorizonMountainsGD.CLIP_FAR
 
 	_bob += delta * (6.0 + speed * 0.5)
 	var jitter := Vector3.ZERO
@@ -702,8 +705,6 @@ func _update_seat(delta: float) -> void:
 	# asks the player to *look* at something rather than to watch the road and the
 	# verges at once, so the frame should close in and the peaks should get big.
 	camera.fov = lerpf(_ride_fov, 62.0, eased)
-	# The authored range sits two to three kilometres out. The ride clips at
-	# 2.2 km; sitting down has to see the far peaks or the detour is a pond.
 
 
 func _update_audio(delta: float) -> void:
@@ -714,9 +715,9 @@ func _update_audio(delta: float) -> void:
 	# count and idle are per café so the Raven lopes while the Mesa buzzes.
 	var span := top_speed / maxf(_gears, 3.0)
 	var frac := fposmod(speed, span) / span
-	var target := _idle_pitch + frac * _pitch_span + minf(speed / top_speed, 1.0) * 0.22
+	var target := (_idle_pitch + frac * _pitch_span + minf(speed / top_speed, 1.0) * 0.22) * ENGINE_PITCH_RATE
 	if speed < 4.0:
-		target = _idle_pitch * 0.85
+		target = _idle_pitch * 0.85 * ENGINE_PITCH_RATE
 	_engine.pitch_scale = lerpf(_engine.pitch_scale, target, 1.0 - exp(-14.0 * delta))
 	var load := _throttle_load if alive else 0.0
 	var base_vol := -14.0 + minf(speed / top_speed, 1.0) * 6.0 + load * 8.5

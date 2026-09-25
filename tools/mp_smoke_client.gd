@@ -11,9 +11,11 @@ var _t := 0.0
 var _stage := 0
 var _failures: Array[String] = []
 var _my_id := -1
+var _leader_id := -1
 var _got_start := false
 var _got_pose_back := false
 var _sent_pose := false
+var _start_requested := false
 
 
 func _initialize() -> void:
@@ -52,7 +54,6 @@ func _process(delta: float) -> bool:
 		1:
 			if _my_id >= 0:
 				_ws.send_text(JSON.stringify({"t": "ready", "v": true}))
-				_ws.send_text(JSON.stringify({"t": "start"}))
 				_stage = 2
 		2:
 			if _got_start:
@@ -73,6 +74,7 @@ func _on_msg(m: Dictionary) -> void:
 	match str(m.get("t", "")):
 		"welcome":
 			_my_id = int(m.get("id", -1))
+			_leader_id = int(m.get("leader", -1))
 			if _my_id <= 0:
 				_fail("bad welcome id")
 			if float(m.get("dist", 0)) < 100.0:
@@ -80,14 +82,30 @@ func _on_msg(m: Dictionary) -> void:
 			if str(m.get("phase", "")) == "racing":
 				_got_start = true # mid-race join: seed arrives in welcome
 		"lobby":
+			_leader_id = int(m.get("leader", _leader_id))
 			var found := false
+			var all_ready: bool = m.get("players", []).size() >= 2
 			for p in m.get("players", []):
 				if int(p.get("id", -1)) == _my_id:
 					found = true
 					if _stage >= 2 and not bool(p.get("ready", true)):
 						pass
+				if not bool(p.get("ready", false)):
+					all_ready = false
 			if _stage == 1 and not found:
 				_fail("lobby missing self")
+			# Start only after the server has echoed both ready flags. Sending the
+			# request immediately after our own ready packet races the other client;
+			# the server correctly rejects that early request and there is no button
+			# click in a headless smoke client to retry it.
+			if (
+				_stage >= 2
+				and _my_id == _leader_id
+				and all_ready
+				and not _start_requested
+			):
+				_start_requested = true
+				_ws.send_text(JSON.stringify({"t": "start"}))
 		"start":
 			_got_start = true
 			if not m.has("seed"):

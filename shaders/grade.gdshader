@@ -27,6 +27,13 @@ uniform float seed = 0.0;
 uniform float split_tone : hint_range(0.0, 0.5) = 0.055;
 uniform vec3 warm : source_color = vec3(1.00, 0.94, 0.82);
 uniform vec3 cool : source_color = vec3(0.80, 0.88, 1.00);
+// Film never reaches black. After ACES and the contrast adjustment every
+// backlit tree and the whole road clipped to 0, and a clipped shadow has no
+// colour and no depth. Lifting the toe toward a cool blue keeps the darkest
+// pixels as shadow rather than hole — the single thing a flat-shaded frame
+// needs most to look lit instead of cut out.
+uniform float toe_lift : hint_range(0.0, 0.1) = 0.032;
+uniform vec3 shadow_tint : source_color = vec3(0.46, 0.56, 0.78);
 
 float hash(vec2 p) {
 	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
@@ -34,6 +41,10 @@ float hash(vec2 p) {
 
 void fragment() {
 	vec3 c = texture(screen, SCREEN_UV).rgb;
+
+	float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+	float toe = 1.0 - smoothstep(0.0, 0.22, lum);
+	c += shadow_tint * toe * toe * toe_lift;
 
 	// Squash the y term: on a 16:9 frame a circular falloff darkens the top and
 	// bottom of the road long before it reaches the corners.

@@ -12,6 +12,10 @@ uniform float shimmer_amount = 1.0;
 // albedo times whatever little light reached it — a black floor under every
 // sunset.
 uniform vec3 sky_mirror : source_color = vec3(0.10, 0.11, 0.12);
+// The sky higher up, reflected where the eye looks down on the water steeply.
+uniform vec3 sky_high : source_color = vec3(0.08, 0.10, 0.14);
+// Stylised floor under the Fresnel term — see fragment().
+uniform float mirror_floor : hint_range(0.0, 1.0) = 0.34;
 
 varying vec3 world_position;
 
@@ -65,24 +69,42 @@ void fragment() {
 	float shimmer = glitter(world_position.xz, t);
 	vec3 water_color = COLOR.rgb * vec3(0.54, 0.84, 1.08);
 	ALBEDO = water_color + vec3(0.012, 0.020, 0.022) * shimmer * shimmer_amount;
-	// At grazing angles a lake is a mirror, not a surface: the far half of the
-	// sheet carries the sky back to the eye. That light arrives as radiance, not
-	// albedo — after dark the lit term on this mesh is a rounding error, so the
-	// sky goes on EMISSION where the dusk can actually be seen. Keyed on view
-	// distance rather than the wave normal's fresnel: from the seat the grazing
-	// angle IS the distance, and this ramp needs no sign convention luck.
+	// A lake is a mirror before it is a substance, and how much of one depends
+	// on the angle it is seen at: Schlick's Fresnel. That light
+	// arrives as radiance, not albedo: after dark the lit term on this mesh is a
+	// rounding error, so the sky goes on EMISSION where the dusk can be seen.
 	//
+	// This used to be keyed on view distance, on the theory that from the seat
+	// the grazing angle *is* the distance. It is only that for one eye height.
+	// The bench sits ninety metres over the water, so the whole near basin lay
+	// inside the "not yet a mirror" ramp and came out as the albedo under a
+	// low orange key — a flat mauve slab across the bottom third of every view.
+	// Taken against the flat surface normal the ramp is honest from the saddle
+	// and from the bench alike, and needs no luck with NORMAL's sign.
+	vec3 up_view = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+	float cos_flat = abs(dot(up_view, VIEW));
+	// The floor sits well past water's physical F0 of 0.02. A real lake seen
+	// from a hillside is full of reflected sky because the sky is bright and the
+	// lake is not; in a low-poly scene with no reflected shores to break it up,
+	// the physical number leaves the near basin a dead slab. A stylised floor
+	// keeps the sky in it.
+	float schlick = mirror_floor + (1.0 - mirror_floor) * pow(1.0 - mix(cos_flat, facing, 0.3), 5.0);
+	// The reflected ray climbs as the eye looks down: grazing water shows the
+	// horizon glow, steeper water the sky higher up.
+	vec3 reflected = mix(sky_mirror, sky_high, smoothstep(0.08, 0.55, cos_flat));
+	float wave_phase = center / max(wave_height, 0.001);
 	// It is never the full uniform colour, though — a flat sheet of horizon
 	// paint reads as fog or a floor, not water. The swell phase and the shimmer
-	// streaks ride on the mirror so the far surface keeps moving structure:
-	// long bands where the swell rolls and a finer glitter on top.
-	float dist_mirror = smoothstep(80.0, 420.0, length(VERTEX));
-	float wave_phase = center / max(wave_height, 0.001);
-	// Broad wash at the far grazing angle, kept under the material's own
-	// shimmer_amount so the sea — kilometres of it — does not carry the lake's
-	// sparkle density as stripes; the swell phase lays the darker lanes between
-	// crests instead of brightening them.
-	EMISSION = sky_mirror * dist_mirror * (0.46 + 0.55 * shimmer * shimmer_amount + 0.12 * wave_phase) * mix(vec3(1.0), water_color * 2.2, 0.45);
+	// streaks ride on the mirror so the surface keeps moving structure: long
+	// bands where the swell rolls and a finer glitter on top. Kept under the
+	// material's own shimmer_amount so the sea — kilometres of it — does not
+	// carry the lake's sparkle density as stripes.
+	float structure = 0.95 + 0.8 * shimmer * shimmer_amount + 0.18 * wave_phase;
+	// Light scattered back up out of the body of the water. Small, but it is
+	// what keeps deep water teal under a key of any colour instead of taking the
+	// hue of the sunset like a painted floor would.
+	vec3 body = water_color * 0.22 * (1.0 - schlick);
+	EMISSION = reflected * schlick * structure * mix(vec3(1.0), water_color * 2.2, 0.35) + body;
 	METALLIC = 0.12;
 	ROUGHNESS = mix(0.16, 0.055, fresnel);
 	SPECULAR = 0.92;

@@ -122,6 +122,7 @@ class Runner:
 	func _validate_scenery() -> void:
 		var road_chunks := 0
 		var scenic_instances := 0
+		var buckets := {}
 		for chunk in (streamer.get("_chunks") as Dictionary).values():
 			if not is_instance_valid(chunk):
 				continue
@@ -132,4 +133,21 @@ class Runner:
 					var mm := (child as MultiMeshInstance3D).multimesh
 					if mm and mm.instance_count > 0:
 						scenic_instances += mm.instance_count
+						buckets[child.name] = int(buckets.get(child.name, 0)) + mm.instance_count
 		print("scenic validation: %d road chunks, %d multimesh instances" % [road_chunks, scenic_instances])
+		var names: Array = buckets.keys()
+		names.sort_custom(func(a: Variant, b: Variant) -> bool: return int(buckets[a]) > int(buckets[b]))
+		for bucket in names:
+			print("scenic instances: %-16s %d" % [str(bucket), int(buckets[bucket])])
+		print(
+			"scenic streamer: ribbon=%s props=%s scenic=%s highway=%s queues=%d/%d/%d"
+			% [
+				str(streamer.get("_build_in_flight")),
+				str(streamer.get("_props_in_flight")),
+				str(streamer.get("_scenic_in_flight")),
+				str(streamer.get("_highway_in_flight")),
+				(streamer.get("_props_queue") as Array).size(),
+				(streamer.get("_scenic_queue") as Array).size(),
+				(streamer.get("_highway_queue") as Array).size(),
+			]
+		)

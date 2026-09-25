@@ -219,7 +219,7 @@ func _process(_delta: float) -> bool:
 		var environment: Environment = (main.get_node("WorldEnvironment") as WorldEnvironment).environment
 		var sun: DirectionalLight3D = main.get_node("Sun") as DirectionalLight3D
 		var sky_material: ShaderMaterial = environment.sky.sky_material as ShaderMaterial
-		check(environment.sky.process_mode == Sky.PROCESS_MODE_REALTIME, "animated sky and smooth weather share a realtime radiance map")
+		check(environment.sky.process_mode == Sky.PROCESS_MODE_INCREMENTAL, "sky radiance updates incrementally without a full-frame hitch")
 		var day_fog: float = environment.fog_density
 		check(not sun.shadow_enabled, "directional shadow mesh artefacts stay disabled")
 		var ride_audio := main.get_node("RideAudio")

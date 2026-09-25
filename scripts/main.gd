@@ -286,6 +286,9 @@ const MOODS := {
 ## Noise values where rain starts and where it is at its heaviest. Most of the
 ## route is dry on purpose: weather you meet twice an hour is weather, weather
 ## you meet constantly is a filter.
+## Contrast already built into the grade LUT's S-curve. The moods keep their
+## authored contrast numbers; the Environment only applies what is left over.
+const GRADE_CONTRAST := 1.25
 const RAIN_ONSET := 0.58
 const RAIN_FULL := 0.80
 
@@ -308,6 +311,11 @@ var _applied_rain: float = -1.0
 
 func _ready() -> void:
 	Engine.time_scale = 1.0  # a crashed run leaves it in slow motion
+	# The title screen parks at 120 m. Put the bike there before the streamer binds
+	# so boot does not build chunk 0 and then immediately throw it away when the
+	# menu parks the camera on the showcase stretch.
+	player.track_z = 120.0
+	player.call("_place")
 	# Warm the shared mesh/material/asset caches before any chunk is built. The
 	# chunk under the bike is built synchronously — here and on every restart — so
 	# without this its first-use lazy init is paid mid-frame, which is the
@@ -375,13 +383,10 @@ func _build_environment() -> void:
 
 	var sky := Sky.new()
 	sky.sky_material = _sky_mat
-	# Realtime radiance keeps the reflected sky and ambient in step with the
-	# animated clouds and the smoothly-eased rain — dropping to incremental made the
-	# weather step, and test_restart guards the realtime mode for that reason.
-	# The radiance map itself is halved to 32: nothing in the game shows a sharp sky
-	# reflection (road and water carry authored ones), so the reconvolution runs at
-	# a quarter of the pixels each frame with no visible loss.
-	sky.process_mode = Sky.PROCESS_MODE_REALTIME
+	# Incremental radiance avoids rebuilding the full sky cubemap in one frame. The
+	# road and water use authored reflections, so a few frames of convergence in
+	# the ambient/reflection map are preferable to a 40–50 ms GPU hitch on boot.
+	sky.process_mode = Sky.PROCESS_MODE_INCREMENTAL
 	sky.radiance_size = Sky.RADIANCE_SIZE_32
 	_sky_mat.set_shader_parameter("sky_phase", float(_path_seed() % 1000) * 0.17)
 
@@ -458,10 +463,19 @@ func _build_fill_light() -> void:
 	add_child(_fill)
 
 
-func _grade_lut() -> GradientTexture1D:
+func _grade_lut() -> ImageTexture:
 	## Per-channel curve, applied after tonemapping: shadows sit slightly cool and
 	## lifted, highlights run warm. This is the split-tone that stops ACES output
 	## from looking like untouched engine grey.
+	##
+	## The contrast lives in here too, as an S-curve, rather than in the
+	## Environment's contrast slider. That slider is `mix(0.5, c, k)`: at the
+	## moods' 1.25 it sends every value under 0.1 to zero, so the shaded side of
+	## every tree, the road and the underside of every rock clipped to one flat
+	## black and the split-tone's lifted floor never got a pixel to act on. A
+	## sigmoid gives the same slope through the midtones with a toe that rolls
+	## off instead of clipping. The moods' own numbers survive as a small trim
+	## around it — see GRADE_CONTRAST.
 	var gradient := Gradient.new()
 	gradient.offsets = PackedFloat32Array([0.0, 0.22, 0.58, 1.0])
 	gradient.colors = PackedColorArray(
@@ -472,10 +486,17 @@ func _grade_lut() -> GradientTexture1D:
 			Color(1.000, 0.956, 0.875),
 		]
 	)
-	var texture := GradientTexture1D.new()
-	texture.gradient = gradient
-	texture.width = 256
-	return texture
+	const WIDTH := 256
+	const PIVOT := 0.42
+	const STEEP := 3.5  # slope ~1.25 at the pivot
+	var lo := 1.0 / (1.0 + exp(STEEP * PIVOT))
+	var hi := 1.0 / (1.0 + exp(-STEEP * (1.0 - PIVOT)))
+	var image := Image.create(WIDTH, 1, false, Image.FORMAT_RGBF)
+	for i in WIDTH:
+		var x := float(i) / float(WIDTH - 1)
+		var curved := (1.0 / (1.0 + exp(-STEEP * (x - PIVOT))) - lo) / (hi - lo)
+		image.set_pixel(i, 0, gradient.sample(curved))
+	return ImageTexture.create_from_image(image)
 
 
 func _hour_mood() -> Dictionary:
@@ -526,6 +547,9 @@ static func _overcast(mood: Dictionary, r: float) -> Dictionary:
 	## makes riding into a squall feel like riding into something rather than
 	## watching a filter fade in.
 	var out: Dictionary = mood.duplicate()
+	# The painted ranges draw their own air rather than taking the engine fog,
+	# so they need to be told how thick the weather is.
+	out["rain"] = r
 	for key in ["zenith_color", "mid_color", "horizon_color", "ground_color", "cloud_lit", "cloud_dark", "ambient_color", "fog_color"]:
 		out[key] = _dull(mood[key], r * 0.55)
 	# Steel, not brown: dulling a warm day horizon on its own just makes mud.
@@ -738,15 +762,18 @@ func _apply_lighting() -> void:
 	_environment.tonemap_white = mood["white"]
 	_environment.fog_light_color = mood["fog_color"]
 	_environment.fog_light_energy = mood["fog_energy"]
+	# One air for the whole ride. Parked at an overlook the fog used to clear
+	# and the forward scatter drop, which read as the lighting jumping brighter
+	# the moment the rider reached the top.
 	_environment.fog_density = mood["fog_density"]
-	_environment.fog_sun_scatter = mood["fog_sun_scatter"]
 	_environment.fog_aerial_perspective = mood["fog_aerial"]
+	_environment.fog_sun_scatter = mood["fog_sun_scatter"]
 	_environment.fog_sky_affect = mood["fog_sky"]
 	_environment.fog_height = mood["fog_height"]
 	_environment.fog_height_density = mood["fog_height_density"]
 	_environment.glow_intensity = mood["glow"]
 	_environment.glow_bloom = mood["glow_bloom"]
-	_environment.adjustment_contrast = mood["contrast"]
+	_environment.adjustment_contrast = float(mood["contrast"]) / GRADE_CONTRAST
 	_environment.adjustment_saturation = mood["saturation"]
 	sun.light_color = mood["light_color"]
 	sun.light_energy = mood["light_energy"]
@@ -758,8 +785,10 @@ func _apply_lighting() -> void:
 	# rider sees it from, its far half carries the horizon colour back to the
 	# eye. Dimmed by the mood's own horizon glow so a flat grey sky still reads
 	# as flat grey water.
+	var sky_glow: float = 0.30 + 0.80 * float(mood["horizon_glow"])
 	RoadChunkGD.set_water_sky(
-		(mood["horizon_color"] as Color) * (0.30 + 0.80 * float(mood["horizon_glow"]))
+		(mood["horizon_color"] as Color) * sky_glow,
+		(mood["mid_color"] as Color) * sky_glow
 	)
 	var horizon := get_node_or_null("HorizonMountains")
 	if horizon and horizon.has_method("apply_mood"):

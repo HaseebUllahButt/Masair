@@ -13,10 +13,15 @@ signal playlist_changed
 signal track_changed(title: String)
 signal playing_changed(is_playing: bool)
 signal preset_changed(index: int)
+signal volume_changed(music_value: float, engine_value: float)
 
 const MusicLoader := preload("res://scripts/music_loader.gd")
 
 const BUS_NAME := "Music"
+const ENGINE_BUS_NAME := "Engine"
+const DEFAULT_MUSIC_VOLUME := 0.90
+const DEFAULT_ENGINE_VOLUME := 0.65
+const ENGINE_FILTER_HZ := 3600.0
 ## Tone shapes for AudioEffectEQ10 (32 Hz → 16 kHz). Values are gain in dB.
 const PRESETS := [
 	{"name": "FLAT", "gains": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
@@ -39,6 +44,8 @@ var preset_index: int = 0
 var tracks: Array[String] = []
 var track_index: int = 0
 var has_ffmpeg: bool = false
+var music_volume: float = DEFAULT_MUSIC_VOLUME
+var engine_volume: float = DEFAULT_ENGINE_VOLUME
 
 var _voices: Array[AudioStreamPlayer] = []
 var _active: int = 0
@@ -56,12 +63,15 @@ var _prefetch_path: String = ""
 var _task_id: int = -1
 var _load_job: MusicLoader = null
 var _failed: Dictionary = {}
+var _volume_save_timer: float = 0.0
+var _volume_dirty: bool = false
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	has_ffmpeg = _detect_ffmpeg()
 	_ensure_music_bus()
+	_ensure_engine_bus()
 	for i in 2:
 		var voice := AudioStreamPlayer.new()
 		voice.name = "Voice%d" % i
@@ -72,9 +82,11 @@ func _ready() -> void:
 		voice.finished.connect(_on_voice_finished.bind(i))
 		_voices.append(voice)
 	_load_config()
+	_apply_audio_volumes()
 	_apply_preset()
-	_reload_playlist(false)
-	call_deferred("resume_if_wanted")
+	# Folder scans and optional resume decoding do not belong on the first boot
+	# frame. Let the title render once, then prepare the jukebox in the idle loop.
+	call_deferred("_finish_startup")
 
 
 func _process(delta: float) -> void:
@@ -89,6 +101,12 @@ func _process(delta: float) -> void:
 		_save_timer += delta
 		if _save_timer >= SAVE_INTERVAL:
 			_save_timer = 0.0
+			_save_config()
+	if _volume_dirty:
+		_volume_save_timer += delta
+		if _volume_save_timer >= 0.6:
+			_volume_save_timer = 0.0
+			_volume_dirty = false
 			_save_config()
 
 
@@ -147,6 +165,36 @@ func is_playing() -> bool:
 	if _voice_playing():
 		return true
 	return _want_playing and not _play_request.is_empty()
+
+
+func music_volume_value() -> float:
+	return music_volume
+
+
+func engine_volume_value() -> float:
+	return engine_volume
+
+
+func set_music_volume(value: float) -> void:
+	var next := clampf(value, 0.0, 1.0)
+	if is_equal_approx(next, music_volume):
+		return
+	music_volume = next
+	_apply_audio_volumes()
+	_volume_dirty = true
+	_volume_save_timer = 0.0
+	volume_changed.emit(music_volume, engine_volume)
+
+
+func set_engine_volume(value: float) -> void:
+	var next := clampf(value, 0.0, 1.0)
+	if is_equal_approx(next, engine_volume):
+		return
+	engine_volume = next
+	_apply_audio_volumes()
+	_volume_dirty = true
+	_volume_save_timer = 0.0
+	volume_changed.emit(music_volume, engine_volume)
 
 
 func cycle_preset(direction: int) -> void:
@@ -251,23 +299,58 @@ func resume_if_wanted() -> void:
 
 
 func _detect_ffmpeg() -> bool:
-	## OS.execute returns -1 when the binary is missing.
-	var sink: Array = []
-	return OS.execute("ffmpeg", ["-version"], sink, true, true) == 0
+	## Scan PATH instead of launching a child process during boot.
+	var separator := ";" if OS.get_name() == "Windows" else ":"
+	for folder in OS.get_environment("PATH").split(separator):
+		if not folder.is_empty() and FileAccess.file_exists(folder.path_join("ffmpeg")):
+			return true
+	return false
+
+
+func _finish_startup() -> void:
+	await get_tree().process_frame
+	_reload_playlist(false)
+	resume_if_wanted()
 
 
 func _ensure_music_bus() -> void:
-	var idx := AudioServer.get_bus_index(BUS_NAME)
-	if idx == -1:
-		idx = AudioServer.bus_count
-		AudioServer.add_bus(idx)
-		AudioServer.set_bus_name(idx, BUS_NAME)
-		AudioServer.set_bus_send(idx, "Master")
+	var idx := _ensure_audio_bus(BUS_NAME)
 	## Wipe prior effects so reloads do not stack EQ instances.
 	while AudioServer.get_bus_effect_count(idx) > 0:
 		AudioServer.remove_bus_effect(idx, 0)
 	_eq = AudioEffectEQ10.new()
 	AudioServer.add_bus_effect(idx, _eq, 0)
+
+
+func _ensure_engine_bus() -> void:
+	var idx := _ensure_audio_bus(ENGINE_BUS_NAME)
+	## The procedural crank has useful low-mid body, but its pulse/noise layers
+	## become grating on small speakers. Keep the smoothing on the bus so the
+	## engine slider controls the complete bike voice as one mix.
+	if AudioServer.get_bus_effect_count(idx) == 0:
+		var low_pass := AudioEffectLowPassFilter.new()
+		low_pass.cutoff_hz = ENGINE_FILTER_HZ
+		low_pass.resonance = 0.18
+		AudioServer.add_bus_effect(idx, low_pass)
+
+
+func _ensure_audio_bus(name: String) -> int:
+	var idx := AudioServer.get_bus_index(name)
+	if idx == -1:
+		idx = AudioServer.bus_count
+		AudioServer.add_bus(idx)
+		AudioServer.set_bus_name(idx, name)
+		AudioServer.set_bus_send(idx, "Master")
+	return idx
+
+
+func _apply_audio_volumes() -> void:
+	var music_idx := AudioServer.get_bus_index(BUS_NAME)
+	if music_idx >= 0:
+		AudioServer.set_bus_volume_db(music_idx, linear_to_db(maxf(music_volume, 0.0001)))
+	var engine_idx := AudioServer.get_bus_index(ENGINE_BUS_NAME)
+	if engine_idx >= 0:
+		AudioServer.set_bus_volume_db(engine_idx, linear_to_db(maxf(engine_volume, 0.0001)))
 
 
 func _apply_preset() -> void:
@@ -655,6 +738,8 @@ func _load_config() -> void:
 		return
 	var data: Dictionary = game.call("load_music_config")
 	preset_index = clampi(int(data.get("preset_index", 0)), 0, PRESETS.size() - 1)
+	music_volume = clampf(float(data.get("music_volume", DEFAULT_MUSIC_VOLUME)), 0.0, 1.0)
+	engine_volume = clampf(float(data.get("engine_volume", DEFAULT_ENGINE_VOLUME)), 0.0, 1.0)
 	music_folder = str(data.get("folder", ""))
 	track_index = maxi(0, int(data.get("track_index", 0)))
 	_want_playing = bool(data.get("want_playing", false))
@@ -676,6 +761,8 @@ func _save_config() -> void:
 		"save_music_config",
 		{
 			"preset_index": preset_index,
+			"music_volume": music_volume,
+			"engine_volume": engine_volume,
 			"folder": music_folder,
 			"track_index": track_index,
 			"want_playing": _want_playing,

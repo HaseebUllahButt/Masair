@@ -31,10 +31,22 @@ const MIME := {
 	"wav": "audio/wav",
 	"woff2": "font/woff2",
 }
+# Phones probe these addresses the moment they join a network. Answering them
+# "yes, internet" keeps the hotspot from being flagged dead — otherwise Android
+# badges it "no internet" and silently routes the game link over LTE. DNS for
+# the probe names is wildcarded at the gateway (see splendor_multiplayer.sh).
+const PROBE_TEXT := {
+	"/hotspot-detect.html": "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>",
+	"/library/test/success.html": "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>",
+	"/ncsi.txt": "Microsoft NCSI",
+	"/connecttest.txt": "Microsoft Connect Test",
+	"/success.txt": "success\n",
+}
+const PROBE_204 := ["/generate_204", "/gen_204", "/generate_204.php", "/mobile/status.php"]
 const GZIP_EXTS := ["html", "js", "wasm", "pck", "css", "json", "svg"]
 const MAX_HTTP_HEAD := 16384
 const HTTP_READ_TIMEOUT_S := 5.0
-const HTTP_WRITE_TIMEOUT_S := 30.0
+const HTTP_WRITE_TIMEOUT_S := 120.0
 const HTTP_CHUNK := 65536
 const HTTP_TICK_BUDGET := 1 << 20 # bytes per socket per frame
 const JOIN_TIMEOUT_S := 10.0
@@ -134,21 +146,30 @@ func _find_head_end(buf: PackedByteArray) -> int:
 
 
 func _serve_http(sock: StreamPeerTCP, head: String) -> void:
+	var peer := sock.get_connected_host()
 	var line := head.split("\r\n")[0]
 	var parts := line.split(" ")
 	var path := parts[1] if parts.size() >= 2 else "/"
 	path = path.split("?")[0].uri_decode()
+	if PROBE_204.has(path):
+		_reply(sock, peer, path, 204, "text/plain", PackedByteArray())
+		return
+	if PROBE_TEXT.has(path):
+		_reply(sock, peer, path, 200, "text/html; charset=utf-8", PROBE_TEXT[path].to_utf8_buffer())
+		return
 	if path == "/" or path.is_empty():
 		path = "/index.html"
 	var clean := path.simplify_path()
 	if clean.begins_with("/"):
 		clean = clean.substr(1)
 	if clean.is_empty() or clean.begins_with(".."):
-		_send_http(sock, 403, "text/plain", "forbidden".to_utf8_buffer())
+		_reply(sock, peer, path, 403, "text/plain", "forbidden".to_utf8_buffer())
 		return
 	var file_path := _webroot.path_join(clean)
 	if not FileAccess.file_exists(file_path):
-		_send_http(sock, 404, "text/plain", "not found".to_utf8_buffer())
+		# Unknown paths bounce home — a mistyped link or a phone's captive
+		# portal check still lands the friend on the game.
+		_reply(sock, peer, path, 302, "text/plain", PackedByteArray(), "", "/")
 		return
 	var encoding := ""
 	if _accepts_gzip(head) and FileAccess.file_exists(file_path + ".gz"):
@@ -156,11 +177,16 @@ func _serve_http(sock: StreamPeerTCP, head: String) -> void:
 		encoding = "gzip"
 	var f := FileAccess.open(file_path, FileAccess.READ)
 	if f == null:
-		_send_http(sock, 500, "text/plain", "read error".to_utf8_buffer())
+		_reply(sock, peer, path, 500, "text/plain", "read error".to_utf8_buffer())
 		return
 	var body := f.get_buffer(f.get_length())
 	var ext := clean.get_extension().to_lower()
-	_send_http(sock, 200, MIME.get(ext, "application/octet-stream"), body, encoding)
+	_reply(sock, peer, path, 200, MIME.get(ext, "application/octet-stream"), body, encoding)
+
+
+func _reply(sock: StreamPeerTCP, peer: String, path: String, code: int, mime: String, body: PackedByteArray, encoding: String = "", location: String = "") -> void:
+	print("http %-15s %-32s -> %d" % [peer, path, code])
+	_send_http(sock, code, mime, body, encoding, location)
 
 
 func _accepts_gzip(head: String) -> bool:
@@ -198,13 +224,15 @@ func _precompress_dir(dir_path: String) -> void:
 		print("gzip: %s (%d KB -> %d KB)" % [src, raw.size() / 1024, gz.size() / 1024])
 
 
-func _send_http(sock: StreamPeerTCP, code: int, mime: String, body: PackedByteArray, encoding: String = "") -> void:
-	var reason: String = {200: "OK", 403: "Forbidden", 404: "Not Found", 431: "Header Too Large", 500: "Error"}.get(code, "OK")
-	var enc_head := ""
+func _send_http(sock: StreamPeerTCP, code: int, mime: String, body: PackedByteArray, encoding: String = "", location: String = "") -> void:
+	var reason: String = {200: "OK", 204: "No Content", 302: "Found", 403: "Forbidden", 404: "Not Found", 431: "Header Too Large", 500: "Error"}.get(code, "OK")
+	var extra := ""
 	if not encoding.is_empty():
-		enc_head = "Content-Encoding: %s\r\n" % encoding
+		extra += "Content-Encoding: %s\r\n" % encoding
+	if not location.is_empty():
+		extra += "Location: %s\r\n" % location
 	var head := "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\n%sConnection: close\r\nVary: Accept-Encoding\r\nCross-Origin-Opener-Policy: same-origin\r\nCross-Origin-Embedder-Policy: require-corp\r\n\r\n" % [
-		code, reason, mime, body.size(), enc_head]
+		code, reason, mime, body.size(), extra]
 	# Queue rather than put_data(): that blocks until the peer has taken every
 	# byte, and a friend pulling the 10 MB wasm over a hotspot would freeze the
 	# whole loop — no page for the next joiner, no pose updates for riders

@@ -18,6 +18,7 @@ signal race_results(order: Array)
 const RemoteRiderGD := preload("res://scripts/remote_rider.gd")
 const POSE_HZ := 15.0
 const CFG_PATH := "user://net_client.cfg"
+const CONNECT_TIMEOUT_S := 10.0
 
 var ws := WebSocketPeer.new()
 var state := "off"
@@ -29,6 +30,7 @@ var riders := {} # id -> RemoteRider node
 var rider_name := "rider"
 var server_url := "ws://127.0.0.1:8001"
 var _pose_acc := 0.0
+var _connect_elapsed := 0.0
 
 
 func _ready() -> void:
@@ -45,7 +47,13 @@ func suggested_url() -> String:
 			var loc: Variant = bridge.get_interface("location")
 			if loc and loc.hostname:
 				var scheme := "wss" if str(loc.protocol) == "https:" else "ws"
-				return "%s://%s:%d" % [scheme, loc.hostname, 8001]
+				# ws always lives one port above http; a page that arrived via
+				# the :80 captive redirect reports no port — fall back to the
+				# default pair 8000/8001.
+				var port := int(str(loc.port))
+				if port <= 0:
+					port = 8000
+				return "%s://%s:%d" % [scheme, loc.hostname, port + 1]
 	return "ws://127.0.0.1:8001"
 
 
@@ -53,10 +61,19 @@ func _load_cfg() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(CFG_PATH) == OK:
 		rider_name = str(cfg.get_value("net", "name", rider_name))
-		server_url = str(cfg.get_value("net", "url", server_url))
+		# A browser arrived from the host it should join. A URL saved from the
+		# previous party must never override that origin or friends see a perfectly
+		# healthy page whose JOIN button quietly targets yesterday's laptop.
+		server_url = (
+			suggested_url()
+			if OS.has_feature("web")
+			else str(cfg.get_value("net", "url", server_url))
+		)
 	else:
 		# a name you never had to type — one less step before you're in
 		rider_name = "rider %d" % randi_range(100, 999)
+		if OS.has_feature("web"):
+			server_url = suggested_url()
 
 
 func _save_cfg() -> void:
@@ -68,9 +85,15 @@ func _save_cfg() -> void:
 
 func connect_to(url: String, p_name: String) -> void:
 	leave()
+	# WebSocketPeer can be closed and reused in theory, but browser and native
+	# backends do not all clear a failed handshake identically. A fresh peer makes
+	# LEAVE -> JOIN and retry-after-refusal deterministic.
+	ws = WebSocketPeer.new()
 	server_url = url
 	rider_name = p_name.substr(0, 16)
 	_save_cfg()
+	_connect_elapsed = 0.0
+	_pose_acc = 0.0
 	state = "connecting"
 	conn_state.emit(state)
 	var err := ws.connect_to_url(server_url)
@@ -80,6 +103,8 @@ func connect_to(url: String, p_name: String) -> void:
 
 
 func leave() -> void:
+	if ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
+		_send({"t": "leave"})
 	if ws.get_ready_state() != WebSocketPeer.STATE_CLOSED:
 		ws.close()
 	my_id = -1
@@ -87,6 +112,8 @@ func leave() -> void:
 	phase = "lobby"
 	players.clear()
 	_clear_riders()
+	_connect_elapsed = 0.0
+	_pose_acc = 0.0
 	if state != "off":
 		state = "off"
 		conn_state.emit(state)
@@ -117,10 +144,15 @@ func _process(delta: float) -> void:
 	ws.poll()
 	var st := ws.get_ready_state()
 	if state == "connecting":
+		_connect_elapsed += delta
 		if st == WebSocketPeer.STATE_OPEN:
 			_send({"t": "join", "name": rider_name, "bike": _my_bike()})
 		elif st == WebSocketPeer.STATE_CLOSED:
 			state = "error:refused"
+			conn_state.emit(state)
+		elif _connect_elapsed >= CONNECT_TIMEOUT_S:
+			ws.close()
+			state = "error:timeout"
 			conn_state.emit(state)
 	elif state == "online":
 		if st != WebSocketPeer.STATE_OPEN:

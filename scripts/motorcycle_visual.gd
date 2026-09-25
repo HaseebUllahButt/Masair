@@ -71,13 +71,18 @@ var _hero_view: bool = false
 var _hero_yaw0: float = deg_to_rad(18.0)
 var _hero_t: float = 0.0
 var _bike_style: int = 0
-var _kits: Array[Node3D] = []
-var _fenders: Array[MeshInstance3D] = []
+var _kits: Dictionary = {}
+var _fenders: Dictionary = {}
+var _fender_head: Node3D
+var _fender_origin: Vector3
 var _dial_top_speed: float = DIAL_TOP_SPEED
 
 
 func _ready() -> void:
 	_rider = get_parent()
+	var game := get_node_or_null("/root/GameManager")
+	if game:
+		_bike_style = clampi(int(game.get("selected_bike")), 0, BikeCatalog.BIKES.size() - 1)
 	_build_body()
 	_bars = _build_steering()
 	_front = _build_wheel(Vector3(0, WHEEL_R - _bars.position.y, FRONT_Z - _bars.position.z), true)
@@ -129,23 +134,58 @@ func set_hero_view(on: bool) -> void:
 
 
 func set_bike_style(style: int) -> void:
-	var n := _kits.size()
-	if n == 0:
-		return
-	_bike_style = clampi(style, 0, n - 1)
+	_bike_style = clampi(style, 0, BikeCatalog.BIKES.size() - 1)
+	_ensure_kit(_bike_style)
+	_ensure_fender(_bike_style)
 	_dial_top_speed = float(BikeCatalog.BIKES[_bike_style]["top_speed"])
-	for i in n:
-		_kits[i].visible = i == _bike_style
-	for i in _fenders.size():
-		_fenders[i].visible = i == _bike_style
+	for kit in _kits.values():
+		(kit as Node3D).visible = kit == _kits[_bike_style]
+	for fender in _fenders.values():
+		(fender as MeshInstance3D).visible = fender == _fenders[_bike_style]
 
 
 func _build_bike_variants() -> void:
-	_make_kit("MesaKit", _mesa_spec())
-	_make_kit("SabreKit", _sabre_spec())
-	_make_kit("HalcyonKit", _halcyon_spec())
-	_make_kit("TempestKit", _tempest_spec())
-	_make_kit("RavenKit", _raven_spec())
+	## Keep named shells for the garage tree, but only populate the selected
+	## silhouette on the first frame. Garage previews fill the other shells on
+	## demand without changing the scene paths used by UI/tests.
+	var names := ["MesaKit", "SabreKit", "HalcyonKit", "TempestKit", "RavenKit"]
+	for i in names.size():
+		var placeholder := Node3D.new()
+		placeholder.name = names[i]
+		placeholder.set_meta("lazy_body", true)
+		add_child(placeholder)
+		_kits[i] = placeholder
+	_ensure_kit(_bike_style)
+
+
+func _ensure_kit(style: int) -> Node3D:
+	var safe_style := clampi(style, 0, BikeCatalog.BIKES.size() - 1)
+	var node_name := "MesaKit"
+	var spec: Dictionary = _mesa_spec()
+	match safe_style:
+		1:
+			node_name = "SabreKit"
+			spec = _sabre_spec()
+		2:
+			node_name = "HalcyonKit"
+			spec = _halcyon_spec()
+		3:
+			node_name = "TempestKit"
+			spec = _tempest_spec()
+		4:
+			node_name = "RavenKit"
+			spec = _raven_spec()
+	var kit: Node3D
+	if _kits.has(safe_style):
+		kit = _kits[safe_style] as Node3D
+	else:
+		kit = Node3D.new()
+		kit.name = node_name
+		add_child(kit)
+		_kits[safe_style] = kit
+	if bool(kit.get_meta("lazy_body", false)):
+		_populate_kit(kit, node_name, spec)
+	return kit
 
 
 func _mesa_spec() -> Dictionary:
@@ -389,6 +429,11 @@ func _make_kit(node_name: String, spec: Dictionary) -> Node3D:
 	var kit := Node3D.new()
 	kit.name = node_name
 	add_child(kit)
+	_populate_kit(kit, node_name, spec)
+	return kit
+
+
+func _populate_kit(kit: Node3D, node_name: String, spec: Dictionary) -> void:
 	var body := LowPoly.new()
 	body.smooth = true
 	_spec_tank(body, spec)
@@ -396,8 +441,7 @@ func _make_kit(node_name: String, spec: Dictionary) -> Node3D:
 	_spec_hardware(body, spec)
 	_spec_exhaust(body, spec)
 	_attach(kit, body, node_name + "Body")
-	_kits.append(kit)
-	return kit
+	kit.set_meta("lazy_body", false)
 
 
 func _spec_tank(b: LowPoly, spec: Dictionary) -> void:
@@ -718,19 +762,30 @@ func _build_clocks(b: LowPoly, o: Vector3) -> void:
 
 
 func _build_style_fenders(head: Node3D, o: Vector3) -> void:
+	_fender_head = head
+	_fender_origin = o
+	_ensure_fender(_bike_style)
+
+
+func _ensure_fender(style: int) -> MeshInstance3D:
+	var safe_style := clampi(style, 0, BikeCatalog.BIKES.size() - 1)
+	if _fenders.has(safe_style):
+		return _fenders[safe_style] as MeshInstance3D
+	if _fender_head == null:
+		return null
 	var colors: Array[Color] = [PAINT, BLUE, GREEN, CREAM, INK]
-	for i in colors.size():
-		var fb := LowPoly.new()
-		fb.smooth = true
-		_build_fender(fb, o, colors[i])
-		var fender := MeshInstance3D.new()
-		fender.name = "FrontFender%d" % i
-		fender.mesh = fb.commit()
-		fender.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		fender.visible = i == 0
-		LowPoly.cheap_draw(fender)
-		head.add_child(fender)
-		_fenders.append(fender)
+	var fb := LowPoly.new()
+	fb.smooth = true
+	_build_fender(fb, _fender_origin, colors[safe_style])
+	var fender := MeshInstance3D.new()
+	fender.name = "FrontFender%d" % safe_style
+	fender.mesh = fb.commit()
+	fender.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	fender.visible = safe_style == _bike_style
+	LowPoly.cheap_draw(fender)
+	_fender_head.add_child(fender)
+	_fenders[safe_style] = fender
+	return fender
 
 
 func _build_fender(b: LowPoly, o: Vector3, col: Color) -> void:

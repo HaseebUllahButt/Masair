@@ -460,8 +460,10 @@ const SEAT_EYE := 1.62
 ## Fifteen degrees of tilt on a 62° lens put the look direction *below* that
 ## near shore, so the lower two thirds of the picture was a blue floor and the
 ## far range sat on a thin strip of sky. A small dip keeps the water in the
-## lower half without burying the view under it.
-const SEAT_TILT := deg_to_rad(6.0)
+## lower half without burying the view under it. Three and a half now the
+## ranges stand tall enough to be worth the frame: at six the near basin — water
+## seen from ninety metres up — was still the largest thing in the picture.
+const SEAT_TILT := deg_to_rad(3.5)
 
 
 func viewpoint_seat(z: float) -> Transform3D:

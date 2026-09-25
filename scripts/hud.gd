@@ -43,6 +43,10 @@ var _music_preset: Label
 var _music_folder: Button
 var _music_track: Label
 var _music_play: Button
+var _music_volume_slider: HSlider
+var _engine_volume_slider: HSlider
+var _music_volume_value: Label
+var _engine_volume_value: Label
 var _music_dialog: FileDialog
 var _font_display: Font
 var _font_head: Font
@@ -491,6 +495,39 @@ func _build_music_panel() -> void:
 	_music_track.custom_minimum_size = Vector2(272.0, 0.0)
 	panel.add_child(_music_track)
 
+	var volume_caption := _menu_label("VOLUME", 11, Color("9a9588"), _font_kicker)
+	volume_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	panel.add_child(volume_caption)
+	var music_row := HBoxContainer.new()
+	music_row.add_theme_constant_override("separation", 8)
+	var music_caption := _menu_label("MUSIC", 11, Color("d8d2c4"), _font_kicker)
+	music_caption.custom_minimum_size.x = 54.0
+	music_row.add_child(music_caption)
+	_music_volume_slider = _new_volume_slider()
+	_music_volume_slider.tooltip_text = "Music volume"
+	_music_volume_slider.value_changed.connect(_set_music_volume)
+	music_row.add_child(_music_volume_slider)
+	_music_volume_value = _menu_label("90%", 11, Color("9a9588"), _font_kicker)
+	_music_volume_value.custom_minimum_size.x = 38.0
+	_music_volume_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	music_row.add_child(_music_volume_value)
+	panel.add_child(music_row)
+
+	var engine_row := HBoxContainer.new()
+	engine_row.add_theme_constant_override("separation", 8)
+	var engine_caption := _menu_label("ENGINE", 11, Color("d8d2c4"), _font_kicker)
+	engine_caption.custom_minimum_size.x = 54.0
+	engine_row.add_child(engine_caption)
+	_engine_volume_slider = _new_volume_slider()
+	_engine_volume_slider.tooltip_text = "Engine volume"
+	_engine_volume_slider.value_changed.connect(_set_engine_volume)
+	engine_row.add_child(_engine_volume_slider)
+	_engine_volume_value = _menu_label("65%", 11, Color("9a9588"), _font_kicker)
+	_engine_volume_value.custom_minimum_size.x = 38.0
+	_engine_volume_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	engine_row.add_child(_engine_volume_value)
+	panel.add_child(engine_row)
+
 	var transport := HBoxContainer.new()
 	transport.alignment = BoxContainer.ALIGNMENT_END
 	transport.add_theme_constant_override("separation", 6)
@@ -522,6 +559,8 @@ func _build_music_panel() -> void:
 		_music.track_changed.connect(func(_title: String) -> void: _refresh_music_ui())
 		_music.playing_changed.connect(func(_on: bool) -> void: _refresh_music_ui())
 		_music.preset_changed.connect(func(_i: int) -> void: _refresh_music_ui())
+		if _music.has_signal("volume_changed"):
+			_music.volume_changed.connect(_on_music_volume_changed)
 	_refresh_music_ui()
 
 
@@ -541,6 +580,41 @@ func _refresh_music_ui() -> void:
 			_music_track.text = title
 	if _music_play:
 		_music_play.text = "II" if bool(_music.call("is_playing")) else "▶"
+	if _music_volume_slider and _music.has_method("music_volume_value"):
+		var music_value := clampf(float(_music.call("music_volume_value")), 0.0, 1.0)
+		_music_volume_slider.set_value_no_signal(music_value)
+		_music_volume_value.text = "%d%%" % roundi(music_value * 100.0)
+	if _engine_volume_slider and _music.has_method("engine_volume_value"):
+		var engine_value := clampf(float(_music.call("engine_volume_value")), 0.0, 1.0)
+		_engine_volume_slider.set_value_no_signal(engine_value)
+		_engine_volume_value.text = "%d%%" % roundi(engine_value * 100.0)
+
+
+func _new_volume_slider() -> HSlider:
+	var slider := HSlider.new()
+	slider.min_value = 0.0
+	slider.max_value = 1.0
+	slider.step = 0.01
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.custom_minimum_size = Vector2(118.0, 24.0)
+	slider.focus_mode = Control.FOCUS_ALL
+	return slider
+
+
+func _on_music_volume_changed(_music_value: float, _engine_value: float) -> void:
+	_refresh_music_ui()
+
+
+func _set_music_volume(value: float) -> void:
+	if _music and _music.has_method("set_music_volume"):
+		_music.call("set_music_volume", value)
+	_refresh_music_ui()
+
+
+func _set_engine_volume(value: float) -> void:
+	if _music and _music.has_method("set_engine_volume"):
+		_music.call("set_engine_volume", value)
+	_refresh_music_ui()
 
 
 func _nudge_music_preset(direction: int) -> void:
@@ -695,7 +769,8 @@ func _refresh_garage() -> void:
 		_bike_note.text = str(info["tagline"]).to_lower()
 		_bike_note.add_theme_color_override("font_color", Color("9a9588"))
 	else:
-		var remaining := maxf(0.0, float(info["unlock_m"]) - float(_game.best_m))
+		var progress_m: float = float(_game.call("unlock_progress_m"))
+		var remaining := maxf(0.0, float(info["unlock_m"]) - progress_m)
 		_bike_note.text = "locked  ·  %.1f km more" % (remaining / 1000.0)
 		_bike_note.add_theme_color_override("font_color", Color("d98078"))
 	const SHORT := {"engine": "ENG", "brakes": "BRK", "handling": "HND"}
@@ -813,6 +888,7 @@ func _park_on_road() -> void:
 	var player: Node = get_tree().root.find_child("Player", true, false)
 	if player == null:
 		return
+	var already_at_title_position := is_equal_approx(float(player.get("track_z")), 120.0)
 	player.set("track_z", 120.0)
 	player.set("lateral", 0.0)
 	player.set("speed", 0.0)
@@ -821,7 +897,7 @@ func _park_on_road() -> void:
 	if player.has_method("_place"):
 		player.call("_place")
 	var streamer: Node = get_tree().root.find_child("RoadStreamer", true, false)
-	if streamer and streamer.has_method("reset_world"):
+	if streamer and streamer.has_method("reset_world") and not already_at_title_position:
 		streamer.call("reset_world")
 
 

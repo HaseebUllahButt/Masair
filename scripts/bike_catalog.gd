@@ -80,7 +80,7 @@ const BIKES: Array[Dictionary] = [
 	{
 		"name": "TEMPEST 900",
 		"tagline": "BIG TWIN CAFÉ · 248 KM/H",
-		"unlock_m": 22000.0,
+		"unlock_m": 30000.0,
 		"top_speed": 68.8889,
 		"engine_accel": 17.2,
 		"brake_accel": 20.2,

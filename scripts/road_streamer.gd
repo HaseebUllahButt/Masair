@@ -38,17 +38,24 @@ var _idle_current: int = -1
 ## sixty woodland chunks in one `_process` is a hitch of its own; hide them
 ## immediately and destroy a couple per frame.
 const UNLOADS_PER_FRAME := 2
-## Two fully dressed chunks after spawn/R so the opening shot is not a bare
-## ribbon with props popping in twenty metres out.
-const OPENING_AHEAD := 2
+## Keep one tarmac-only look-ahead after the current ribbon. It gives the rider
+## a planted road immediately after R/start, while avoiding the full scenery
+## build that used to block the first frame.
+const OPENING_AHEAD := 1
 ## Dress this far ahead of the bike so the corridor looks finished before it
 ## enters the lens. Too tight and the ride reads as pop-in / procedural.
 const DRESS_AHEAD := 10
 ## Ribbon look-ahead on the scenic spur — must stay ahead of DRESS_AHEAD so
 ## tarmac is ready when the dress window wants to plant.
-const SCENIC_CHUNKS_AHEAD := 12
+const SCENIC_CHUNKS_AHEAD := 10
 ## How far behind the bike spur terrain stays loaded while riding.
 const SCENIC_KEEP_BEHIND := 7
+## Keep the lake's full authored span available to the overlook contract.
+## The platform owner supplies the basin across this range; distant chunks are
+## intentionally ribbon-only so retention does not imply another scenic build.
+const PLATFORM_KEEP_HALF_SPAN: float = RoadPathGD.LAKE_SPAN + 60.0
+## Only the road and nearby dressing need to be instantiated around the rider.
+const PLATFORM_BUILD_HALF_SPAN: float = 160.0
 ## Keep this many strips of tarmac in the pipeline even while trees plant.
 ## Tighter than this and top speed watches the road appear.
 const RIBBON_PRIORITY_AHEAD := 10
@@ -58,8 +65,9 @@ const CORRIDOR_COMMIT := RoadPathGD.CORRIDOR_COMMIT
 
 
 func _ready() -> void:
-	## The start menu pauses the tree. Keep streaming so the title shot and the
-	## first frame of a ride are not a bare ribbon.
+	## The start menu pauses the tree. The ribbon under the bike is already built;
+	## wait to decorate/look ahead until the rider actually starts so renderer
+	## shader/material compilation does not happen in a burst behind the menu.
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_path = get_node("/root/RoadPath")
 
@@ -71,7 +79,7 @@ func bind_player(player: Node3D) -> void:
 	# chunks was the remaining restart hitch.
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
 	if not _chunks.has(current):
-		_spawn(current, false)
+		_spawn_ribbon_sync(current, _stream_generation)
 	_arm_opening(current)
 	_defer_stream = true
 
@@ -103,7 +111,7 @@ func reset_world() -> void:
 	if _player == null:
 		return
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
-	_spawn(current, false)
+	_spawn_ribbon_sync(current, _stream_generation)
 	_arm_opening(current)
 	_defer_stream = true
 
@@ -112,6 +120,8 @@ func _process(_delta: float) -> void:
 	# Runs even while the streamer is otherwise idle: a retired chunk must not
 	# wait for the next un-load before its memory actually goes.
 	_drain_dying()
+	if get_tree().paused:
+		return
 	if _player == null:
 		return
 	# Spawn already paid for the chunk under the bike this frame. Starting the
@@ -135,6 +145,11 @@ func theme_for_chunk(index: int) -> int:
 func _sync(build_all: bool) -> void:
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
 	var keep_bounds := _desired_bounds(current)
+	# The platform owner renders the full lake independently of road chunks.
+	# Retain the logical lake span for the overlook contract, but retire old
+	# climb chunks immediately once the rider is seated on the platform.
+	if _at_platform():
+		keep_bounds = _desired_build_bounds(current)
 	var keep_min: int = keep_bounds.x
 	var keep_max: int = keep_bounds.y
 	var build_bounds := _desired_build_bounds(current)
@@ -401,15 +416,16 @@ func _arm_opening(current: int) -> void:
 
 
 func _fill_opening(current: int, build_max: int) -> bool:
-	## A short fully-dressed look-ahead after spawn so the first glance is not
-	## pop-in. Kept small enough that restart hitch stays tolerable.
+	## Put only tarmac in the first glance. Fully dressing the opening chunks here
+	## blocked the first frame on furniture and trees; the normal dress queues add
+	## those meshes a little later without holding the rider at the line.
 	if _open_until < 0:
 		return false
 	for i in range(current + 1, _open_until + 1):
 		if i > build_max:
 			break
 		if not _chunks.has(i):
-			_spawn(i, false)
+			_spawn_ribbon_sync(i, _stream_generation)
 			return true
 	_open_until = -1
 	return false
@@ -472,7 +488,7 @@ func _desired_bounds(current: int) -> Vector2i:
 		if _path.has_method("at_platform") and bool(_path.call("at_platform", _player.track_z, _player.lateral)):
 			# Parked on the bench: keep the lake, drop the climb. Fifty woodland
 			# chunks behind the eye were most of the overlook stutter.
-			var half_span: float = RoadPathGD.LAKE_SPAN + 100.0
+			var half_span: float = PLATFORM_KEEP_HALF_SPAN
 			min_i = maxi(floori((centre - half_span) / CHUNK_LENGTH) - 1, 0)
 			max_i = ceili((centre + half_span) / CHUNK_LENGTH) + 1
 		else:
@@ -501,7 +517,7 @@ func _dress_bounds(current: int) -> Vector2i:
 	## the far shore.
 	if _at_platform():
 		var centre: float = float(_path.call("viewpoint_centre_for", _player.track_z))
-		var half_span: float = RoadPathGD.LAKE_SPAN + 60.0
+		var half_span: float = PLATFORM_BUILD_HALF_SPAN
 		return Vector2i(
 			maxi(floori((centre - half_span) / CHUNK_LENGTH), 0),
 			ceili((centre + half_span) / CHUNK_LENGTH)
@@ -514,7 +530,12 @@ func _desired_build_bounds(current: int) -> Vector2i:
 	## the keep window is the vista itself — a chunk kept but never built is
 	## the black hole the lake pours into, so the build range covers it.
 	if _at_platform():
-		return _desired_bounds(current)
+		var centre: float = float(_path.call("viewpoint_centre_for", _player.track_z))
+		var half_span: float = PLATFORM_BUILD_HALF_SPAN
+		return Vector2i(
+			maxi(floori((centre - half_span) / CHUNK_LENGTH), 0),
+			ceili((centre + half_span) / CHUNK_LENGTH)
+		)
 	var ahead := chunks_ahead
 	var behind := chunks_behind
 	if _path and _path.has_method("on_spur") and _path.call("on_spur", _player.track_z, _player.lateral):

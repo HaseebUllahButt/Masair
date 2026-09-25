@@ -33,6 +33,17 @@ uniform float grain_strength : hint_range(0.0, 1.0) = 0.045;
 // what a real road does with a low sun, so the effect the dry surface could not
 // justify is the effect the wet one is for.
 uniform float wet : hint_range(0.0, 1.0) = 0.0;
+// Asphalt is the darkest large surface in the frame, not a hole in it. The
+// vertex colour decoded to 0.04 linear, and once the grade's contrast had it the
+// lower half of every screenshot was flat black with lane paint floating on it.
+uniform float tone : hint_range(0.5, 3.0) = 1.75;
+// Horizon colour, pushed from main.gd with the water's. Even rough tarmac turns
+// into a mirror at a grazing angle: the road ahead picks up the sky and the
+// ribbon runs pale into the distance, which is most of what makes a long road
+// look long. Emitted rather than lit, so no sun term — this is sky, not the
+// shaft a specular lobe drew down the lane.
+uniform vec3 sky_sheen : source_color = vec3(0.55, 0.60, 0.68);
+uniform float sheen_strength : hint_range(0.0, 1.0) = 0.16;
 
 
 float hash12(vec2 p) {
@@ -82,7 +93,7 @@ void fragment() {
 	// same sRGB decode the StandardMaterial3D channels get — see LowPoly._srgb().
 	// Without it "3b3b3d" tarmac is a 0.231 linear mid grey and the road is the
 	// brightest large surface in the frame instead of the darkest.
-	ALBEDO = to_linear(COLOR.rgb)
+	ALBEDO = to_linear(COLOR.rgb) * tone
 		* (1.0 + grain * grain_strength * (1.0 - wet * 0.7))
 		* (1.0 - track * track_darkening)
 		* (1.0 - soaked * 0.55);
@@ -97,4 +108,11 @@ void fragment() {
 	// road two metres ahead of the wheel.
 	ROUGHNESS = mix(base_roughness, 0.30, soaked);
 	SPECULAR = soaked * 0.45;
+
+	// Schlick at the view angle alone. Polished tracks carry more of it; a wet
+	// road carries a great deal more.
+	float facing = clamp(dot(NORMAL, VIEW), 0.0, 1.0);
+	float fresnel = pow(1.0 - facing, 5.0);
+	float gloss = sheen_strength * (1.0 + track * 0.5) * (1.0 + wet * 1.6);
+	EMISSION = sky_sheen * fresnel * gloss * (1.0 + grain * 0.6);
 }
