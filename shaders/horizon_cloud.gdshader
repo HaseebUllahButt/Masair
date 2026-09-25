@@ -33,19 +33,20 @@ void vertex() {
 
 void fragment() {
 	vec2 p = UV * 2.0 - 1.0;
-	// Elliptical, not round. A circular falloff on a wide quad still reads as a
-	// disc, and a row of discs on a skyline is the ring of floating plates the
-	// collar kept turning into. Faster falloff up and down than across leaves a
-	// bank lying along the crest. The x factor stays at 1.0 or above so the
-	// lobe always reaches zero inside the quad — clip it and the soft edge
-	// becomes a hard vertical cut, which is a worse artefact than the disc.
-	float d = length(p * vec2(1.02, 1.30));
-	// Noise stretched the same way, so the tears in the bank are horizontal.
-	float n = vnoise(UV * vec2(3.4, 2.2) + COLOR.rg * 5.0);
-	n = mix(n, vnoise(UV * vec2(7.6, 4.6) + 2.4), 0.44);
-	// A long soft ramp rather than a rim. Anything tighter and the puff has a
-	// visible edge, which on a skyline is a flying saucer parked on the peak.
-	float lobe = smoothstep(1.0, 0.06, d) * smoothstep(0.18, 0.72, n);
+	// Each axis reaches zero before the quad boundary. An ellipse whose alpha is
+	// still non-zero at UV 0/1 gets clipped into a hard plate, which is exactly
+	// the old flying-saucer artefact. Separate soft axes also make a thin bank
+	// without turning it into a rectangle.
+	float edge_x = 1.0 - smoothstep(0.18, 1.0, abs(p.x));
+	float edge_y = 1.0 - smoothstep(0.08, 1.0, abs(p.y));
+	// One stretched noise octave is enough at this distance. A cheap sine tear
+	// keeps the long edge from looking procedural without another hash lattice.
+	float n = vnoise(UV * vec2(4.2, 2.6) + COLOR.rg * 5.0);
+	float torn = 0.5 + 0.5 * sin(UV.x * 15.0 + n * 5.0 + COLOR.r * 6.2831);
+	n = mix(n, torn, 0.22);
+	float lobe = edge_x * edge_y * smoothstep(0.24, 0.72, n);
+	lobe = smoothstep(0.02, 0.76, lobe);
 	ALPHA = lobe * opacity * COLOR.a;
-	ALBEDO = mix(cloud_dark, cloud_lit, clamp(n * 0.7 + (1.0 - d) * 0.45, 0.0, 1.0));
+	vec3 vapour = mix(cloud_dark, cloud_lit, clamp(n * 0.68 + (1.0 - abs(p.y)) * 0.32, 0.0, 1.0));
+	ALBEDO = mix(vapour, cloud_lit, 0.22);
 }

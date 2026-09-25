@@ -16,7 +16,7 @@ extends Node3D
 ##    matter how the tents themselves are shaped. Seventeen on the near ring puts
 ##    five primaries plus their spurs in front of the rider.
 
-const RANGE_SHADER: Shader = preload("res://shaders/horizon.gdshader")
+const RangeMaterial := preload("res://scripts/range_material.gd")
 const CLOUD_SHADER: Shader = preload("res://shaders/horizon_cloud.gdshader")
 const LowPoly := preload("res://scripts/low_poly.gd")
 
@@ -29,63 +29,68 @@ const FOOT_Y := -160.0
 ## rolled so the composition is designed: hero, col, shoulder, foothill, hero.
 ## Thirteen entries is prime against every massif count below, so the rhythm
 ## never lines up with itself and no two sectors of the horizon are twins.
-const RHYTHM := [1.00, 0.26, 0.74, 0.34, 0.94, 0.22, 0.64, 0.38, 0.90, 0.28, 0.60, 0.36, 0.82]
+const RHYTHM := [1.00, 0.48, 0.78, 0.52, 0.96, 0.46, 0.68, 0.54, 0.92, 0.50, 0.64, 0.56, 0.84]
 ## Neighbours overlap just enough for a col, not enough to fill into a wall.
 const REACH := 1.02
-const GRIT_BLOCK := 4
+const GRIT_BLOCK := 8
 
-## Scree starts near the crest line so the ring is not an inner wall. A deep
-## inset was a beige cylinder you could see out the sides of the lens.
-const FACE_G := [0.42, 0.32, 0.22, 0.14, 0.08, 0.03, 0.00]
-const FACE_F := [0.00, 0.16, 0.34, 0.52, 0.70, 0.86, 1.00]
+## Four visible shelves are enough once the fragment shader owns the rock
+## texture. The old six-shelf loft spent most of its triangles below the mist,
+## where they contributed no readable form. The camera is always inside the
+## ring, so the outward-facing backslope was culled anyway: it was pure cost.
+const FACE_G := [0.42, 0.29, 0.16, 0.06, 0.00]
+const FACE_F := [0.00, 0.22, 0.48, 0.76, 1.00]
 
 const LAYERS := [
 	{
-		"radius": 1480.0,
-		"face": 340.0,
-		"high": 250.0,
+		"radius": 1460.0,
+		"face": 360.0,
+		"high": 300.0,
 		"count": 17,
-		"segments": 160,
-		"haze": 0.06,
-		"clouds": true,
+		"segments": 256,
+		"haze": 0.05,
+		## No collar on the foothills. At fifteen hundred metres a puff sized
+		## for a summit is a quarter of the lens, and it arrived as a pale sheet
+		## smeared across the nearest faces rather than as cloud.
+		"clouds": false,
 		"phase": 0.11,
-		"sharp": 0.86,
+		"sharp": 1.46,
 		"beat": 0,
 	},
 	{
-		"radius": 1780.0,
-		"face": 280.0,
-		"high": 370.0,
+		"radius": 1760.0,
+		"face": 320.0,
+		"high": 450.0,
 		"count": 15,
-		"segments": 136,
-		"haze": 0.22,
+		"segments": 208,
+		"haze": 0.24,
 		"clouds": true,
 		"phase": 0.47,
-		"sharp": 0.83,
+		"sharp": 1.38,
 		"beat": 5,
 	},
 	{
 		"radius": 2080.0,
-		"face": 230.0,
-		"high": 480.0,
+		"face": 270.0,
+		"high": 650.0,
 		"count": 13,
-		"segments": 112,
-		"haze": 0.40,
+		"segments": 160,
+		"haze": 0.45,
 		"clouds": true,
 		"phase": 0.83,
-		"sharp": 0.80,
+		"sharp": 1.32,
 		"beat": 9,
 	},
 	{
-		"radius": 2420.0,
-		"face": 180.0,
-		"high": 580.0,
+		"radius": 2430.0,
+		"face": 230.0,
+		"high": 900.0,
 		"count": 11,
-		"segments": 96,
-		"haze": 0.62,
+		"segments": 128,
+		"haze": 0.66,
 		"clouds": false,
 		"phase": 0.29,
-		"sharp": 0.76,
+		"sharp": 1.24,
 		"beat": 3,
 	},
 ]
@@ -94,6 +99,8 @@ var _player: Node3D
 var _range_mat: ShaderMaterial
 var _cloud_mat: ShaderMaterial
 var _peaks: Array[Dictionary] = []
+## Vertex → smoothed normal for the front of the layer being built.
+var _front_normals: Dictionary = {}
 
 
 func _ready() -> void:
@@ -102,8 +109,7 @@ func _ready() -> void:
 	## kilometres of skyline ease from the bench to kilometre zero.
 	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	_player = get_parent().get_node_or_null("Player") as Node3D
-	_range_mat = ShaderMaterial.new()
-	_range_mat.shader = RANGE_SHADER
+	_range_mat = RangeMaterial.ring()
 	_cloud_mat = ShaderMaterial.new()
 	_cloud_mat.shader = CLOUD_SHADER
 	for i in LAYERS.size():
@@ -120,51 +126,27 @@ func _process(_delta: float) -> void:
 
 
 func apply_mood(mood: Dictionary) -> void:
-	if _range_mat == null:
-		return
-	var haze: Color = mood.get("horizon_color", Color("f6b06a"))
-	var fog: Color = mood.get("fog_color", Color("8b625f"))
-	var lit: Color = mood.get("cloud_lit", Color("f4b07d"))
-	var dark: Color = mood.get("cloud_dark", Color("413b58"))
-	var light_angle: Vector3 = mood.get("light_angle", Vector3(-7.0, 14.0, 0.0))
-	var euler := Vector3(deg_to_rad(light_angle.x), deg_to_rad(light_angle.y), deg_to_rad(light_angle.z))
-	## DirectionalLight points down its -Z; N·L wants the vector toward the sun.
-	var toward_sun: Vector3 = Basis.from_euler(euler).z
-	_range_mat.set_shader_parameter("haze_color", haze)
-	## Warm scree at the foot walking to cooler rock at the crest. One rock
-	## colour lit by a backlit sun is a card whichever way the facets point.
-	## Night fog is already a navy; darkening it again crushed the near range
-	## into the same black triangles the Lambert overlooks used to be.
-	_range_mat.set_shader_parameter("foot_color", fog.darkened(0.16).lerp(Color("3c4a62"), 0.38))
-	_range_mat.set_shader_parameter("crest_color", fog.lerp(Color("6a7a98"), 0.48).lightened(0.06))
-	## What an up-facing plane collects from the dusk dome. This is the term
-	## that keeps the backlit face off zero without smearing sunset over it.
-	_range_mat.set_shader_parameter("sky_color", haze.lerp(Color("8fa6c8"), 0.62).lightened(0.04))
-	_range_mat.set_shader_parameter("snow_color", Color("eef2f8"))
-	_range_mat.set_shader_parameter("sun_dir", toward_sun)
+	## The ranges' colours live with the material, which the overlooks share.
+	RangeMaterial.apply_mood(mood)
 	if _cloud_mat:
+		var lit: Color = mood.get("cloud_lit", Color("f4b07d"))
+		var dark: Color = mood.get("cloud_dark", Color("413b58"))
 		## Barely lightened. Pushed most of the way to white the collar stopped
 		## being vapour lit by the sunset and became a lens of grey plastic.
 		_cloud_mat.set_shader_parameter("cloud_lit", lit.lerp(Color.WHITE, 0.16))
 		_cloud_mat.set_shader_parameter("cloud_dark", dark)
-		_cloud_mat.set_shader_parameter("opacity", 0.52)
+		_cloud_mat.set_shader_parameter("opacity", 0.27)
 
 
 func _follow_player() -> void:
 	if _player == null:
 		return
 	global_position = _player.global_position
-	## The ring is a skybox the rider cannot approach. At an overlook the
-	## authored range *is* the skyline, and drawing both at the same distance
-	## z-fought into stripes across the lake.
-	visible = not _at_scenic_view()
-
-
-func _at_scenic_view() -> bool:
-	if bool(_player.get("seated")):
-		return true
-	var path := get_node_or_null("/root/RoadPath")
-	return path != null and bool(path.call("at_platform", _player.track_z, _player.lateral))
+	## The ring is a skybox the rider cannot approach, and that includes the
+	## overlooks: it stays put, the same size and the same haze, when the rider
+	## stops. Hiding or pushing it back on arrival made the distant mountains
+	## vanish the moment the bike reached the top. The authored lake range is
+	## built inside the ring instead of competing with it.
 
 
 func _build_layer(index: int) -> void:
@@ -179,6 +161,7 @@ func _build_layer(index: int) -> void:
 	for s in segments:
 		var angle := TAU * float(s) / float(segments)
 		samples.append(_sample(angle, layer, massifs))
+	_smooth_front_normals(samples)
 	for s in segments:
 		var a: Dictionary = samples[s]
 		var b: Dictionary = samples[(s + 1) % segments]
@@ -186,8 +169,16 @@ func _build_layer(index: int) -> void:
 		## is a couple of degrees of arc; giving each its own tone flutes the
 		## face into vertical corduroy, which is the same mistake
 		## `RANGE_STEP`'s comment records at the overlooks. A block is a scree
-		## patch a few degrees across.
-		_loft_span(surface, a, b, high, haze, index * 2003 + int(s / GRIT_BLOCK) * 13, s)
+		## patch a few degrees across — and it eases into the next one. Held
+		## constant and cut at the block edge, each patch was a hard-sided
+		## rectangle of its own tone, and from an overlook, where the lens is
+		## narrower and the ring fills it, those read as a row of curtains.
+		var blocks: int = maxi(segments / GRIT_BLOCK, 1)
+		var blk: int = s / GRIT_BLOCK
+		var blend: float = smoothstep(0.0, 1.0, float(s % GRIT_BLOCK) / float(GRIT_BLOCK))
+		_loft_span(
+			surface, a, b, high, haze, index * 2003 + blk * 13, index * 2003 + ((blk + 1) % blocks) * 13, blend, s
+		)
 	var mesh := MeshInstance3D.new()
 	mesh.name = "Range%d" % index
 	mesh.mesh = surface.commit()
@@ -199,6 +190,34 @@ func _build_layer(index: int) -> void:
 	add_child(mesh)
 	if bool(layer["clouds"]):
 		_collect_peaks(layer, massifs, samples, segments)
+
+
+func _smooth_front_normals(samples: Array[Dictionary]) -> void:
+	## One normal per front vertex, from the surface around it, shared by every
+	## facet that touches it.
+	##
+	## Each column of the front used to shade with its own flat face normal. A
+	## column is a couple of degrees of arc, and neighbours face the sun at
+	## slightly different angles, so the face broke into a row of vertical light
+	## and dark stripes — small on the ride, and curtains from an overlook where
+	## the lens is narrower and the ring fills it. The overlook ranges take their
+	## normals the same way and read as one folded surface.
+	_front_normals.clear()
+	var count := samples.size()
+	for s in count:
+		var band: Array = samples[s]["band"]
+		var prev: Array = samples[(s - 1 + count) % count]["band"]
+		var next: Array = samples[(s + 1) % count]["band"]
+		var inward := -(samples[s]["out"] as Vector3)
+		var last := band.size() - 1
+		for k in band.size():
+			var along: Vector3 = (next[k] as Vector3) - (prev[k] as Vector3)
+			var up: Vector3 = (band[mini(k + 1, last)] as Vector3) - (band[maxi(k - 1, 0)] as Vector3)
+			var n := along.cross(up)
+			if n.length_squared() < 1e-8:
+				continue
+			n = n.normalized()
+			_front_normals[band[k]] = -n if n.dot(inward) < 0.0 else n
 
 
 func _plant_massifs(index: int, layer: Dictionary) -> Array[Dictionary]:
@@ -220,7 +239,9 @@ func _plant_massifs(index: int, layer: Dictionary) -> Array[Dictionary]:
 		var centre: float = spacing * (float(m) + float(layer["phase"])) + (_hash(seed) - 0.5) * spacing * 0.34
 		var beat_h: float = float(RHYTHM[(m + beat) % RHYTHM.size()])
 		var peak: float = clampf(beat_h * (0.90 + 0.18 * _hash(seed + 3)), 0.34, 1.0)
-		var shape: float = clampf(sharp * (0.90 + 0.16 * beat_h), 0.72, 0.95)
+		## Above one, so the flanks are concave and the summit is a horn. Below
+		## one every tent was a rounded dome and the ring a row of sand dunes.
+		var shape: float = clampf(sharp * (0.88 + 0.20 * beat_h), 1.1, 1.7)
 		var steep_sign := 1.0 if _hash(seed + 5) > 0.5 else -1.0
 		planted.append({
 			"centre": centre,
@@ -238,7 +259,7 @@ func _plant_massifs(index: int, layer: Dictionary) -> Array[Dictionary]:
 				"inner": spacing * 0.55,
 				"outer": spacing * 0.72,
 				"steep": -steep_sign,
-				"sharp": 0.80,
+				"sharp": 1.30,
 				"radial": (_hash(seed + 13) - 0.5) * face * 0.16,
 			})
 		if peak > 0.62:
@@ -249,7 +270,7 @@ func _plant_massifs(index: int, layer: Dictionary) -> Array[Dictionary]:
 				"inner": spacing * (0.40 + 0.10 * _hash(seed + 17)),
 				"outer": spacing * (0.58 + 0.12 * _hash(seed + 18)),
 				"steep": side,
-				"sharp": 0.76,
+				"sharp": 1.18,
 				"radial": -face * (0.10 + 0.10 * _hash(seed + 19)),
 			})
 	return planted
@@ -288,10 +309,14 @@ func _sample(angle: float, layer: Dictionary, massifs: Array[Dictionary]) -> Dic
 	## even so — that weighting peaks at a quarter, so a tenth here is a couple
 	## of metres of relief and a ridge that runs dead straight from foot to
 	## apex, which is the tell that gave the last version away as folded paper.
+	## The two fast terms are the crest's own teeth: gendarmes and notches a few
+	## segments wide, so a ridge reads as broken rock against the sky rather
+	## than a smooth curve cut out of card.
 	var jag: float = (
 		0.24 * sin(angle * 11.0 + phase * 4.0)
-		+ 0.13 * sin(angle * 19.0 + phase * 9.0)
-		+ 0.06 * sin(angle * 31.0 + phase * 2.3)
+		+ 0.14 * sin(angle * 19.0 + phase * 9.0)
+		+ 0.08 * sin(angle * 31.0 + phase * 2.3)
+		+ 0.045 * absf(sin(angle * 47.0 + phase * 5.7))
 	)
 	## The jagged skyline belongs to the skyline. Carry the smooth envelope
 	## separately and hang the slopes below off *that*: the fine relief on a
@@ -301,7 +326,7 @@ func _sample(angle: float, layer: Dictionary, massifs: Array[Dictionary]) -> Dic
 	## panel and the hillside is a pleated paper fan. That is the whole reason
 	## the last two attempts read as cardboard, and no amount of extra segments
 	## or per-facet tone fixes it, because it is the surface that is ruled.
-	var body := clampf(maxf(crest, 0.14), 0.0, 1.0)
+	var body := clampf(maxf(crest, 0.07), 0.0, 1.0)
 	crest = clampf(body + jag * body * (1.0 - body), 0.0, 1.0)
 	var height: float = high * crest
 	## Slow bows across whole sectors of the ring. Anything fast lives in the
@@ -356,12 +381,12 @@ func _sample(angle: float, layer: Dictionary, massifs: Array[Dictionary]) -> Dic
 		"height": height,
 		"band": band,
 		"crest": band[last],
-		"back": out * (r + face * 1.10) + Vector3(0.0, FOOT_Y, 0.0),
 	}
 
 
 func _tent(t: float, sharpness: float) -> float:
-	## Sharpness > 1 is alpine, < 1 is a round fell. Same curve the overlooks use.
+	## Sharpness > 1 is alpine (concave flanks, a horn on top), < 1 is a round
+	## fell. Same curve the overlooks use.
 	return pow(t, sharpness)
 
 
@@ -376,6 +401,8 @@ func _loft_span(
 	high: float,
 	haze: float,
 	block: int,
+	next_block: int,
+	blend: float,
 	step: int
 ) -> void:
 	## Always loft. Skipping a low col punched a hole in the ring, and the
@@ -395,21 +422,9 @@ func _loft_span(
 			inward,
 			high,
 			haze,
-			_hash(block + k * 5 + 3),
+			lerpf(_hash(block + k * 5 + 3), _hash(next_block + k * 5 + 3), blend),
 			(step + k) % 2 == 1
 		)
-	_quad(
-		surface,
-		a["crest"],
-		b["crest"],
-		b["back"],
-		a["back"],
-		-inward,
-		high,
-		haze,
-		_hash(block + 41),
-		step % 2 == 1
-	)
 
 
 func _quad(
@@ -434,12 +449,16 @@ func _quad(
 	## ring, a coarser ring, block tone and three shading rewrites, because none
 	## of those touched the triangulation. Alternating the cut scatters the same
 	## pairs into a lattice.
+	# The quad is intentionally non-planar, but both triangles belong to the
+	# same distant mountain facet. Share their averaged normal so the diagonal
+	# cannot light as a checkerboard.
+	var face_normal := (p1 - p0).cross(p2 - p0) + (p2 - p0).cross(p3 - p0)
 	if flip:
-		_facet(surface, p1, p2, p3, hint, high, haze, grit)
-		_facet(surface, p1, p3, p0, hint, high, haze, grit)
+		_facet(surface, p1, p2, p3, hint, high, haze, grit, face_normal)
+		_facet(surface, p1, p3, p0, hint, high, haze, grit, face_normal)
 	else:
-		_facet(surface, p0, p1, p2, hint, high, haze, grit)
-		_facet(surface, p0, p2, p3, hint, high, haze, grit)
+		_facet(surface, p0, p1, p2, hint, high, haze, grit, face_normal)
+		_facet(surface, p0, p2, p3, hint, high, haze, grit, face_normal)
 
 
 func _facet(
@@ -450,17 +469,23 @@ func _facet(
 	hint: Vector3,
 	high: float,
 	haze: float,
-	grit: float
+	grit: float,
+	face_normal: Vector3 = Vector3.ZERO
 ) -> void:
-	var normal := (b - a).cross(c - a)
+	var normal := face_normal
+	if normal.length_squared() < 0.0001:
+		normal = (b - a).cross(c - a)
 	if normal.length_squared() < 0.0001:
 		return
 	normal = normal.normalized()
 	if normal.dot(hint) < 0.0:
 		normal = -normal
-		var tmp := b
-		b = c
-		c = tmp
+	# Godot's front-face winding is opposite the geometric normal used by this
+	# mesh. Reverse each triangle exactly once, after orienting the shading
+	# normal; a conditional swap left the inward slopes in culled order.
+	var tmp := b
+	b = c
+	c = tmp
 	var mid: Vector3 = (a + b + c) / 3.0
 	var lift := clampf(mid.y / maxf(high, 1.0), 0.0, 1.0)
 	var span := (maxf(a.y, maxf(b.y, c.y)) - minf(a.y, minf(b.y, c.y))) / maxf(high, 1.0)
@@ -478,8 +503,16 @@ func _facet(
 	var vi := 0
 	for p in [a, b, c]:
 		var v_lift := clampf(p.y / maxf(high, 1.0), 0.0, 1.0)
-		var v_grit := clampf(grit * (0.55 + 0.90 * _hash(int(p.x * 0.13 + p.y * 0.21 + p.z * 0.17) + vi)), 0.0, 1.0)
-		surface.set_normal(normal)
+		# The patch tone, and nothing per vertex. A random value on every corner
+		# of a column two degrees wide and a hundred metres tall is a tall thin
+		# gradient, and side by side those were the vertical streaks that ran
+		# through every face — curtains, from an overlook. Tone variation that
+		# the eye should read lives in the patch blend and in the shader's noise.
+		var v_grit := clampf(grit, 0.0, 1.0)
+		# The smoothed front normal where this vertex has one and the facet is on
+		# the same side; the backslope keeps its own.
+		var v_normal: Vector3 = _front_normals.get(p, normal)
+		surface.set_normal(v_normal if v_normal.dot(normal) > 0.0 else normal)
 		surface.set_color(Color(snow, v_grit, v_lift, haze))
 		surface.add_vertex(p)
 		vi += 1
@@ -521,23 +554,21 @@ func _build_clouds() -> void:
 		var face := float(peak["face"])
 		var out: Vector3 = peak["out"]
 		var angle: float = atan2(out.z, out.x)
-		## A bank, not a lens. The puffs used to be spread by a couple of degrees
-		## while each one was twenty degrees wide, so all of them landed on the
-		## same pixels and the collar arrived as one hard-rimmed disc parked on
-		## the summit. Spread wider than the puff, overlap loosely, stagger the
-		## height, and it reads as cloud caught on a peak.
-		var metre: float = clampf(height * 0.46, 170.0, 360.0)
-		for k in 4:
+		## A thin wind-brushed wisp, not a stack of plates. Three narrow cards
+		## overlap above the actual crest; their shader tears the edges and drops
+		## to zero before the quad boundary, so no saucer can appear in the sky.
+		var metre: float = clampf(height * 0.20, 70.0, 130.0)
+		for k in 3:
 			var f := float(k)
-			var around: float = (f - 1.5) * 0.072 + sin(phase + f * 1.3) * 0.026
+			var around: float = (f - 1.0) * 0.095 + sin(phase + f * 1.3) * 0.024
 			var a: float = angle + around
-			var lift: float = height * (0.58 + 0.34 * absf(sin(phase * 1.1 + f * 2.0)))
-			## Pulled in off the crest line so the bank overlaps the face it
+			var lift: float = height * (0.92 + 0.05 * sin(phase * 1.1 + f * 2.0)) + metre * 0.12
+			## Pulled in off the crest line so the wisp overlaps the face it
 			## belongs to rather than hovering in clear air in front of it.
-			var at: float = radius - face * (0.10 + 0.20 * _hash(int(phase * 97.0) + k))
+			var at: float = radius - face * (0.12 + 0.16 * _hash(int(phase * 97.0) + k))
 			var pos := Vector3(cos(a) * at, lift, sin(a) * at)
-			var wide: float = metre * (1.25 + 0.50 * sin(phase + f * 0.8))
-			var tall: float = metre * (0.72 + 0.26 * sin(phase * 1.3 + f))
+			var wide: float = metre * (1.45 + 0.35 * sin(phase + f * 0.8))
+			var tall: float = metre * (0.34 + 0.10 * sin(phase * 1.3 + f))
 			var basis := _billboard_at(pos).scaled(Vector3(wide, tall, 1.0))
 			xforms.append(Transform3D(basis, pos))
 			cols.append(
@@ -545,7 +576,7 @@ func _build_clouds() -> void:
 					0.5 + 0.5 * sin(phase + f * 1.6),
 					0.5 + 0.5 * sin(phase * 1.7 + f),
 					1.0,
-					0.44 + 0.34 * absf(sin(phase * 0.9 + f))
+					0.30 + 0.18 * absf(sin(phase * 0.9 + f))
 				)
 			)
 	if xforms.is_empty():
