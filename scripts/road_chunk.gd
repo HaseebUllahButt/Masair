@@ -6562,13 +6562,28 @@ func _append_view_range_layer(b: LowPoly, index: int, ctx: Dictionary) -> void:
 	var profile := _range_profile()
 	var cols: Array[PackedVector3Array] = []
 	var crest_h := PackedFloat32Array()
+	# Sample the whole crest first, then build the columns.
+	#
+	# The range is built as a height field with no separate support geometry, so
+	# a column that stands far above its neighbours has to be given its own
+	# flanks or it reads as a free-standing cone. The quad skip below used to
+	# drop every face whose two crest samples were under ten metres, which meant
+	# a summit standing over low ground kept no shoulders at all and arrived as
+	# a hard-edged cone planted in front of the range — a traffic cone against
+	# the hazed peaks at the mountain overlook. The skip now only fires where the
+	# crest has genuinely tapered to nothing, which is the window edge it was
+	# written for.
+	var samples: Array[Vector2] = []
 	for i in steps + 1:
 		var z := z0 + step * float(i)
 		var sample: Vector2 = _range_sample(z, layer, phase, index)
 		sample.x *= height_mul * stack
 		sample.y *= lateral_mul
-		cols.append(_range_column(z, sample, layer, base_y, phase, profile))
-		crest_h.append(sample.x)
+		samples.append(sample)
+	for i in steps + 1:
+		var z := z0 + step * float(i)
+		cols.append(_range_column(z, samples[i], layer, base_y, phase, profile))
+		crest_h.append(samples[i].x)
 	var rows: int = cols[0].size()
 	var norms: Array[PackedVector3Array] = []
 	var tones: Array[PackedColorArray] = []
@@ -6587,7 +6602,10 @@ func _append_view_range_layer(b: LowPoly, index: int, ctx: Dictionary) -> void:
 		norms.append(ns)
 		tones.append(cs)
 	for i in steps:
-		if crest_h[i] < 10.0 and crest_h[i + 1] < 10.0:
+		# Only skip where the crest has tapered away entirely, which is the range
+		# window's edge. Skipping on "low" instead left a tall column with no
+		# shoulders — a floating cone rather than a peak.
+		if crest_h[i] < 0.5 and crest_h[i + 1] < 0.5:
 			continue
 		var ca: PackedVector3Array = cols[i]
 		var cb: PackedVector3Array = cols[i + 1]
@@ -6748,13 +6766,22 @@ func _range_sample(z: float, layer: Dictionary, phase: float, depth: int = 0) ->
 		Env.MOUNTAIN:
 			# Concave flanks and a horn on top. At 0.96 every massif was a
 			# straight-sided pyramid — the lone witch's hat on the left of the view.
-			sharpness = 1.3
+			#
+			# 1.3 only traded the pyramid for the hat. `pow(t, 1.3)` is flat at the
+			# foot and steepest at the summit, which is the definition of a witch's
+			# hat: on a hero standing alone it read as a dark cone planted in front
+			# of the range. A mountain wants most of its height change in the
+			# middle of the flank, so the exponent comes down to just past vertical
+			# and the heroes get wider below — `inner_k`/`outer_k` are what set how
+			# much ground a summit stands on, and at 0.48/0.34 a hero had almost
+			# none.
+			sharpness = 1.12
 			other = 0.62
 			sag0 = 0.68
 			jag_a = 0.08
 			jag_b = 0.05
-			inner_k = 0.48
-			outer_k = 0.34
+			inner_k = 0.62
+			outer_k = 0.46
 			foothill_lo = 0.42
 			foothill_span = 0.22
 			floor_h = 0.04

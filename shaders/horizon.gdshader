@@ -119,7 +119,11 @@ void fragment() {
 	// its lit side against its shaded side, so the terminator has to be a
 	// decision, not a fade. Still soft enough that a rolling face does not band.
 	float lit = smoothstep(0.40 - 0.22 * light_soft, 0.66 + 0.22 * light_soft, key + (rake - 0.5) * 0.30);
-	float lum = mix(0.40, 1.0, lit);
+	// Floor raised from 0.40. The terminator still has to be a decision — that
+	// is what makes a range read as two-sided form rather than a pink gradient —
+	// but 0.40 was low enough that a shaded face had almost no value left to
+	// carry shape once the rock colour and tint were applied.
+	float lum = mix(0.52, 1.0, lit);
 	lum += 0.16 * dome * dome;
 	lum *= mix(0.90, 1.08, grit_v);
 	lum *= mix(0.88 + 0.08 * light_soft, 1.08, relief);
@@ -129,10 +133,24 @@ void fragment() {
 	// a restrained warm cast, while the away-facing side takes the cool sky dome
 	// rather than collapsing into black. This gives the low-poly range shape at
 	// distances where per-facet normals are no longer legible.
-	vec3 shade_tint = vec3(0.70, 0.81, 1.08);
+	//
+	// The shade tint is cool but no longer blue-heavy: `foot_color` is already a
+	// blue-grey scree, so pushing the shadow further towards blue as well as
+	// darkening it is what turned a backlit peak into a navy spike.
+	vec3 shade_tint = vec3(0.78, 0.84, 1.02);
 	vec3 sun_tint = vec3(1.10, 1.00, 0.82);
 	vec3 col = rock * lum * mix(shade_tint, sun_tint, lit);
-	col += haze_color * (0.010 + 0.024 * dome) * lit;
+	// Ambient, on both sides of the terminator.
+	//
+	// At dusk the sky is the brightest thing in the frame, so a face turned away
+	// from a low sun is lit *almost entirely* by it. Gating this term on `lit`
+	// left the shaded side with nothing but the 0.40 luminance floor, which is
+	// what put a hard black-blue spike in front of the hazed ranges at the
+	// mountain overlook: one steep backlit peak, correctly shaped, reading as a
+	// hole cut in the picture. The shade side now collects skylight, weighted to
+	// how much sky it actually faces.
+	col += haze_color * (0.010 + 0.024 * dome) * mix(0.45, 1.0, lit);
+	col += sky_color * dome * dome * 0.13 * (1.0 - lit);
 
 	// Treeline, ragged, by height alone. Gating it on the facet normal switched
 	// whole kilometre-wide quads on and off and left hard green rectangles in
