@@ -92,6 +92,13 @@ void fragment() {
 	// The reflected ray climbs as the eye looks down: grazing water shows the
 	// horizon glow, steeper water the sky higher up.
 	vec3 reflected = mix(sky_mirror, sky_high, smoothstep(0.08, 0.55, cos_flat));
+	// At steep angles, preserve the sky's brightness while the water body
+	// supplies its cool hue. The grazing horizon still carries warm sky;
+	// the direct sun path remains in light(), with its original light colour.
+	float body_view = smoothstep(0.06, 0.30, cos_flat);
+	vec3 body_tint = water_color / max(max(water_color.r, water_color.g), max(water_color.b, 0.001));
+	float reflected_luma = dot(reflected, vec3(0.2126, 0.7152, 0.0722));
+	reflected = mix(reflected, body_tint * reflected_luma, body_view * 0.92);
 	float wave_phase = center / max(wave_height, 0.001);
 	// It is never the full uniform colour, though — a flat sheet of horizon
 	// paint reads as fog or a floor, not water. The swell phase and the shimmer
@@ -103,7 +110,7 @@ void fragment() {
 	// Light scattered back up out of the body of the water. Small, but it is
 	// what keeps deep water teal under a key of any colour instead of taking the
 	// hue of the sunset like a painted floor would.
-	vec3 body = water_color * 0.22 * (1.0 - schlick);
+	vec3 body = water_color * 0.50 * (1.0 - schlick);
 	EMISSION = reflected * schlick * structure * mix(vec3(1.0), water_color * 2.2, 0.35) + body;
 	METALLIC = 0.12;
 	ROUGHNESS = mix(0.16, 0.055, fresnel);
