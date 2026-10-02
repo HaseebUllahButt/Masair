@@ -431,6 +431,11 @@ func _ready() -> void:
 	var scenic_warmup: Node = load("res://scripts/scenic_warmup.gd").new()
 	scenic_warmup.name = "ScenicWarmup"
 	add_child(scenic_warmup)
+	# Birds, whales, balloons and mist over the overlooks. Idle unless the rider
+	# is sitting on a bench; see lookout_life.gd.
+	var lookout_life: Node3D = load("res://scripts/lookout_life.gd").new()
+	lookout_life.name = "LookoutLife"
+	add_child(lookout_life)
 	_build_environment()
 	_build_grade_overlay()
 	_build_rain()
