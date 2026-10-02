@@ -43,6 +43,7 @@ extends Node
 const RoadChunkGD: GDScript = preload("res://scripts/road_chunk.gd")
 const LowPolyGD: GDScript = preload("res://scripts/low_poly.gd")
 const RangeMaterialGD: GDScript = preload("res://scripts/range_material.gd")
+const LookoutLifeGD: GDScript = preload("res://scripts/lookout_life.gd")
 const SKY_SHADER: Shader = preload("res://shaders/sky.gdshader")
 const GRADE_SHADER: Shader = preload("res://shaders/grade.gdshader")
 const CONTACT_SHADOW_SHADER: Shader = preload("res://shaders/contact_shadow.gdshader")
@@ -207,6 +208,12 @@ func _build_lookouts(preview: SubViewport) -> void:
 		instance.scale = Vector3.ONE * 0.02 if asset == "lookout_grove" else Vector3.ONE
 		instance.position = Vector3(0.0, 9.0, 0.0)
 		preview.add_child(instance)
+	# What moves in the view once the rider sits: birds, spray, mist, balloons.
+	# Nothing draws any of it until a bench, so without this the first sit-down
+	# is the frame that compiles all of it.
+	var life_root := Node3D.new()
+	preview.add_child(life_root)
+	LookoutLifeGD.warm_into(life_root)
 
 
 func _build_canvas(preview: SubViewport) -> void:
