@@ -16,6 +16,8 @@ render_mode unshaded, fog_disabled, shadows_disabled, specular_disabled, cull_ba
 //
 // COLOR.r snow cap, COLOR.g per-facet grit, COLOR.b height, COLOR.a layer haze.
 
+instance uniform float vista_visibility : hint_range(0.0, 1.0) = 1.0;
+
 uniform vec3 foot_color : source_color = vec3(0.24, 0.18, 0.16);
 uniform vec3 crest_color : source_color = vec3(0.34, 0.33, 0.38);
 uniform vec3 haze_color : source_color = vec3(0.96, 0.69, 0.42);
@@ -92,6 +94,9 @@ void vertex() {
 }
 
 void fragment() {
+	// Opaque screen-door fade: keep every vertex fixed during the vista handover.
+	float threshold = fract(52.9829189 * fract(dot(floor(FRAGCOORD.xy), vec2(0.06711056, 0.00583715))));
+	if (threshold >= vista_visibility) { discard; }
 	vec3 n = normalize(world_n);
 	float steep = 1.0 - smoothstep(0.42, 0.72, n.y);
 	vec3 eye_p = INV_VIEW_MATRIX[3].xyz;
@@ -123,7 +128,15 @@ void fragment() {
 	// is what makes a range read as two-sided form rather than a pink gradient —
 	// but 0.40 was low enough that a shaded face had almost no value left to
 	// carry shape once the rock colour and tint were applied.
-	float lum = mix(0.52, 1.0, lit);
+	// The floor is a *ratio*, not just a value: this term is the entire
+	// internal light-to-shade spread baked into the range, so 0.52 gave a
+	// 1.9:1 range and a mountain read as one wall of paint with a gradient
+	// running across it. At 0.42 the same lit/shade split is 2.4:1, which is
+	// what makes a two-kilometre form legible as a solid with a front and a
+	// side. Note this is the *internal* spread only — the whole frame's
+	// light-to-dark ratio also has to survive tonemapping and the grade LUT
+	// above it, and at dusk the air is what finally sets that.
+	float lum = mix(0.42, 1.0, lit);
 	lum += 0.16 * dome * dome;
 	lum *= mix(0.90, 1.08, grit_v);
 	lum *= mix(0.88 + 0.08 * light_soft, 1.08, relief);
@@ -184,7 +197,15 @@ void fragment() {
 	// Aerial perspective is the depth cue. Each layer steps most of the way to
 	// the air behind it, snow included — an unhazed cap on the farthest range
 	// glowed brighter than the near one and flattened the stack.
-	vec3 air = mix(mist_color, haze_color, 0.5);
+	//
+	// Weighted towards the mist, not the halfway point. The two candidates sit
+	// only a few degrees apart in hue and at nearly identical saturation, so a
+	// 0.5 mix did not average them into neutral — it averaged one chroma into
+	// two, landing the far ranges on a hue that was neither sky nor ground and
+	// therefore matched neither. That is what a mountain range looks like when
+	// it is mud. At 0.25 the aerial target stays the cool near-side air, so the
+	// haze reads as distance rather than as a third colour in the frame.
+	vec3 air = mix(mist_color, haze_color, 0.25);
 	col = mix(col, air, clamp(haze_v * 0.95 + weather_haze * (0.45 + haze_v), 0.0, 0.94));
 	// Soften the ring into the air at the extreme edges of a wide lens, but
 	// keep the mountains when the rider looks aside.

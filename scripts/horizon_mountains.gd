@@ -142,11 +142,19 @@ func _follow_player() -> void:
 	if _player == null:
 		return
 	global_position = _player.global_position
-	## The ring is a skybox the rider cannot approach, and that includes the
-	## overlooks: it stays put, the same size and the same haze, when the rider
-	## stops. Hiding or pushing it back on arrival made the distant mountains
-	## vanish the moment the bike reached the top. The authored lake range is
-	## built inside the ring instead of competing with it.
+	# Hand over to the authored vista without moving or flattening any summit.
+	var path: Node = get_node("/root/RoadPath")
+	var z: float = float(_player.get("track_z"))
+	var lateral: float = float(_player.get("lateral"))
+	var centre: float = float(path.call("viewpoint_centre_for", z))
+	var reveal: float = 0.0
+	if bool(path.call("on_spur", z, lateral)):
+		reveal = 1.0 - smoothstep(350.0, 420.0, absf(z - centre))
+	var opacity: float = 1.0 - reveal
+	visible = opacity > 0.001
+	for child: Node in get_children():
+		if child is GeometryInstance3D:
+			(child as GeometryInstance3D).set_instance_shader_parameter("vista_visibility", opacity)
 
 
 func _build_layer(index: int) -> void:

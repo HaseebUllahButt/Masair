@@ -31,6 +31,8 @@ void vertex() {
 	VERTEX += inverse(mat3(MODEL_MATRIX)) * world_off;
 }
 
+instance uniform float vista_visibility : hint_range(0.0, 1.0) = 1.0;
+
 void fragment() {
 	vec2 p = UV * 2.0 - 1.0;
 	// Each axis reaches zero before the quad boundary. An ellipse whose alpha is
@@ -46,7 +48,7 @@ void fragment() {
 	n = mix(n, torn, 0.22);
 	float lobe = edge_x * edge_y * smoothstep(0.24, 0.72, n);
 	lobe = smoothstep(0.02, 0.76, lobe);
-	ALPHA = lobe * opacity * COLOR.a;
+	ALPHA = lobe * opacity * COLOR.a * vista_visibility;
 	vec3 vapour = mix(cloud_dark, cloud_lit, clamp(n * 0.68 + (1.0 - abs(p.y)) * 0.32, 0.0, 1.0));
 	ALBEDO = mix(vapour, cloud_lit, 0.22);
 }
