@@ -321,6 +321,9 @@ func _ready() -> void:
 	# without this its first-use lazy init is paid mid-frame, which is the
 	# intermittent restart spike. See RoadChunk.warm_shared_resources().
 	RoadChunkGD.warm_shared_resources()
+	var scenic_warmup: Node = load("res://scripts/scenic_warmup.gd").new()
+	scenic_warmup.name = "ScenicWarmup"
+	add_child(scenic_warmup)
 	_build_environment()
 	_build_grade_overlay()
 	_build_rain()
