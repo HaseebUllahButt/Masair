@@ -94,8 +94,15 @@ const MOODS := {
 		"star_intensity": 0.0,
 		"galaxy_color": Color("6b74b8"),
 		"light_color": Color("ff9e62"),
-		"light_energy": 1.42,
-		"light_angle": Vector3(-7.0, 14.0, 0.0),
+		# Key energy and exposure are one decision, not two. Raised together with
+		# the angle below: the sun is the only directional light in the scene, so
+		# it is the only thing that can put a lit side and a shaded side on a
+		# hill. More key with the white point pulled back down keeps the
+		# frame's overall brightness where it was while spending the extra
+		# energy on *range* in the midtones instead of on overall level — which
+		# is the one thing this lookoff was missing.
+		"light_energy": 5.5,
+		"light_angle": Vector3(-15.0, 14.0, 0.0),
 		"angular_distance": 0.8,
 		# The warning at the top of this table is about exactly this row. A violet
 		# fill at 0.28 against a 0.62 sun is nearly a third of the light arriving
@@ -104,33 +111,43 @@ const MOODS := {
 		# landscape was lit by and became the only colour in it. Weaker fill,
 		# stronger warm key: the drama is in the sky, and the ground should be
 		# lit by it rather than painted with it.
-		# Both of these are a colour times an energy, and both colours are dark, so
-		# the product was doing almost nothing once the albedos stopped being a
-		# gamma too bright. At dusk the sun is three degrees up and dead ahead and
-		# puts nothing on a horizontal road at all — ambient and fill *are* the
-		# light on the tarmac, and at the old numbers it came out at 0.02.
-		# Rebalanced when the terrain stopped using wrapped diffuse. Wrap was
-		# quietly donating half the key light to every surface facing away from the
-		# sun; taking it out is what finally gave hillsides a shaded side, and it
-		# also removed that donation from the exposure budget, so the shaded side
-		# landed on the floor. This is the same total light arriving in a form that
-		# models rather than flattens: cool fill and ambient, warm key, and the
-		# split between the two is the entire look at dusk.
+		# Fill and ambient were left where they are while the key went up 3.9x.
+		# That is the point: these two are the flat, from-everywhere component,
+		# and every unit of light that arrives as one hue from one direction-less
+		# source is a unit the frame cannot separate. With the key now doing most
+		# of the work, the fill and ambient are back to being the *shade* colour
+		# rather than the light's share of the picture, and the cool/warm split
+		# between them is the whole of the dusk look on a shaded hillside.
 		"fill_color": Color("5b7ea0"),
 		"fill_energy": 0.52,
 		"ambient": 0.70,
 		"ambient_color": Color("40556f"),
 		"ambient_sky_mix": 0.30,
 		"exposure": 0.96,
-		"white": 1.62,
-		"fog_color": Color("8b625f"),
+		# Pulled down from 1.62 to pay for the key energy above. Exposure here is
+		# the ACES white point: lower is more headroom, and the extra key light
+		# would otherwise spend all of itself in the shoulder. Holding the
+		# brightness and buying the contrast is the whole trade — the overlook
+		# was not too dark, it was too evenly lit to read as three dimensional.
+		"white": 1.20,
+		# Not a colour picked for looks: RangeMaterial derives all six horizon
+		# shader colours from this one value, so whatever hue it carries is the
+		# hue every biome's woods, rock, scree and mist get diluted with. At
+		# 8b625f that was a brick — hue 4, and the derived forest and country
+		# woods came out as the same warm grey-brown, so the overlook had one
+		# material and four biomes' worth of nothing. 8a7a86 is a cool dusk
+		# haze instead: hue 315, roughly half the chroma, and lighter, which
+		# also pushes the `daylight` term the shader uses to blend biome colour
+		# back in towards its cap. Day's 9b9f92 (hue 78, near-zero chroma) is
+		# the model here — a mood's air should be a value, not a colour.
+		"fog_color": Color("8a7a86"),
 		"fog_energy": 0.90,
 		"fog_density": 0.0010,
-		# The dusk sun sits three degrees above the horizon, dead ahead. Strong
-		# sun scatter plus a ground fog layer therefore lit the tarmac itself
-		# into a bright wedge that followed the camera down the road — a haze
-		# sitting on the surface the player is trying to read. Scatter now only
-		# warms the far distance, and the ground layer is gone entirely.
+		# The dusk sun sits low and dead ahead. Strong sun scatter plus a ground
+		# fog layer therefore lit the tarmac itself into a bright wedge that
+		# followed the camera down the road — a haze sitting on the surface the
+		# player is trying to read. Scatter now only warms the far distance, and
+		# the ground layer is gone entirely.
 		"fog_sun_scatter": 0.14,
 		"fog_aerial": 0.13,
 		"fog_sky": 0.07,
@@ -139,7 +156,13 @@ const MOODS := {
 		"glow": 0.52,
 		"glow_bloom": 0.08,
 		"contrast": 1.30,
-		"saturation": 1.12,
+		# Dusk was the most saturated of the three moods while also being the
+		# flattest, and the two fed each other: no value separation meant the only
+		# way to make the picture read was to push chroma, which is exactly the
+		# mobile-game primary look the note in the day row warns about. With the
+		# key/exposure trade above supplying real separation, saturation goes to
+		# neutral and lets the sunset's own colours do the work.
+		"saturation": 1.00,
 	},
 	LightingMode.DAY:
 	{
@@ -177,7 +200,12 @@ const MOODS := {
 		"star_intensity": 0.0,
 		"galaxy_color": Color("6b74b8"),
 		"light_color": Color("ffd59a"),
-		"light_energy": 1.72,
+		# Same trade as dusk: key up, white point down. Day's air (9b9f92) was
+		# already right — near-zero chroma — so the flatness here was purely a
+		# lighting-balance problem, not a colour one, and it shows in the numbers:
+		# 1.72 of sun against 0.18 fill and 0.32 ambient left too little of the
+		# frame's range coming from a direction.
+		"light_energy": 3.0,
 		# Lower than midday. A sun near the zenith lights the tops of everything
 		# and leaves the sides equal, which is the worst case for a world with no
 		# shadows: raking it gives every box, tree and hillside a lit side and a
@@ -207,7 +235,10 @@ const MOODS := {
 		# and a lit white came out within a few percent of each other. More
 		# headroom, and the exposure back up to hold the midtones where they were.
 		"exposure": 0.9,
-		"white": 1.85,
+		# Down from 1.85 with the sun raised to 3.0. Note this only keeps
+		# brightness; the midtones gain because more of the frame's light now
+		# arrives from the sun's direction instead of from flat ambient.
+		"white": 1.30,
 		"fog_color": Color("9b9f92"),
 		"fog_energy": 1.0,
 		"fog_density": 0.00082,
@@ -251,21 +282,97 @@ const MOODS := {
 		"bank_opacity": 0.18,
 		"bank_height": 0.10,
 		"bank_haze": 0.62,
-		"star_intensity": 5.2,
-		"galaxy_color": Color("7d8ed4"),
-		"light_color": Color("9dbbe8"),
-		"light_energy": 0.68,
-		"light_angle": Vector3(-46.0, 32.0, 0.0),
+		# Night is the one mood with no composition in it at all: the sun was
+		# near-overhead, so every facet in the world faced the same amount of
+		# sky and the skyline was a flat cut-out. A high moon is a studio
+		# light, and a studio light has no shadow side. Dropped to 12° so the
+		# moon can actually rake a ridge — the lit:shade ratio inside a single
+		# slope is the only thing that gives a night silhouette at all.
+		"light_angle": Vector3(-12.0, 30.0, 0.0),
 		"angular_distance": 0.6,
-		"fill_color": Color("31527e"),
-		"fill_energy": 0.26,
-		"ambient": 0.36,
-		"ambient_color": Color("1b3156"),
+		"star_intensity": 3.5,
+		"galaxy_color": Color("7d8ed4"),
+		# Moonlight is sunlight, so it is nearly neutral — everything else in this
+		# mood is a *hue* saying shadow, and if the one light that actually falls
+		# on a face is blue too there is no silver in the frame anywhere. Sat 0.27
+		# against the fill's 0.50 and the ambient's 0.69: the moon-lit faces read
+		# cool silver, the shade reads navy, and the two separate on value *and*
+		# on chroma at once.
+		"light_color": Color("a8c2e6"),
+		# 2.2 -> 2.90, and it cannot go much higher. The headlight is driven off
+		# `inverse_lerp(day, night, sun_energy)`, which only reads "day 0, dusk 0,
+		# night 1" while night sits *below* day; push night past 3.0 and dusk's 5.5
+		# clamps to 1 as well, and the beam comes on at sunset.
+		#
+		# The key is the wrong lever for this mood anyway, and the arithmetic says
+		# why. At 12° the moon puts sin(12°) = 0.21 of itself on flat ground, so
+		# raising its energy to reach the ground mostly raises the slopes facing
+		# it: key-driven brightness arrives as a lit:shade ratio of about 20:1
+		# with the ground still at the floor. Form at night comes from the
+		# ridgelines against the sky and from the painted ranges, not from here.
+		"light_energy": 2.90,
+		# The fill, on the geometry. `_build_fill_light` stands this light at 64°,
+		# so it collects sin(64°) = 0.90 on every up-facing surface in the world
+		# against the moon's 0.21 — over four times as much per unit of energy, on
+		# precisely the surfaces that were reading as one dead value. It is still
+		# a direction, so up-facing slopes still differ by which way they turn and
+		# a face turned away from the moon still gets a fraction of a moon-facing
+		# face.
+		#
+		# 0.26 -> 3.6, and only 3.6 rather than the 5.0 that flattened form to
+		# 6:1, because the fog below turned out to carry the mid-distance ten
+		# times more cheaply. Ambient and fog do the lifting; this only has to
+		# put a directional edge on the near ground.
+		#
+		# 31527e -> 4d6d9a with it. The fill is now most of the light that lands on
+		# the near ground, and at 0.61 saturation that was enough to repaint the
+		# whole foreground one saturated blue. Lighter and less chroma; the blue is
+		# left to the ambient, which is where shadow belongs.
+		"fill_color": Color("4d6d9a"),
+		"fill_energy": 3.6,
+		# 0.36 -> 0.65, and no higher than this. `test_restart` asserts night is
+		# darker than day by comparing energy * colour luminance, which is the
+		# only correct way to compare two rows whose ambient colours differ: day's
+		# 0.32 against 6f8796 is 0.164, so this row has to stay under that and
+		# under dusk's 0.226. At 213b66 that caps the energy at 0.74.
+		#
+		# Small next to the fill and deliberately so: ambient is the one term here
+		# with no direction at all, so every unit of it arrives equally on a lit
+		# face and on the face turned away from the moon. Enough to keep deep
+		# shade a colour rather than a hole (1b3156 at 0.36 put the underside of
+		# every tree and the far side of every ridge at 0.02), not enough to
+		# compete with the two lights that have an angle.
+		"ambient": 0.65,
+		# With the shadow lifted, the shadow's own hue matters more than it did:
+		# 213b66 rather than 1b3156, so the darkest band is a readable navy with
+		# the grade's cool toe under it instead of the near-black it was.
+		"ambient_color": Color("213b66"),
 		"ambient_sky_mix": 0.30,
 		"exposure": 0.91,
 		"white": 1.52,
+		# Not a colour picked for looks, and the reason is arithmetic rather than
+		# taste: RangeMaterial derives all six horizon-shader colours from this one
+		# value, so its hue is the hue every biome's woods, rock, scree and mist get
+		# diluted with. Luminance 0.240 here is what the engine's fog converges the
+		# distance to — see fog_energy below.
 		"fog_color": Color("2b3f60"),
-		"fog_energy": 1.0,
+		# 1.0 -> 2.9, and this was the largest single thing wrong with the mood.
+		#
+		# Fog is not a veil laid *over* the distance, it is the value the distance
+		# converges to, and at energy 1.0 that value was 2b3f60 — darker than
+		# anything it was supposed to be replacing. So every hill, valley floor and
+		# far shore in the night frame was being pulled *down* toward it on the way
+		# to the eye, which is why the mid-ground sat at 3-18% of its band while
+		# the near ground, which the fog barely touches, held. Raising the energy
+		# raises the convergence target, so the same fog now carries a moonlit
+		# haze outward instead of draining it.
+		#
+		# It is the cheap lever by an order of magnitude: 1.0 -> 6.0 moved the
+		# mean midtone share of the landscape band from 17% to 40%, against 2.4
+		# points for tripling the fill light. That is also why the fill above is
+		# only 3.6 — energy spent on fog keeps its hue and its distance falloff,
+		# while energy spent on a directional light is paid for in contrast.
+		"fog_energy": 2.9,
 		"fog_density": 0.00115,
 		"fog_sun_scatter": 0.20,
 		"fog_aerial": 0.24,
@@ -483,8 +590,19 @@ func _grade_lut() -> ImageTexture:
 	gradient.offsets = PackedFloat32Array([0.0, 0.22, 0.58, 1.0])
 	gradient.colors = PackedColorArray(
 		[
-			Color(0.014, 0.026, 0.039),
-			Color(0.190, 0.226, 0.244),
+			# The toe. At 0.014/0.026/0.039 this was a 2.8:1 blue lift sitting
+			# under the large majority of the frame, which both tinted every
+			# shadow navy and held the image's floor up at ~4% luminance — the
+			# single biggest reason the midtones had nowhere to go. Nearly
+			# neutral and down at ~2.7%: shadows are dark, not blue, and the
+			# darks stop competing with the value band the eye reads as subject.
+			Color(0.005, 0.007, 0.013),
+			# Shadow anchor, and the value most of the landscape actually maps
+			# into. It was blue-biased, which meant the whole scene was being
+			# pulled toward one hue in exactly the range where the image has to
+			# be a value. Darker and closer to neutral, so the grade reads as
+			# light on a form instead of a colour cast over the frame.
+			Color(0.110, 0.132, 0.172),
 			Color(0.600, 0.568, 0.520),
 			Color(1.000, 0.956, 0.875),
 		]
