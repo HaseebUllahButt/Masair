@@ -17,6 +17,7 @@ var _player: Node3D
 var _path: Node
 var _build_in_flight: bool = false
 var _props_in_flight: bool = false
+var _ribbon_queue: Array[Node3D] = []
 var _props_queue: Array[Node3D] = []
 var _scenic_queue: Array[Node3D] = []
 var _highway_queue: Array[Node3D] = []
@@ -94,6 +95,7 @@ func reset_world() -> void:
 	_props_in_flight = false
 	_scenic_in_flight = false
 	_highway_in_flight = false
+	_ribbon_queue.clear()
 	_props_queue.clear()
 	_scenic_queue.clear()
 	_highway_queue.clear()
@@ -162,6 +164,7 @@ func _sync(build_all: bool) -> void:
 		not build_all
 		and not busy
 		and current == _idle_current
+		and _ribbon_queue.is_empty()
 		and _props_queue.is_empty()
 		and _scenic_queue.is_empty()
 		and _highway_queue.is_empty()
@@ -181,6 +184,7 @@ func _sync(build_all: bool) -> void:
 			var dropped: Node = _chunks[i]
 			_chunks.erase(i)
 			if dropped is Node3D:
+				_ribbon_queue.erase(dropped as Node3D)
 				_props_queue.erase(dropped as Node3D)
 				_scenic_queue.erase(dropped as Node3D)
 				_highway_queue.erase(dropped as Node3D)
@@ -193,6 +197,8 @@ func _sync(build_all: bool) -> void:
 	if not build_all:
 		_drain_unloads()
 
+	if not _chunks.has(current):
+		_spawn_ribbon_sync(current, _stream_generation)
 	_apply_corridor()
 	if _player_wants_scenic():
 		_enqueue_scenic(current)
@@ -211,7 +217,13 @@ func _sync(build_all: bool) -> void:
 	# slice is one cross-section; it can run beside one dress job after the
 	# frame that starts it.
 	var started_ribbon := false
-	if not _build_in_flight:
+	if not _build_in_flight and not _ribbon_queue.is_empty():
+		var partial: Node3D = _ribbon_queue.pop_front()
+		if is_instance_valid(partial) and partial.is_inside_tree():
+			_build_in_flight = true
+			started_ribbon = true
+			_complete_ribbon(partial, _stream_generation)
+	if not _build_in_flight and not started_ribbon:
 		var next := _nearest_missing(current, build_min, build_max)
 		var urgent_ribbon := next >= 0 and next <= current + RIBBON_PRIORITY_AHEAD
 		if next >= 0 and (
@@ -231,6 +243,7 @@ func _sync(build_all: bool) -> void:
 				under == null or under.get_node_or_null("RoadSurface") == null
 			)
 			if need_sync:
+				_build_in_flight = false
 				_spawn_ribbon_sync(next, _stream_generation)
 			else:
 				_spawn_incremental(next, _stream_generation)
@@ -241,6 +254,7 @@ func _sync(build_all: bool) -> void:
 		and not _props_in_flight
 		and not _scenic_in_flight
 		and not _highway_in_flight
+		and _ribbon_queue.is_empty()
 		and _props_queue.is_empty()
 		and _scenic_queue.is_empty()
 		and _highway_queue.is_empty()
@@ -263,7 +277,7 @@ func _enqueue_nearby_props(current: int) -> void:
 			continue
 		if bool(chunk.get_meta("props_queued", false)):
 			continue
-		if chunk.get_node_or_null("RoadSurface") == null:
+		if chunk.get_node_or_null("RoadSurface") == null or not bool(chunk.get_meta("ribbon_ready", true)):
 			continue
 		chunk.set_meta("props_queued", true)
 		var on_spur := bool(chunk.get("_on_spur"))
@@ -301,7 +315,7 @@ func _has_undressed_nearby(current: int) -> bool:
 		var chunk: Node3D = _chunks[i]
 		if not is_instance_valid(chunk):
 			continue
-		if chunk.get_node_or_null("RoadSurface") == null:
+		if chunk.get_node_or_null("RoadSurface") == null or not bool(chunk.get_meta("ribbon_ready", true)):
 			continue
 		if bool(chunk.get_meta("props_done", false)):
 			continue
@@ -341,7 +355,7 @@ func _enqueue_scenic(current: int) -> void:
 			continue
 		if bool(chunk.get_meta("scenic_building", false)):
 			continue
-		if chunk.get_node_or_null("RoadSurface") == null:
+		if chunk.get_node_or_null("RoadSurface") == null or not bool(chunk.get_meta("ribbon_ready", true)):
 			continue
 		chunk.set_meta("scenic_queued", true)
 		chunk.set_meta("scenic_requested", true)
@@ -360,7 +374,7 @@ func _has_undressed_scenic(current: int) -> bool:
 			continue
 		if not bool(chunk.get("_on_spur")):
 			continue
-		if chunk.get_node_or_null("RoadSurface") == null:
+		if chunk.get_node_or_null("RoadSurface") == null or not bool(chunk.get_meta("ribbon_ready", true)):
 			continue
 		if bool(chunk.get_meta("scenic_done", false)):
 			continue
@@ -382,7 +396,7 @@ func _enqueue_highway(current: int) -> void:
 			continue
 		if bool(chunk.get_meta("highway_building", false)):
 			continue
-		if chunk.get_node_or_null("RoadSurface") == null:
+		if chunk.get_node_or_null("RoadSurface") == null or not bool(chunk.get_meta("ribbon_ready", true)):
 			continue
 		if not bool(chunk.get_meta("props_done", false)):
 			continue
@@ -401,7 +415,7 @@ func _has_undressed_highway(current: int) -> bool:
 		var chunk: Node3D = _chunks[i]
 		if not is_instance_valid(chunk):
 			continue
-		if chunk.get_node_or_null("RoadSurface") == null:
+		if chunk.get_node_or_null("RoadSurface") == null or not bool(chunk.get_meta("ribbon_ready", true)):
 			continue
 		if not bool(chunk.get_meta("props_done", false)):
 			continue
@@ -583,15 +597,28 @@ func _spawn(index: int, incremental: bool) -> void:
 
 
 func _spawn_ribbon_sync(index: int, generation: int) -> void:
-	## Immediate tarmac for the hole under the bike only.
+	## Immediate asphalt only; its pending terrain uses the same single pipeline.
 	var chunk: Node3D = RoadChunkGD.new() as Node3D
 	chunk.name = "Chunk%d" % index
 	add_child(chunk)
 	_chunks[index] = chunk
-	chunk.call("setup_ribbon", index, theme_for_chunk(index))
+	var scenic_chunk: bool = bool(_path.call("spur_half_width", float(index) * CHUNK_LENGTH + CHUNK_LENGTH * 0.5))
+	chunk.call("setup_ribbon_fast" if scenic_chunk else "setup_ribbon", index, theme_for_chunk(index))
 	_apply_corridor_to(chunk)
 	if generation != _stream_generation:
 		return
+	if scenic_chunk:
+		_ribbon_queue.append(chunk)
+
+
+func _complete_ribbon(chunk: Node3D, generation: int) -> void:
+	var index: int = int(chunk.get("chunk_index"))
+	await chunk.call("setup_ribbon_incremental", index, theme_for_chunk(index))
+	if generation != _stream_generation:
+		return
+	if is_instance_valid(chunk) and chunk.is_inside_tree():
+		chunk.set_meta("ribbon_ready", true)
+		_apply_corridor_to(chunk)
 	_build_in_flight = false
 
 

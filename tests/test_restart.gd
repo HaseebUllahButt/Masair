@@ -334,6 +334,8 @@ func _process(_delta: float) -> bool:
 		var player: Node = main.get_node("Player")
 		var viewpoint: float = float(path.call("viewpoint_centre_for", 2800.0))
 		var side: float = float(path.call("viewpoint_side_for", viewpoint))
+		player.speed = 0.0
+		player.lat_vel = 0.0
 		player.track_z = viewpoint
 		player.lateral = side * float(path.call("spur_offset", viewpoint))
 		player.call("_place")
@@ -344,7 +346,7 @@ func _process(_delta: float) -> bool:
 			if is_instance_valid(chunk) and chunk.get_node_or_null("ViewpointLake") != null:
 				lakes += 1
 		check(lakes > 0, "taking the spur late-builds the lake (%d lake chunks)" % lakes)
-	if frames == 90:
+	if frames >= 90:
 		var streamer: Node = main.get_node("RoadStreamer")
 		var dressed := 0
 		for chunk in (streamer.get("_chunks") as Dictionary).values():
@@ -361,6 +363,8 @@ func _process(_delta: float) -> bool:
 				or chunk.get_node_or_null("Foliage") != null
 			):
 				dressed += 1
+		if dressed < 2 and frames < 1200:
+			return false
 		check(
 			dressed >= 2,
 			"streamed chunks grow trees and roadside scenery, not just the spawn ribbon (%d dressed)" % dressed
