@@ -44,6 +44,22 @@ var _q_yaw_z: float = INF
 var _q_yaw: float = 0.0
 var _q_bank_z: float = INF
 var _q_bank: float = 0.0
+## Bounded exact samples shared by adjacent terrain strips and normal probes.
+const ROUTE_CACHE_LIMIT := 4096
+var _cached_height_at: Dictionary = {}
+var _cached_center_x_at: Dictionary = {}
+var _cached_frame_flat_at: Dictionary = {}
+var _cached_shape_at: Dictionary = {}
+var _cached_spur_divergence: Dictionary = {}
+var _cached_spur_half_width: Dictionary = {}
+var _cached_platform_blend: Dictionary = {}
+var _cached_viewpoint_centre_for: Dictionary = {}
+
+var _cached_spur_deck_blend: Dictionary = {}
+var _cached_spur_lift: Dictionary = {}
+var _cached_terrain_drop: Dictionary = {}
+
+
 func _ready() -> void:
 	randomize_world()
 
@@ -97,6 +113,16 @@ func shape_at(z: float) -> Vector4:
 
 
 func _shape_at(z: float) -> Vector4:
+	if _cached_shape_at.has(z):
+		return _cached_shape_at[z]
+	var sample: Vector4 = _uncached_shape_at(z)
+	if _cached_shape_at.size() >= ROUTE_CACHE_LIMIT:
+		_cached_shape_at.clear()
+	_cached_shape_at[z] = sample
+	return sample
+
+
+func _uncached_shape_at(z: float) -> Vector4:
 	## Ease across a region cut, centred on the boundary: half the blend is still
 	## the old country, half is already the new one. The first biome has no
 	## previous world to ease from, so the run starts settled.
@@ -142,6 +168,17 @@ func randomize_world() -> void:
 func set_world_seed(value: int) -> void:
 	world_seed = value
 	_water_y_cache.clear()
+	_cached_terrain_drop.clear()
+	_cached_spur_lift.clear()
+	_cached_spur_deck_blend.clear()
+	_cached_height_at.clear()
+	_cached_center_x_at.clear()
+	_cached_frame_flat_at.clear()
+	_cached_shape_at.clear()
+	_cached_spur_divergence.clear()
+	_cached_spur_half_width.clear()
+	_cached_platform_blend.clear()
+	_cached_viewpoint_centre_for.clear()
 	_q_height_z = INF
 	_q_cx_z = INF
 	_q_flat_z = INF
@@ -232,9 +269,9 @@ const CORRIDOR_COMMIT := 0.22
 const SPUR_EASE := 0.14
 const SPUR_OUT := 168.0  # far enough that the main road disappears behind woodland
 const SPUR_LIFT := 42.0  # a real climb before the lake-and-range reveal
-const SPUR_HALF_WIDTH := 4.6
+const SPUR_HALF_WIDTH := 3.2
 const SPUR_MOUTH := 160.0  # junction taper; long enough to read at speed
-const SPUR_SHOULDER := 2.2  # surfaced shoulder beyond the rideable edge
+const SPUR_SHOULDER := 0.85  # surfaced shoulder beyond the rideable edge
 ## The parking platform at the top. The rideable apron is what the bike can
 ## reach; the terrace beyond it is made ground the bike cannot enter, which is
 ## where the wall, the benches and the viewer stand. Without that separation
@@ -290,6 +327,16 @@ var _water_y_cache: Dictionary = {}
 
 
 func viewpoint_centre_for(z: float) -> float:
+	if _cached_viewpoint_centre_for.has(z):
+		return _cached_viewpoint_centre_for[z]
+	var sample: float = _uncached_viewpoint_centre_for(z)
+	if _cached_viewpoint_centre_for.size() >= ROUTE_CACHE_LIMIT:
+		_cached_viewpoint_centre_for.clear()
+	_cached_viewpoint_centre_for[z] = sample
+	return sample
+
+
+func _uncached_viewpoint_centre_for(z: float) -> float:
 	## Route distance of the overlook nearest z. Everything else keys off this.
 	## Never earlier than the first one: a run starts at z = 0 and an overlook
 	## rounded to a negative centre would hang its spur off the start line.
@@ -362,6 +409,16 @@ static func _taper(u: float) -> float:
 
 
 func spur_divergence(z: float) -> float:
+	if _cached_spur_divergence.has(z):
+		return _cached_spur_divergence[z]
+	var sample: float = _uncached_spur_divergence(z)
+	if _cached_spur_divergence.size() >= ROUTE_CACHE_LIMIT:
+		_cached_spur_divergence.clear()
+	_cached_spur_divergence[z] = sample
+	return sample
+
+
+func _uncached_spur_divergence(z: float) -> float:
 	## How far the spur has pulled away from the carriageway, 0 alongside it and
 	## 1 at the platform.
 	##
@@ -399,6 +456,16 @@ func spur_offset(z: float) -> float:
 
 
 func spur_half_width(z: float) -> float:
+	if _cached_spur_half_width.has(z):
+		return _cached_spur_half_width[z]
+	var sample: float = _uncached_spur_half_width(z)
+	if _cached_spur_half_width.size() >= ROUTE_CACHE_LIMIT:
+		_cached_spur_half_width.clear()
+	_cached_spur_half_width[z] = sample
+	return sample
+
+
+func _uncached_spur_half_width(z: float) -> float:
 	## Zero at the very ends (so the junction opens as a gore rather than a step),
 	## a lane and a half along the ramps, and the full apron at the top.
 	var distance := absf(z - viewpoint_centre_for(z))
@@ -409,6 +476,16 @@ func spur_half_width(z: float) -> float:
 
 
 func platform_blend(z: float) -> float:
+	if _cached_platform_blend.has(z):
+		return _cached_platform_blend[z]
+	var sample: float = _uncached_platform_blend(z)
+	if _cached_platform_blend.size() >= ROUTE_CACHE_LIMIT:
+		_cached_platform_blend.clear()
+	_cached_platform_blend[z] = sample
+	return sample
+
+
+func _uncached_platform_blend(z: float) -> float:
 	## 1 across the parking platform, easing out along the ramps either side.
 	var distance := absf(z - viewpoint_centre_for(z))
 	return 1.0 - smoothstep(PLATFORM_HALF_LENGTH, PLATFORM_HALF_LENGTH + PLATFORM_TAPER, distance)
@@ -518,6 +595,17 @@ func _spur_full_lift(z: float, lateral: float) -> float:
 
 
 func spur_deck_blend(z: float, lateral: float) -> float:
+	var key := Vector2(z, lateral)
+	if _cached_spur_deck_blend.has(key):
+		return _cached_spur_deck_blend[key]
+	var sample: float = _uncached_spur_deck_blend(z, lateral)
+	if _cached_spur_deck_blend.size() >= ROUTE_CACHE_LIMIT * 2:
+		_cached_spur_deck_blend.clear()
+	_cached_spur_deck_blend[key] = sample
+	return sample
+
+
+func _uncached_spur_deck_blend(z: float, lateral: float) -> float:
 	## Made ground: 1 on the spur and its shoulder, falling to 0 at the foot of
 	## the embankment. The lift below shares this exact curve, which is what
 	## makes the sides of the spur a clean slope from road surface down to
@@ -535,7 +623,7 @@ func spur_deck_blend(z: float, lateral: float) -> float:
 		return 0.0
 	var full := _spur_full_lift(z, lateral)
 	var out := absf(lateral) - spur_offset(z)
-	var edge := spur_half_width(z) + SPUR_SHOULDER
+	var edge := spur_half_width(z) + lerpf(SPUR_SHOULDER, 2.2, platform_blend(z))
 	# The terrace is on the view side only: made ground the rider walks out on.
 	var outward := out > 0.0
 	if outward:
@@ -595,6 +683,17 @@ func headland_rise(z: float, out: float) -> float:
 
 
 func spur_lift(z: float, lateral: float) -> float:
+	var key := Vector2(z, lateral)
+	if _cached_spur_lift.has(key):
+		return _cached_spur_lift[key]
+	var sample: float = _uncached_spur_lift(z, lateral)
+	if _cached_spur_lift.size() >= ROUTE_CACHE_LIMIT * 2:
+		_cached_spur_lift.clear()
+	_cached_spur_lift[key] = sample
+	return sample
+
+
+func _uncached_spur_lift(z: float, lateral: float) -> float:
 	var full := _spur_full_lift(z, lateral)
 	if full <= 0.0:
 		return 0.0
@@ -679,13 +778,48 @@ func viewpoint_near_shore(z: float) -> float:
 
 
 func viewpoint_far_shore(z: float, centre_z: float) -> float:
-	# Lens-shaped in plan, so the water closes to a point instead of ending in a
-	# straight edge drawn across the valley.
-	var u := clampf(absf(z - centre_z) / LAKE_SPAN, 0.0, 1.0)
-	var lens := sqrt(maxf(1.0 - u * u, 0.0))
-	var near := viewpoint_near_shore(z)
-	var far := _basin_far(theme_at(centre_z))
-	return near + (far - near) * (0.25 + 0.75 * lens) + 26.0 * sin(z * 0.0085 + _terrain_phase * 1.7)
+	# Keep the water and its terrain on one shared shoreline. Broad off-centre
+	# lobes give each basin a peninsula opposite the nearest range's hero peak;
+	# the bay beyond it draws the eye diagonally into the distant shore.
+	var along: float = clampf((z - centre_z) / LAKE_SPAN, -1.0, 1.0)
+	var lens: float = sqrt(maxf(1.0 - along * along, 0.0))
+	var near: float = viewpoint_near_shore(z)
+	var theme_id: int = theme_at(centre_z)
+	var far: float = _basin_far(theme_id)
+	if theme_id == 4:
+		# A country waterway winds between meadows; it is narrower than the
+		# open lakes so the peninsula and its far pasture remain the subject.
+		far = near + 200.0
+	var shoreline: float = near + (far - near) * (0.25 + 0.75 * lens)
+	shoreline += 26.0 * sin(z * 0.0085 + _terrain_phase * 1.7)
+	var landform: float = 0.0
+	match theme_id:
+		1:
+			# A wooded point separates two coves in the narrow gorge.
+			landform = -70.0 * exp(-pow((along + 0.30) / 0.20, 2.0))
+			landform += 34.0 * exp(-pow((along + 0.69) / 0.19, 2.0))
+			landform += 46.0 * exp(-pow((along - 0.22) / 0.31, 2.0))
+		2:
+			# One long cape holds the left side; the opposite shore recedes
+			# around a broad open bay rather than making a matching headland.
+			landform = -180.0 * exp(-pow((along + 0.44) / 0.32, 2.0))
+			landform += 118.0 * exp(-pow((along - 0.32) / 0.42, 2.0))
+			landform += 28.0 * along
+		3:
+			# A splayed rock shoulder enters the tarn from one side, while
+			# the wider opposite bay leaves water beneath the alpine pass.
+			landform = -90.0 * exp(-pow((along + 0.37) / 0.25, 2.0))
+			landform += 54.0 * exp(-pow((along - 0.33) / 0.34, 2.0))
+		_:
+			# The soft meadow peninsula makes a near crescent; a shallow
+			# distant outlet continues around its opposite, receding flank.
+			landform = -90.0 * exp(-pow((along + 0.27) / 0.31, 2.0))
+			landform += 78.0 * exp(-pow((along - 0.42) / 0.36, 2.0))
+			landform += 16.0 * sin(along * 5.0 + 0.4)
+	shoreline += landform * lens
+	# Leave enough water across the narrowest point and a complete far bank
+	# inside the authored terrain. The spur and its near shore are untouched.
+	return clampf(shoreline, near + 70.0, VIEWPOINT_OUTER - FAR_BANK - 60.0)
 
 
 func viewpoint_reserves(z: float, lateral: float) -> bool:
@@ -886,6 +1020,16 @@ func hilliness_at(z: float) -> float:
 
 
 func height_at(z: float) -> float:
+	if _cached_height_at.has(z):
+		return _cached_height_at[z]
+	var sample: float = _uncached_height_at(z)
+	if _cached_height_at.size() >= ROUTE_CACHE_LIMIT:
+		_cached_height_at.clear()
+	_cached_height_at[z] = sample
+	return sample
+
+
+func _uncached_height_at(z: float) -> float:
 	if z == _q_height_z:
 		return _q_height
 	var h := hilliness_at(z)
@@ -904,6 +1048,16 @@ func height_at(z: float) -> float:
 
 
 func center_x_at(z: float) -> float:
+	if _cached_center_x_at.has(z):
+		return _cached_center_x_at[z]
+	var sample: float = _uncached_center_x_at(z)
+	if _cached_center_x_at.size() >= ROUTE_CACHE_LIMIT:
+		_cached_center_x_at.clear()
+	_cached_center_x_at[z] = sample
+	return sample
+
+
+func _uncached_center_x_at(z: float) -> float:
 	if z == _q_cx_z:
 		return _q_cx
 	var t := twistiness_at(z)
@@ -952,6 +1106,16 @@ func forward_dir(z: float) -> Vector3:
 ## offset that tapers out past the verge, so a 9° corner does not launch terrain
 ## 70 m out into the sky.
 func frame_flat_at(z: float) -> Basis:
+	if _cached_frame_flat_at.has(z):
+		return _cached_frame_flat_at[z]
+	var sample: Basis = _uncached_frame_flat_at(z)
+	if _cached_frame_flat_at.size() >= ROUTE_CACHE_LIMIT:
+		_cached_frame_flat_at.clear()
+	_cached_frame_flat_at[z] = sample
+	return sample
+
+
+func _uncached_frame_flat_at(z: float) -> Basis:
 	if z == _q_flat_z:
 		return _q_flat
 	var fwd := forward_dir(z)
@@ -1088,6 +1252,17 @@ func advance(z: float, metres: float) -> float:
 ## then rolling country. A pure function of (lateral, z) so neighbouring chunks
 ## always meet seamlessly, and so props can sit on it without a raycast.
 func terrain_drop(lateral: float, z: float) -> float:
+	var key := Vector2(lateral, z)
+	if _cached_terrain_drop.has(key):
+		return _cached_terrain_drop[key]
+	var sample: float = _uncached_terrain_drop(lateral, z)
+	if _cached_terrain_drop.size() >= ROUTE_CACHE_LIMIT * 2:
+		_cached_terrain_drop.clear()
+	_cached_terrain_drop[key] = sample
+	return sample
+
+
+func _uncached_terrain_drop(lateral: float, z: float) -> float:
 	var a := absf(lateral)
 	var blend := clampf((a - HALF_WIDTH - 3.0) / 18.0, 0.0, 1.0)
 	var rolling := (
