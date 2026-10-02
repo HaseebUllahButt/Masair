@@ -33,6 +33,7 @@ func _initialize() -> void:
 	cap.viewpoint = opts.has("viewpoint")
 	cap.seated = opts.has("seated")
 	cap.detour = opts.has("detour")
+	cap.spur = opts.has("spur")
 	cap.notraffic = opts.has("notraffic")
 	cap.overview = String(opts.get("overview", ""))
 	cap.dry = opts.has("dry")
@@ -76,6 +77,8 @@ class Capture:
 	## Ride the overlook spur instead of the carriageway, steering for its
 	## centreline the way a player would. The only way to see the detour itself.
 	var detour := false
+	## Park a QA camera on the scenic road at --z instead of the highway.
+	var spur: bool = false
 	## Empty the road of traffic. Implied by --detour.
 	var notraffic := false
 	var seated := false
@@ -278,11 +281,11 @@ class Capture:
 			world_seed = 72117
 		_set_seed(world_seed)
 		player.track_z = z
-		player.lateral = 0.0
+		player.lateral = float(get_tree().root.get_node("RoadPath").call("viewpoint_side_for", z)) * float(get_tree().root.get_node("RoadPath").call("spur_offset", z)) if spur else 0.0
 		player.speed = 0.0
 		player.lat_vel = 0.0
 		player.set("seated", false)
-		player.set("_committed_to_spur", false)
+		player.set("_committed_to_spur", spur)
 		player.set("_heading", 0.0)
 		player.set("_look_yaw", 0.0)
 		# Clear the bench camera too. `_park_at_viewpoint` zeroes these on its way
@@ -332,7 +335,8 @@ class Capture:
 				# Sample the carved cliff face, not the abstract road plane.  Thirty
 				# metres beyond the platform the spur lift is intentionally zero, so
 				# point_at() put this inspection camera underneath the terrace.
-				eye = path.call("ground_at", centre - 9.0, side * (float(path.call("spur_offset", centre)) + 30.0)) + Vector3(0, 18.0, 0)
+				var terrace_frame: Basis = path.call("frame_flat_at", centre)
+				eye = subject + terrace_frame.x * side * 15.0 - terrace_frame.z * 10.0 + Vector3.UP * 7.0
 			"across":
 				# From out over the water, looking back at the headland.
 				eye = path.call("point_at", centre, side * 260.0) + Vector3(0, 40.0, 0)
