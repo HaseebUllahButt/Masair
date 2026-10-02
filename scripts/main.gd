@@ -259,7 +259,7 @@ const MOODS := {
 	{
 		"zenith_color": Color("01040f"),
 		"mid_color": Color("071428"),
-		"horizon_color": Color("1a4560"),
+		"horizon_color": Color("123650"),
 		"ground_color": Color("010309"),
 		"band_low": 0.10,
 		"band_high": 0.62,
@@ -372,17 +372,24 @@ const MOODS := {
 		# points for tripling the fill light. That is also why the fill above is
 		# only 3.6 — energy spent on fog keeps its hue and its distance falloff,
 		# while energy spent on a directional light is paid for in contrast.
-		"fog_energy": 2.9,
+		# Since cut to 1.8. At 2.9 the convergence target sat above the land it
+		# was converging, so past a few hundred metres every lake, field and
+		# ridge went the same milky teal: the overlooks read as one flat blue
+		# card. The midtone lift is kept where it matters, on the near ground.
+		"fog_energy": 1.8,
 		"fog_density": 0.00115,
 		"fog_sun_scatter": 0.20,
-		"fog_aerial": 0.24,
+		# Aerial takes the fog toward the sky's colour, and the night sky's
+		# horizon is the moonlit teal glow. A little is air; a quarter painted
+		# that glow over the whole distance.
+		"fog_aerial": 0.10,
 		"fog_sky": 0.04,
 		"fog_height": 3.5,
 		"fog_height_density": 0.006,
 		"glow": 0.58,
 		"glow_bloom": 0.06,
-		"contrast": 1.22,
-		"saturation": 1.02,
+		"contrast": 1.30,
+		"saturation": 1.12,
 	},
 }
 
