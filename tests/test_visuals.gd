@@ -93,11 +93,52 @@ func _count_inland_verge_trees(chunk: Node3D, path: Node, index: int) -> int:
 	return inland
 
 
+class SkylineRider:
+	extends Node3D
+	var track_z: float = 0.0
+	var lateral: float = 0.0
+
+
+func _terrain_above_road(chunk: Node3D, path: Node, z0: float) -> int:
+	var obstruction_count: int = 0
+	for mesh_name: String in ["Terrain", "TerrainRight"]:
+		var surface: MeshInstance3D = chunk.get_node_or_null(mesh_name)
+		if surface == null:
+			continue
+		var arrays: Array = surface.mesh.surface_get_arrays(0)
+		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		for dz: float in [4.0, 20.0, 36.0]:
+			var z: float = z0 + dz
+			var span: Vector2 = path.call("spur_interval", z)
+			for offset: float in [-2.0, 0.0, 2.0]:
+				var lateral: float = (span.x + span.y) * 0.5 + offset
+				var point: Vector3 = path.call("point_at", z, lateral)
+				var from: Vector3 = point + Vector3.UP * 60.0
+				var to: Vector3 = point + Vector3.UP * 0.07
+				for i in range(0, indices.size(), 3):
+					var hit: Variant = Geometry3D.segment_intersects_triangle(from, to,
+						surface.to_global(vertices[indices[i]]), surface.to_global(vertices[indices[i+1]]), surface.to_global(vertices[indices[i+2]]))
+					if hit != null:
+						obstruction_count += 1
+	return obstruction_count
+
+
 func _initialize() -> void:
 	call_deferred("_run")
 
 
 func _run() -> void:
+
+	# Authored props must contain drawable meshes and materials. A successful
+	# scene save alone does not prove resource assignments actually succeeded.
+	for model_path in ["res://scenes/lookout_bench.tscn", "res://scenes/lookout_board.tscn", "res://scenes/lookout_bollard.tscn"]:
+		var model: Node3D = (load(model_path) as PackedScene).instantiate()
+		for child in model.get_children():
+			if child is MeshInstance3D:
+				check(child.mesh != null, "%s/%s has geometry" % [model_path, child.name])
+				check(child.material_override != null, "%s/%s has its material" % [model_path, child.name])
+		model.free()
 	var path: Node = get_root().get_node_or_null("RoadPath")
 	var owns_path := false
 	if path == null:
@@ -210,6 +251,16 @@ func _run() -> void:
 	var lake := viewpoint.get_node_or_null("ViewpointLake") as MeshInstance3D
 	check(lake != null and lake.material_override == RoadChunkGD.water_material(), "the lake uses the reflective shared water")
 	check(viewpoint.get_node_or_null("ViewpointRange") != null, "the overlook builds the range it looks at")
+	# A distant sheet belongs to one fixed frame, regardless of road curvature.
+	# Parallel samples cannot collapse or turn inside out at a road bend.
+	var vista_a: Vector3 = viewpoint.call("_far_point", RoadPathGD.VIEWPOINT_FIRST - 400.0, 1200.0, 0.0)
+	var vista_b: Vector3 = viewpoint.call("_far_point", RoadPathGD.VIEWPOINT_FIRST + 400.0, 1200.0, 0.0)
+	var vista_c: Vector3 = viewpoint.call("_far_point", RoadPathGD.VIEWPOINT_FIRST - 400.0, 1800.0, 0.0)
+	var vista_d: Vector3 = viewpoint.call("_far_point", RoadPathGD.VIEWPOINT_FIRST + 400.0, 1800.0, 0.0)
+	check((vista_b - vista_a).is_equal_approx(vista_d - vista_c), "vista rows remain parallel through road bends")
+	check(absf((vista_b - vista_a).length() - 800.0) < 0.1, "distant water keeps its authored length")
+	check(absf((vista_c - vista_a).length() - 600.0) < 0.1, "distant water keeps its authored width")
+
 	check(viewpoint.get_node_or_null("ViewpointFarGround") != null, "the drawn ground reaches the foot of the range")
 	var far_ground := viewpoint.get_node("ViewpointFarGround") as MeshInstance3D
 	check(
@@ -486,8 +537,23 @@ func _run() -> void:
 	var coast_far: float = float(path.call("viewpoint_far_shore", coast_view, coast_view))
 	var mountain_far: float = float(path.call("viewpoint_far_shore", mountain_view, mountain_view))
 	check(coast_far > country_far * 1.35, "coast water runs out to the horizon (%.0f vs %.0f)" % [coast_far, country_far])
-	check(forest_far < country_far * 0.72, "forest is a gorge, not a lake (%.0f vs %.0f)" % [forest_far, country_far])
-	check(mountain_far < country_far * 0.82, "mountain is a tarn in a pass (%.0f vs %.0f)" % [mountain_far, country_far])
+	# Inland basins now include a narrow country bend. Measure open water,
+	# not distance from the highway, so changing that bend cannot redefine
+	# the forest gorge or mountain tarn. Their authored widths are roughly
+	# 180-200 m before coves and shoreline variation; 320 m keeps them compact.
+	var coast_width: float = coast_far - float(path.call("viewpoint_near_shore", coast_view))
+	for basin: Dictionary in [
+		{"name": "forest gorge", "centre": forest_view, "far": forest_far},
+		{"name": "mountain tarn", "centre": mountain_view, "far": mountain_far},
+		{"name": "country meadow bend", "centre": country_view, "far": country_far},
+	]:
+		var centre: float = basin["centre"]
+		var near_shore: float = float(path.call("viewpoint_near_shore", centre))
+		var water_width: float = float(basin["far"]) - near_shore
+		var terrace_edge: float = float(path.call("spur_offset", centre)) + RoadPathGD.PLATFORM_HALF_WIDTH + RoadPathGD.PLATFORM_TERRACE
+		check(water_width >= 70.0 and water_width <= 320.0, "%s keeps a compact open waterway (%.0f m)" % [basin["name"], water_width])
+		check(coast_width > water_width * 2.0, "open coast is wider than the %s (%.0f vs %.0f m)" % [basin["name"], coast_width, water_width])
+		check(near_shore > terrace_edge, "%s water clears the overlook terrace (%.0f vs %.0f m)" % [basin["name"], near_shore, terrace_edge])
 
 	var cairn_index := int(floor((mountain_view + 150.0) / RoadChunkGD.LENGTH))
 	var cairn: Node3D = RoadChunkGD.new()
@@ -603,6 +669,20 @@ func _run() -> void:
 			check(shown == (i == style), "%s visibility matches style %d" % [KITS[i], style])
 	bike_vis.free()
 
+	# Check rendered terrain, rather than repeating its band-clipping formula.
+	for seed_value: int in [5, 2, 1, 4]:
+		path.call("set_world_seed", seed_value)
+		for approach_z: float in [1600.0, 2000.0, 2440.0, 2720.0, 2800.0, 3320.0]:
+			var access: Node3D = RoadChunkGD.new()
+			get_root().add_child(access)
+			access.call("setup_ribbon", floori(approach_z / 40.0), int(path.call("theme_at", approach_z)))
+			var obstructions: int = _terrain_above_road(access, path, approach_z)
+			check(obstructions == 0, "seed %d scenic road at %.0f has no terrain above asphalt (%d)" % [seed_value, approach_z, obstructions])
+			access.free()
+		# Cached queries must change when the world seed changes.
+		var sampled_height: float = float(path.call("height_at", 2440.0))
+		check(is_equal_approx(sampled_height, float(path.call("_uncached_height_at", 2440.0))), "world seed invalidates exact terrain samples")
+
 	var HorizonGD: GDScript = load("res://scripts/horizon_mountains.gd")
 	var horizon_consts: Dictionary = HorizonGD.get_script_constant_map()
 	var horizon_layers: Array = horizon_consts["LAYERS"]
@@ -625,6 +705,9 @@ func _run() -> void:
 		float(horizon_layers[horizon_layers.size() - 1]["high"]) > float(horizon_layers[0]["high"]) * 1.4,
 		"distant peaks rise behind the near foothills, not hide under them"
 	)
+	var skyline_rider := SkylineRider.new()
+	skyline_rider.name = "Player"
+	get_root().add_child(skyline_rider)
 	var horizon: Node3D = HorizonGD.new()
 	horizon.name = "HorizonTest"
 	get_root().add_child(horizon)
@@ -641,7 +724,17 @@ func _run() -> void:
 	horizon.call("apply_mood", {"horizon_color": Color("f6b06a"), "fog_color": Color("8b625f"), "light_color": Color("ff9e62"), "cloud_lit": Color("f4b07d")})
 	var haze: Color = range_mat.get_shader_parameter("haze_color")
 	check(haze.r > 0.7 and haze.g > 0.4, "dusk paints the skyline with the horizon, not navy")
+	for seed_value: int in [5, 2, 1, 4]:
+		path.call("set_world_seed", seed_value)
+		for distance: float in [600.0, 420.0, 385.0, 350.0, 200.0, 0.0, -200.0]:
+			skyline_rider.track_z = 2800.0 - distance
+			skyline_rider.lateral = float(path.call("viewpoint_side_for", 2800.0)) * float(path.call("spur_offset", skyline_rider.track_z))
+			horizon.call("_follow_player")
+			check(horizon.scale.is_equal_approx(Vector3.ONE), "seed %d horizon never collapses at distance %.0f" % [seed_value, distance])
+			if absf(distance) <= 350.0:
+				check(not horizon.visible, "authored lookoff view replaces the generic ring")
 	horizon.free()
+	skyline_rider.free()
 
 	if owns_path:
 		path.free()
