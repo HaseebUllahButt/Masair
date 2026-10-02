@@ -443,6 +443,12 @@ class Capture:
 		elif _elapsed < warmup + gap * float(_taken):
 			return
 		_busy = true
+		if seated:
+			# Stills of an overlook show its signature moment — the whale in the
+			# air, the eagle on the water — not whichever lull the clock landed on.
+			var life := get_tree().root.find_child("LookoutLife", true, false)
+			if life and life.has_method("stage_capture"):
+				life.call("stage_capture")
 		_shoot()
 
 	func _autopilot() -> void:
