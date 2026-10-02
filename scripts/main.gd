@@ -679,12 +679,17 @@ static func _overcast(mood: Dictionary, r: float) -> Dictionary:
 	for key in ["zenith_color", "mid_color", "horizon_color", "ground_color", "cloud_lit", "cloud_dark", "ambient_color", "fog_color"]:
 		out[key] = _dull(mood[key], r * 0.55)
 	# Steel, not brown: dulling a warm day horizon on its own just makes mud.
-	out["zenith_color"] = (out["zenith_color"] as Color).lerp(Color("3d4c5c"), r * 0.78)
-	out["mid_color"] = (out["mid_color"] as Color).lerp(Color("6e7886"), r * 0.82)
-	out["horizon_color"] = (out["horizon_color"] as Color).lerp(Color("90969e"), r * 0.90)
-	out["cloud_lit"] = (out["cloud_lit"] as Color).lerp(Color("c8ccd2"), r * 0.62)
-	out["cloud_dark"] = (out["cloud_dark"] as Color).lerp(Color("3a4450"), r * 0.62)
-	out["fog_color"] = (out["fog_color"] as Color).lerp(Color("7a828c"), r * 0.70)
+	# Slate, and darker than the clear sky it replaces. A pale rain deck is the
+	# brightest thing in the frame, and everything under it — fog, ambient, the
+	# wet road's reflection — takes that pale on, which is what turned rain into
+	# a beige wash. A dark sky over a darker, wetter, *more* saturated land is
+	# what rain actually looks like.
+	out["zenith_color"] = (out["zenith_color"] as Color).lerp(Color("28323e"), r * 0.82)
+	out["mid_color"] = (out["mid_color"] as Color).lerp(Color("4c5764"), r * 0.86)
+	out["horizon_color"] = (out["horizon_color"] as Color).lerp(Color("76818d"), r * 0.90)
+	out["cloud_lit"] = (out["cloud_lit"] as Color).lerp(Color("8e98a4"), r * 0.75)
+	out["cloud_dark"] = (out["cloud_dark"] as Color).lerp(Color("252e38"), r * 0.75)
+	out["fog_color"] = (out["fog_color"] as Color).lerp(Color("5f6973"), r * 0.70)
 	out["cloud_cover"] = lerpf(mood["cloud_cover"], 0.90, r)
 	out["cloud_opacity"] = lerpf(mood["cloud_opacity"], 1.0, r)
 	# A rain deck is a sheet, not chopped cumulus: soften the edges and grow the
@@ -703,12 +708,18 @@ static func _overcast(mood: Dictionary, r: float) -> Dictionary:
 	out["light_energy"] = mood["light_energy"] * (1.0 - r * 0.58)
 	out["fill_energy"] = mood["fill_energy"] * (1.0 - r * 0.3)
 	out["angular_distance"] = lerpf(mood["angular_distance"], 3.0, r)
-	out["fog_density"] = mood["fog_density"] * (1.0 + r * 2.8)
-	out["fog_aerial"] = lerpf(mood["fog_aerial"], 0.45, r)
-	out["fog_sky"] = lerpf(mood["fog_sky"], 0.28, r)
+	# Thicker air, not a wall: at 3.8x a lake view a kilometre deep was gone
+	# entirely, and a ride in the rain should still show the next hill.
+	out["fog_density"] = mood["fog_density"] * (1.0 + r * 1.5)
+	out["fog_aerial"] = lerpf(mood["fog_aerial"], 0.26, r)
+	out["fog_sky"] = lerpf(mood["fog_sky"], 0.2, r)
 	out["fog_sun_scatter"] = mood["fog_sun_scatter"] * (1.0 - r)
-	out["saturation"] = mood["saturation"] * (1.0 - r * 0.34)
-	out["contrast"] = lerpf(mood["contrast"], 1.0, r * 0.6)
+	# Wet colour is deeper, not greyer: grass, bark and tarmac all darken and
+	# saturate when soaked. Draining a third of the chroma and the contrast with
+	# it is what read as a faded photograph rather than as weather.
+	out["saturation"] = mood["saturation"] * (1.0 - r * 0.08)
+	out["contrast"] = mood["contrast"] * (1.0 + r * 0.04)
+	out["exposure"] = mood["exposure"] * (1.0 - r * 0.06)
 	out["glow"] = mood["glow"] * (1.0 - r * 0.35)
 	return out
 

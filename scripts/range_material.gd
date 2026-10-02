@@ -101,4 +101,6 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	mat.set_shader_parameter("forest_color", fog.darkened(0.16).lerp(woods, 0.62 * daylight).darkened(0.1))
 	mat.set_shader_parameter("mist_color", fog.lerp(haze, 0.25).lerp(Color("9fb4cc"), 0.45 * daylight))
 	mat.set_shader_parameter("sun_dir", toward_sun)
-	mat.set_shader_parameter("weather_haze", 0.75 * float(_mood.get("rain", 0.0)))
+	## Light, because the haze it lays on is the mist colour and the mist is
+	## pale: at 0.75 every range in the rain glowed off-white against a slate sky.
+	mat.set_shader_parameter("weather_haze", 0.35 * float(_mood.get("rain", 0.0)))
