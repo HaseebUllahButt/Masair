@@ -113,7 +113,9 @@ const HALF_PROFILE := [
 ## Roadside tree species. One shape — a ball on a stick — at every scale in every
 ## theme is what made a pine forest, an orchard and a coastal palm grove all read
 ## as the same green lollipops going past.
-enum Flora { BROADLEAF, CONIFER, BIRCH, PALM, BARE, CYPRESS }
+## PINE is the timberline tree: a high, wind-shaped crown on a clean stem. It
+## replaced a leafless snag, which from the saddle read as a burnt forest.
+enum Flora { BROADLEAF, CONIFER, BIRCH, PALM, PINE, CYPRESS }
 
 ## Bark colours. Wood is never the same green-brown twice, and a birch stand is
 ## recognisable at 200 m purely from the pale trunks.
@@ -122,7 +124,6 @@ enum Flora { BROADLEAF, CONIFER, BIRCH, PALM, BARE, CYPRESS }
 const BARK := Color("3f3026")
 const BARK_PALE := Color("a8a79a")
 const BARK_PALM := Color("7d6a4e")
-const BARK_DEAD := Color("5f5346")
 
 ## Shared instance meshes for the prop MultiMeshes.
 static var _unit_cube: ArrayMesh
@@ -1153,7 +1154,7 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5) -> voi
 							)
 					Env.MOUNTAIN:
 						var height: float = _rng.randf_range(8.0, 14.0) * lerpf(0.70, 1.0, reveal)
-						var species: int = Flora.CONIFER if _rng.randf() < 0.78 + towards_summit * 0.15 else Flora.BARE
+						var species: int = Flora.CONIFER if _rng.randf() < 0.78 + towards_summit * 0.15 else Flora.PINE
 						_tree(species, jitter_z, lateral, height, Color("243830").lerp(Color("4a5640"), _rng.randf() * 0.35), true)
 						if _rng.randf() < 0.4:
 							var rock_s := _rng.randf_range(1.2, 2.8)
@@ -2300,8 +2301,8 @@ func _tree(
 			_grow_birch(frame, height, color)
 		Flora.PALM:
 			_grow_palm(frame, height, color)
-		Flora.BARE:
-			_grow_bare(frame, height, color)
+		Flora.PINE:
+			_grow_pine(frame, height, color)
 		_:
 			_grow_broadleaf(frame, height, color)
 
@@ -2424,29 +2425,30 @@ func _grow_palm(frame: Transform3D, height: float, color: Color) -> void:
 	_blob_cols.append(Color("6b5b33"))
 
 
-func _grow_bare(frame: Transform3D, height: float, color: Color) -> void:
-	## Dead or winter-bare: a forked trunk and two levels of branches, no canopy.
-	## Pure silhouette, which is exactly what a bare mountain ridge needs.
-	var trunk_h: float = height * _rng.randf_range(0.4, 0.55)
-	var thickness: float = height * _rng.randf_range(0.07, 0.1)
-	var fork := Vector3(_rng.randf_range(-0.06, 0.06) * height, trunk_h, _rng.randf_range(-0.06, 0.06) * height)
-	_limb(frame, Vector3.ZERO, fork, thickness, color)
-	var branches: int = _rng.randi_range(3, 4)
-	for i in branches:
-		var a: float = TAU * (float(i) + _rng.randf_range(0.0, 0.4)) / float(branches)
-		var reach: float = height * _rng.randf_range(0.2, 0.34)
-		var tip := fork + Vector3(cos(a) * reach, height * _rng.randf_range(0.2, 0.34), sin(a) * reach)
-		_limb(frame, fork, tip, thickness * 0.55, color.lightened(0.05))
-		for _j in _rng.randi_range(1, 2):
-			var twist: float = a + _rng.randf_range(-1.1, 1.1)
-			var far: float = reach * _rng.randf_range(0.3, 0.6)
-			_limb(
-				frame,
-				tip,
-				tip + Vector3(cos(twist) * far, height * _rng.randf_range(0.1, 0.2), sin(twist) * far),
-				thickness * 0.3,
-				color.lightened(0.12)
-			)
+func _grow_pine(frame: Transform3D, height: float, color: Color) -> void:
+	## Mountain pine: a clean stem carrying a high, flat-topped crown and one
+	## lower bough mass swung off to the side. Round masses, so it can stand in
+	## the seated frame where a spruce apex reads as a spike, and dressed all the
+	## way up, so the pass reads as wind-shaped timberline instead of the stand
+	## of leafless snags it used to be. Four instances against a snag's dozen.
+	# Warm upper bark, the one thing that tells a pine from a spruce at range.
+	var bark: Color = BARK.lerp(BARK_PALM, 0.35).lightened(_rng.randf() * 0.1)
+	var stem_h: float = height * _rng.randf_range(0.5, 0.6)
+	var thickness: float = height * _rng.randf_range(0.05, 0.065)
+	var lean := Vector3(_rng.randf_range(-0.07, 0.07), 0.0, _rng.randf_range(-0.07, 0.07)) * height
+	var top := lean + Vector3(0, stem_h, 0)
+	_limb(frame, Vector3.ZERO, top, thickness, bark)
+	var width: float = height * _rng.randf_range(0.5, 0.66)
+	var crown_h: float = (height - stem_h) * _rng.randf_range(0.9, 1.05)
+	# Seated down over the stem head, so no bare fork shows between wood and leaf.
+	_canopy(frame, top - Vector3(0, crown_h * 0.22, 0), width, crown_h, color)
+	# The lower mass is the wind: one side only, a shade darker in the crown's
+	# own shadow, with a bough running out to it so it is not a floating ball.
+	var a: float = _rng.randf_range(0.0, TAU)
+	var reach: float = width * _rng.randf_range(0.28, 0.4)
+	var bough := top + Vector3(cos(a) * reach, -crown_h * _rng.randf_range(0.35, 0.5), sin(a) * reach)
+	_limb(frame, top - Vector3(0, crown_h * 0.45, 0), bough, thickness * 0.45, bark.darkened(0.1))
+	_canopy(frame, bough - Vector3(0, crown_h * 0.15, 0), width * 0.55, crown_h * 0.5, color.darkened(0.08))
 
 
 func _glow_light(z: float, lateral: float, lift: float, color: Color, radius: float, energy: float) -> void:
@@ -3641,7 +3643,7 @@ func _scenery_coast() -> void:
 func _scenery_mountain() -> void:
 	var z0: float = float(chunk_index) * LENGTH
 	for side in [-1.0, 1.0]:
-		# Dark montane conifer, thinning into bare snags on the exposed ground.
+		# Dark montane conifer, thinning into wind-shaped pine on the exposed ground.
 		for _i in 16:
 			var z := z0 + _rng.randf_range(0.0, LENGTH)
 			var lx: float = side * (HALF_WIDTH + 5.0 + _rng.randf_range(0.0, 60.0))
@@ -3653,7 +3655,7 @@ func _scenery_mountain() -> void:
 			elif roll < 0.9:
 				_tree(Flora.BIRCH, z, lx, h * 0.7, tint.lightened(0.12))
 			else:
-				_tree(Flora.BARE, z, lx, h * 0.6, BARK_DEAD.darkened(_rng.randf() * 0.3))
+				_tree(Flora.PINE, z, lx, h * 0.75, tint.lightened(0.06))
 		for _i in 5:
 			var z := z0 + _rng.randf_range(0.0, LENGTH)
 			var lx: float = side * (HALF_WIDTH + 22.0 + _rng.randf_range(0.0, 75.0))
@@ -4266,13 +4268,12 @@ func _build_spur_ribbon(
 			span_b = Vector2(pin_b, pin_b)
 		var gore_a: float = float(_path.spur_gap(za))
 		var gore_b: float = float(_path.spur_gap(zb))
-		# The platform is a car park, not running road: packed gravel rather than
-		# the carriageway's black tarmac, or the apron reads as the motorway
-		# simply widening into a strip of road paint with benches beside it.
-		var surface: Color = (_pal["road"] as Color).lightened(0.22)
-		var parked := float(_path.platform_blend(za))
-		if parked > 0.0:
-			surface = surface.lerp(_deck_color(za, (span_a.x + span_a.y) * 0.5), parked * 0.20)
+		# The same tarmac as the carriageway it leaves, to the vertex. The spur
+		# used to be laid a fifth lighter and the platform warmer again, so the
+		# junction drew a seam straight across the road and the climb read as a
+		# second, cheaper road bolted on. The car park is told apart by its bay
+		# paint and its parapet, not by a different surface.
+		var surface: Color = _pal["road"]
 		road.add_quad_uv(
 			_p(za, span_a.x, -PROUD),
 			_p(za, span_a.y, -PROUD),
@@ -4646,7 +4647,7 @@ func _build_highway_spur_screen() -> void:
 		if _on_tarmac(z, inner, 1.6):
 			continue
 		var height: float = _rng.randf_range(9.0, 15.0)
-		var species: int = Flora.BARE if _vp_theme == Env.MOUNTAIN else Flora.BROADLEAF
+		var species: int = Flora.PINE if _vp_theme == Env.MOUNTAIN else Flora.BROADLEAF
 		if _vp_theme == Env.FOREST:
 			species = Flora.CONIFER if _rng.randf() < 0.3 else Flora.BROADLEAF
 		if _vp_theme == Env.COAST:
@@ -4832,15 +4833,15 @@ func _build_view_frame() -> void:
 		var height: float = float(spec[2]) * (0.86 + 0.22 * absf(wobble)) * (0.8 + 0.55 * edge)
 		# Round masses, not needles: conifer apices at this size were the spikes
 		# standing in the corner of every seated frame. Broadleaf for the wooded
-		# overlooks, pale snags on the pass where nothing broadleaf grows.
+		# overlooks, round-crowned pine on the pass where nothing broadleaf grows.
 		var species: int = Flora.BROADLEAF
 		# Dark enough to frame, light enough that dusk fill still models them —
 		# pure `14261f` under a low key landed as black cutouts.
 		var tint := Color("26402f")
 		if _vp_theme == Env.MOUNTAIN:
-			species = Flora.BARE
-			height *= 0.62
-			tint = Color("343c3e")
+			species = Flora.PINE
+			height *= 0.72
+			tint = Color("27392f")
 		else:
 			height *= 1.25 if _vp_theme == Env.FOREST else 0.72
 			if _vp_theme == Env.FOREST and absf(wobble) > 0.6:
@@ -5797,9 +5798,14 @@ func _far_field_color(color: Color, zi: int, li: int) -> Color:
 	## the eight columns do not read as eight bands either.
 	if _vp_theme == Env.MOUNTAIN:
 		var depth: float = clampf(float(li) / 7.0, 0.0, 1.0)
-		var moss: Color = Color("25332d").lerp(Color("727f7d"), smoothstep(0.0, 1.0, depth))
+		# The ramp finishes inside the first four columns rather than the last
+		# three. The seated frame only ever sees the inner half of this mesh — the
+		# outer columns are behind the ranges — so a ladder spread evenly over all
+		# eight put four nearly identical dark steps in the only part of it anybody
+		# can see, which is the flat wedge all over again.
+		var moss: Color = Color("2f3d37").lerp(Color("7f8d8f"), smoothstep(0.0, 0.62, depth))
 		var patch: float = 0.5 + 0.5 * sin(float(zi) * 0.37 + float(li) * 1.9)
-		return moss.darkened(0.13 * patch * (1.0 - 0.5 * depth))
+		return moss.darkened(0.10 * patch * (1.0 - 0.4 * depth))
 	if _vp_theme != Env.COUNTRY:
 		return color
 	# Each parcel retains the established six-by-two cell footprint.
@@ -6494,12 +6500,12 @@ func _far_bank_ground_tone() -> Array[Color]:
 	## separate from the ground they sit on without competing with the water.
 	match _vp_theme:
 		Env.FOREST:
-			return [Color("46523f"), Color("1c261d")]
+			return [Color("515e48"), Color("212c22")]
 		Env.MOUNTAIN:
-			return [Color("4b5354"), Color("212729")]
+			return [Color("586160"), Color("2a3133")]
 		Env.COUNTRY:
-			return [Color("55543a"), Color("262b1d")]
-	return [Color("3a4235"), Color("1e231c")]
+			return [Color("605e42"), Color("2e3424")]
+	return [Color("434c3d"), Color("242a21")]
 
 
 func _build_far_bank_ground() -> void:
@@ -6545,42 +6551,72 @@ func _build_far_bank_ground() -> void:
 	# the ranges so the mid-ground is filled without crowding the skyline.
 	const NEAR_OFFSET := 52.0
 	const FAR_OFFSET := 330.0
-	var groups: int = 8 if _vp_theme == Env.MOUNTAIN else (7 if _vp_theme == Env.FOREST else 6)
+	var groups: int = 14 if _vp_theme == Env.MOUNTAIN else (12 if _vp_theme == Env.FOREST else 11)
 	for group in groups:
 		# One clump per slot along the route, jittered so the slots do not read
 		# as slots. An even row of clumps is the pearl effect wearing a hat.
 		var head_z: float = (
 			z0 + (float(group) + 0.5) / float(groups) * z_span + _rng.randf_range(-0.62, 0.62) * z_span / float(groups)
 		)
+		# Square-rooted, so the clumps spread up the bank instead of all queueing
+		# against the waterline where they would draw a second shoreline.
 		var head_out: float = (
 			float(_path.viewpoint_far_shore(head_z, _vp_centre))
-			+ lerpf(NEAR_OFFSET, FAR_OFFSET, _rng.randf() * _rng.randf())
+			+ lerpf(NEAR_OFFSET, FAR_OFFSET, sqrt(_rng.randf()))
 		)
 		# Big and wide at the head, shrinking outward, and one clump in four gets
 		# no head at all — just the debris around where one would have been.
-		var head_scale: float = 0.0 if _rng.randf() < 0.24 else _rng.randf_range(0.75, 1.35)
-		var members: int = _rng.randi_range(3, 5)
+		var head_scale: float = 0.0 if _rng.randf() < 0.24 else _rng.randf_range(0.8, 1.5)
+		var members: int = _rng.randi_range(5, 9)
 		for i in members:
 			var run: float = float(i) / float(members)
-			var z: float = head_z + _rng.randf_range(-1.0, 1.0) * (18.0 + run * 46.0)
-			var out: float = head_out + _rng.randf_range(-1.0, 1.0) * (7.0 + run * 30.0)
+			var z: float = head_z + _rng.randf_range(-1.0, 1.0) * (16.0 + run * 44.0)
+			var out: float = head_out + _rng.randf_range(-1.0, 1.0) * (7.0 + run * 40.0)
 			if out < float(_path.viewpoint_far_shore(z, _vp_centre)) + NEAR_OFFSET * 0.7:
 				continue
 			if _far_ground_y(z, out) < _vp_water_y + 2.5:
 				continue
-			# Wide and low: at four hundred metres a sphere is a bead, and a swell
-			# is a piece of ground. Height is a third of the width so nothing here
-			# stands up and breaks the bank into a skyline of its own.
-			var s: float = _rng.randf_range(7.0, 15.0) * head_scale / (1.0 + run * 1.3)
-			# Value runs pale at the waterline to dark inland — distance lifting a
-			# tone is the one depth cue this band has left once the sun is down, and
-			# the eye needs the near edge to be the quietest thing in it.
+			# Two sizes in every clump and a third of them small. Size variety is
+			# the strongest thing against the pearl reading there is: nothing in a
+			# real talus field is the same size as its neighbour twice running, and
+			# a field of identically sized lumps has no scale in it at all.
+			var fine: bool = _rng.randf() < 0.34
+			var s: float = (_rng.randf_range(3.5, 6.5) if fine else _rng.randf_range(11.0, 23.0))
+			s *= head_scale / (1.0 + run * 1.2)
+			# Value runs a step lighter at the waterline and darkens inland —
+			# distance lifting a tone is the one depth cue this band has left once
+			# the sun is down — and then every member takes its own drop, because a
+			# clump whose stones all match each other is the other half of the
+			# regularity that makes a scatter read as beads.
 			var depth: float = clampf((out - head_out + FAR_OFFSET) / FAR_OFFSET, 0.0, 1.0)
-			var col: Color = pale.lerp(dark, clampf(depth, 0.0, 1.0)).darkened(_rng.randf() * 0.12)
+			var col: Color = pale.lerp(dark, clampf(depth, 0.0, 1.0)).darkened(_rng.randf() * 0.30)
+			# One in five is left pale. The band needs a top value as well as a
+			# bottom one or it is still one tone, and a lit face here is a warm
+			# face — a handful of them reads as scree catching the last of the sun,
+			# where a whole apron of them read as salmon laid on a bank.
+			if _rng.randf() < 0.2:
+				col = pale.lightened(_rng.randf() * 0.14)
+			# Big enough to be ground and low enough not to be a skyline: height is
+			# a third of the width, so a member overlaps its neighbours in plan and
+			# the clump closes into one mass instead of a row of separate lumps.
+			# Two in five are laid as faceted slabs rather than swells — every form
+			# on this bank round, and every form the same roundness, is a texture
+			# tiled with one stamp.
+			if _rng.randf() < 0.4:
+				_ledges.append(
+					Transform3D(
+						Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(
+							Vector3(s * 2.0, s * 0.62, s * 1.6)
+						),
+						_far_point(z, _vp_side * out, _far_ground_y(z, out) - s * 0.24)
+					)
+				)
+				_ledge_cols.append(col)
+				continue
 			_blob(
 				z,
 				_vp_side * out,
-				Vector3(s * 2.4, s * 0.62, s * 1.9),
+				Vector3(s * 1.9, s * 0.72, s * 1.55),
 				col,
 				_far_ground_lift(z, out),
 				false,
@@ -6835,13 +6871,13 @@ func _build_face_ledges() -> void:
 
 
 func _far_cliff_tone() -> Array[Color]:
-	## Scarp and lip for the far-shore cliff wall. One definition, read by both
-	## `_build_far_cliffs` and its streaming twin, because the pair used to be
-	## written out twice and a two-value palette duplicated by hand is exactly
-	## the thing that ends up with the sync lookoff and the streamed lookoff
+	## Scarp, waterline and lip for the far-shore cliff wall. One definition, read
+	## by both `_build_far_cliffs` and its streaming twin, because the pair used
+	## to be written out twice and a palette duplicated by hand is exactly the
+	## thing that ends up with the sync lookoff and the streamed lookoff
 	## disagreeing about what colour a shoreline is.
 	##
-	## The visual job here is to *be a shoreline and nothing else*. These two
+	## The visual job here is to *be a shoreline and nothing else*. These three
 	## quads run the whole width of every seated frame, they are the flattest
 	## surfaces in it, and the dusk sun rakes straight into them — so whatever
 	## albedo they carry arrives multiplied by the entire key, which is `ff9e62`
@@ -6854,26 +6890,36 @@ func _far_cliff_tone() -> Array[Color]:
 	## lake, with a near-fluorescent strip round it in the other biomes. The eye
 	## went to the edge of the water instead of into it.
 	##
-	## So both values come down by roughly half and go cool: damp rock in the
-	## shadow of its own bank, with the lip one step above it rather than three.
-	## The band is meant to be found, not stopped at — it separates water from
-	## land and then gets out of the way.
+	## So all three come down and go cool: damp rock in the shadow of its own
+	## bank, a step apart rather than three, with the waterline step darkest. The
+	## band still separates lake from land, but it does it on hue — rust against
+	## blue — instead of on value, which is all a lit surface under this key can
+	## offer. The band is meant to be found, not stopped at.
 	##
 	## Cool is doing as much work here as dark, and not only because it sits
 	## opposite the key. It also un-breaks the land: the far bank behind it is
 	## warm, and a cool edge against warm ground is what tells the eye which of
 	## the two is nearer.
+	## The one thing albedo cannot serve here is both moods at once. These are lit
+	## surfaces, so one albedo answers to the whole key in every mood: the values
+	## that make the band quiet under the dusk key are the values that leave it a
+	## black void under the much stronger night fill (3.6 at 64 degrees against
+	## dusk's 0.52), and the values that keep a moonlit shoreline read at night
+	## measured 0.30 linear luminance in the dusk capture. Chasing both would mean
+	## giving Defect 1 straight back. What is left here is the compromise — a band
+	## that still has a value, and a shoreline that is carried at night by the
+	## bank's own silhouette and the water's edge rather than by a pale beach.
 	match _vp_theme:
 		Env.FOREST:
-			return [Color("1b231d"), Color("2b342c")]
+			return [Color("1b231d"), Color("141b16"), Color("35433a")]
 		Env.MOUNTAIN:
-			return [Color("2b3033"), Color("3d4447")]
+			return [Color("282e32"), Color("1f2528"), Color("474f52")]
 		Env.COUNTRY:
 			# Ochre rather than grey, and still the darkest land in the frame: the
 			# composition rests on warm land against cool water, and it rests on
 			# the *water* being the subject, so this stays a value and not a hue.
-			return [Color("332e22"), Color("443e2f")]
-	return [Color("26251f"), Color("343229")]
+			return [Color("3d382c"), Color("2e2c24"), Color("5a543e")]
+	return [Color("28261f"), Color("21201b"), Color("3c372c")]
 
 
 func _build_far_cliffs() -> void:
@@ -6885,7 +6931,8 @@ func _build_far_cliffs() -> void:
 	var b := LowPoly.new()
 	var tone := _far_cliff_tone()
 	var face: Color = tone[0]
-	var lip: Color = tone[1]
+	var wet: Color = tone[1]
+	var lip: Color = tone[2]
 	var rises := _far_cliff_rises()
 	var pass_rise: float = rises.x
 	var fell_rise: float = rises.y
@@ -6893,7 +6940,7 @@ func _build_far_cliffs() -> void:
 	var t := z0
 	while t < z0 + z_span - 0.4:
 		var t1: float = minf(t + 13.0, z0 + z_span)
-		_cliff_span(b, t, t1, _far_scree_rise(t, pass_rise, fell_rise), _far_scree_rise(t1, pass_rise, fell_rise), face, lip)
+		_cliff_span(b, t, t1, _far_scree_rise(t, pass_rise, fell_rise), _far_scree_rise(t1, pass_rise, fell_rise), face, wet, lip)
 		built = true
 		t = t1
 	if not built:
@@ -6913,7 +6960,8 @@ func _build_far_cliffs_incremental() -> void:
 	var b := LowPoly.new()
 	var tone := _far_cliff_tone()
 	var face: Color = tone[0]
-	var lip: Color = tone[1]
+	var wet: Color = tone[1]
+	var lip: Color = tone[2]
 	var rises := _far_cliff_rises()
 	var pass_rise: float = rises.x
 	var fell_rise: float = rises.y
@@ -6921,7 +6969,7 @@ func _build_far_cliffs_incremental() -> void:
 	var t := z0
 	while t < z0 + z_span - 0.4:
 		var t1: float = minf(t + 13.0, z0 + z_span)
-		_cliff_span(b, t, t1, _far_scree_rise(t, pass_rise, fell_rise), _far_scree_rise(t1, pass_rise, fell_rise), face, lip)
+		_cliff_span(b, t, t1, _far_scree_rise(t, pass_rise, fell_rise), _far_scree_rise(t1, pass_rise, fell_rise), face, wet, lip)
 		built = true
 		t = t1
 		if not await _keep_streaming():
@@ -6962,8 +7010,20 @@ func _cliff_span(
 	h_a: float,
 	h_b: float,
 	face: Color,
+	wet: Color,
 	lip: Color
 ) -> void:
+	# Broken along the route before anything else happens to it. A shoreline drawn
+	# at one value for a kilometre is a stripe, and a stripe across the middle of
+	# a lake is a decal however well its value is chosen; what makes a bank read
+	# as a bank is that it goes into shadow somewhere and comes back out. The
+	# function is a pure function of the route position and the overlook's own
+	# phase rather than an RNG draw, so the sync wall and the streamed wall break
+	# in exactly the same places.
+	var weather: float = 0.5 + 0.5 * sin(za * 0.0231 + _vp_phase) * sin(za * 0.0082 - _vp_phase * 1.7)
+	face = face.darkened(0.30 * (1.0 - weather))
+	wet = wet.darkened(0.24 * (1.0 - weather))
+	lip = lip.darkened(0.26 * (1.0 - weather))
 	var shore_a: float = float(_path.viewpoint_far_shore(za, _vp_centre))
 	var shore_b: float = float(_path.viewpoint_far_shore(zb, _vp_centre))
 	var water_a := _far_point(za, _vp_side * (shore_a - 3.0), _vp_water_y)
@@ -6974,7 +7034,7 @@ func _cliff_span(
 	var crown_b := _far_point(zb, _vp_side * (shore_b + 22.0), _vp_water_y + h_b)
 	var back_a := _far_point(za, _vp_side * (shore_a + 48.0), _vp_water_y + h_a * 0.42)
 	var back_b := _far_point(zb, _vp_side * (shore_b + 48.0), _vp_water_y + h_b * 0.42)
-	var scarp := face.darkened(0.1)
+	var scarp := wet
 	var crown := lip
 	var ledge_col := face
 	if _vp_theme == Env.MOUNTAIN:
@@ -7024,7 +7084,7 @@ func _build_far_shore() -> void:
 			if _vp_theme == Env.FOREST and _rng.randf() < 0.5:
 				species = Flora.BROADLEAF
 			elif _vp_theme == Env.MOUNTAIN and _rng.randf() < 0.55:
-				species = Flora.BARE
+				species = Flora.PINE
 			var tall: float = _rng.randf_range(16.0, 28.0) if _vp_theme == Env.FOREST else (
 				_rng.randf_range(7.0, 13.0) if _vp_theme == Env.MOUNTAIN else _rng.randf_range(10.0, 16.0)
 			)
@@ -7168,7 +7228,7 @@ func _build_far_shore_incremental() -> void:
 			if _vp_theme == Env.FOREST and _rng.randf() < 0.5:
 				species = Flora.BROADLEAF
 			elif _vp_theme == Env.MOUNTAIN and _rng.randf() < 0.55:
-				species = Flora.BARE
+				species = Flora.PINE
 			var tall: float = _rng.randf_range(16.0, 28.0) if _vp_theme == Env.FOREST else (
 				_rng.randf_range(7.0, 13.0) if _vp_theme == Env.MOUNTAIN else _rng.randf_range(10.0, 16.0)
 			)
@@ -7858,8 +7918,8 @@ func _build_platform_pergola() -> void:
 
 func _build_platform_trees() -> void:
 	# Pines along the back of the platform, screening the carriageway.
-	# Coast keeps the sky; mountain is a couple of snags; forest and country
-	# keep the wooded backstop.
+	# Coast keeps the sky; mountain is a screen of wind-shaped pine; forest and
+	# country keep the wooded backstop.
 	var centre := _vp_centre
 	var reach: float = RoadPathGD.PLATFORM_HALF_LENGTH + 8.0
 	if _vp_theme != Env.COAST:
@@ -7867,7 +7927,7 @@ func _build_platform_trees() -> void:
 			var z := centre + _rng.randf_range(-reach, reach)
 			var species: int = Flora.BROADLEAF
 			if _vp_theme == Env.MOUNTAIN:
-				species = Flora.BARE
+				species = Flora.PINE
 			var back_lat: float = _platform_lateral(-RoadPathGD.PLATFORM_HALF_WIDTH - _rng.randf_range(2.0, 10.0), z)
 			if _on_tarmac(z, back_lat, 1.4):
 				continue
