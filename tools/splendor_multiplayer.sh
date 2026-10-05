@@ -33,17 +33,45 @@ http=8000
 web="build/web"
 want_hotspot=1
 want_game=1
+ws_override=""
+server_args=()
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--no-hotspot) want_hotspot=0 ;;
 		--no-game) want_game=0 ;;
-		*) break ;;
+		--ws=*) ws_override="${1#--ws=}" ;;
+		--http=*) http="${1#--http=}" ;;
+		*) server_args+=("$1") ;;
 	esac
 	shift
 done
-if [[ "${1:-}" =~ ^[0-9]+$ ]]; then http="$1"; shift; fi
+for i in "${!server_args[@]}"; do
+	if [[ "${server_args[$i]}" =~ ^[0-9]+$ ]]; then
+		http="${server_args[$i]}"
+		unset 'server_args[$i]'
+		break
+	fi
+done
+if ! [[ "$http" =~ ^[0-9]{1,5}$ ]] || (( 10#$http < 1 || 10#$http > 65534 )); then
+	echo "!! invalid HTTP port '$http' — pick a number between 1 and 65534" >&2
+	exit 1
+fi
+http=$((10#$http))
 ws=$((http + 1))
+if [[ -n "$ws_override" ]]; then
+	if ! [[ "$ws_override" =~ ^[0-9]{1,5}$ ]] || (( 10#$ws_override < 1 || 10#$ws_override > 65535 )); then
+		echo "!! invalid --ws port '$ws_override' — pick a number between 1 and 65535" >&2
+		exit 1
+	fi
+	ws_override=$((10#$ws_override))
+	if (( ws_override != ws )); then
+		echo "!! --ws=$ws_override breaks the game link: the page on :$http always joins ws port $((http + 1))." >&2
+		echo "   use --ws=$((http + 1)) or drop the override." >&2
+		exit 1
+	fi
+fi
 
+mkdir -p "$web"
 web_stale=0
 if [[ ! -f "$web/index.html" || ! -f "$web/index.pck" ]]; then
 	web_stale=1
@@ -116,7 +144,7 @@ cleanup() {
 	[[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null || true
 	[[ -n "$game_pid" ]] && kill "$game_pid" 2>/dev/null || true
 	[[ "$port80_hop" == 1 ]] && port80_off
-	if [[ -f "$captive_conf" ]]; then
+	if [[ "$want_hotspot" == 1 && -f "$captive_conf" ]]; then
 		sudo -n rm -f "$captive_conf" 2>/dev/null \
 			|| echo "!! leftover $captive_conf — delete it or it wildcards DNS on future hotspots"
 	fi
@@ -209,9 +237,13 @@ firewall_preflight() {
 	echo "  !! ufw is active and will block friends. Needed:"
 	printf '       sudo %s\n' "${need[@]}"
 	echo
+	if [[ ! -t 0 ]]; then
+		echo "  no terminal — run the commands above yourself, then re-launch."
+		return 0
+	fi
 	local ans=""
-	read -r -p "  run these now? [Y/n] " ans || true
-	if [[ -z "$ans" || "$ans" =~ ^[Yy] ]]; then
+	read -r -p "  run these now? [y/N] " ans || ans=""
+	if [[ "$ans" =~ ^[Yy]$ ]]; then
 		local c
 		for c in "${need[@]}"; do
 			eval "sudo $c" || echo "  !! failed: sudo $c"
@@ -241,6 +273,32 @@ ips() {
 		| awk '$2 !~ /^(lo|docker|br-|veth|virbr)/ {print $2, $4}' \
 		| cut -d/ -f1
 }
+
+# --------------------------------------------------------------- serve ----
+
+godot --headless --path . --script res://tools/mp_server.gd -- \
+	--http="$http" --ws="$ws" --webroot="$web" "${server_args[@]}" &
+server_pid=$!
+serving=0
+for _ in {1..30}; do
+	if ! kill -0 "$server_pid" 2>/dev/null; then
+		echo "!! lobby failed to start — is port $http in use?" >&2
+		exit 1
+	fi
+	if curl -fsSo /dev/null --max-time 2 "http://127.0.0.1:$http/"; then
+		serving=1
+		break
+	fi
+	sleep 0.5
+done
+if [[ "$serving" != 1 ]]; then
+	kill "$server_pid" 2>/dev/null || true
+	server_pid=""
+	echo "!! server is up but not answering — check the webroot: $web" >&2
+	exit 1
+fi
+
+# ------------------------------------------------------------- share it ---
 
 echo
 echo "  SPLENDOR MULTIPLAYER"
@@ -285,10 +343,12 @@ else
 	if command -v qrencode >/dev/null 2>&1; then
 		qrencode -t ANSIUTF8 -m 2 "http://$lan_ip:$http"
 		echo "      ^ or scan this"
+	else
+		echo "      (install qrencode for a scannable code)"
 	fi
 fi
 echo
-echo "  you: the game window opens itself -> RACE FRIENDS -> JOIN (pre-filled)"
+echo "  you: the game window opens itself -> JOIN is pre-filled and already joining"
 echo "  if a friend's page still spins: their phone is bypassing the hotspot —"
 echo "  mobile data OFF, VPN off, then reopen the link."
 if [[ "$hotspot_up" != 1 && -n "$ts_ip" ]]; then
@@ -297,32 +357,18 @@ if [[ "$hotspot_up" != 1 && -n "$ts_ip" ]]; then
 	echo "  friends on your tailnet use instead: http://$ts_ip:$http"
 fi
 echo
-echo "  options:  splendor --no-hotspot   stay on current wifi"
+echo "  options:  ./play_with_friends.sh          same-wifi lobby (this)"
+echo "            splendor --no-hotspot   stay on current wifi"
 echo "            splendor --no-game      lobby only, no game window"
 echo "            splendor 8000 --dist=10000   10 km race"
 echo "  ctrl-c shuts everything down (lobby, game, hotspot)"
 echo
-
-# --------------------------------------------------------------- serve ----
-
-godot --headless --path . --script res://tools/mp_server.gd -- \
-	--http="$http" --ws="$ws" --webroot="$web" "$@" &
-server_pid=$!
-sleep 1
-if ! kill -0 "$server_pid" 2>/dev/null; then
-	echo "!! lobby failed to start — is port $http in use?" >&2
-	exit 1
-fi
-if curl -fsSo /dev/null --max-time 5 "http://127.0.0.1:$http/"; then
-	echo ">> serving — every friend request logs below as 'http <ip> <path>'"
-else
-	echo "!! server is up but not answering — check the webroot: $web" >&2
-fi
+echo ">> serving — every friend request logs below as 'http <ip> <path>'"
 
 # Host's own game window — native build, joins the lobby via the pre-filled
 # ws://127.0.0.1:<ws> address in RACE FRIENDS.
 if [[ "$want_game" == 1 && -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]]; then
-	godot --path . >/dev/null 2>&1 &
+	godot --path . -- --server="ws://127.0.0.1:$ws" --multiplayer >/dev/null 2>&1 &
 	game_pid=$!
 fi
 
