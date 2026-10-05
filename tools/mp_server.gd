@@ -65,6 +65,8 @@ var _phase := "lobby" # lobby | racing
 var _seed := 0
 var _finish_order: Array = []
 var _first_finish_t := -1.0
+var _race_field: Array = [] # ids allowed to finish this race — fixed at start
+var _race_names := {} # id -> name snapshot, so results survive mid-race quits
 
 
 func _initialize() -> void:
@@ -328,18 +330,22 @@ func _poll_players() -> void:
 
 
 func _drain_packets(ws: WebSocketPeer, from_id: int, limbo: Dictionary = {}) -> void:
+	var sender := from_id
+	var json := JSON.new()
 	while ws.get_available_packet_count() > 0:
-		var msg: Variant = JSON.parse_string(ws.get_packet().get_string_from_utf8())
+		var msg: Variant = null
+		if json.parse(ws.get_packet().get_string_from_utf8()) == OK:
+			msg = json.data
 		if typeof(msg) != TYPE_DICTIONARY or not msg.has("t"):
 			continue
-		_on_msg(from_id, msg, limbo)
+		sender = _on_msg(sender, msg, limbo)
 
 
-func _on_msg(from_id: int, m: Dictionary, limbo: Dictionary) -> void:
+func _on_msg(from_id: int, m: Dictionary, limbo: Dictionary) -> int:
 	match str(m["t"]):
 		"join":
-			if from_id != -1:
-				return
+			if from_id != -1 or not _ws_limbo.has(limbo):
+				return from_id
 			var id := _next_id
 			_next_id += 1
 			var ws: WebSocketPeer = limbo.get("ws")
@@ -348,25 +354,30 @@ func _on_msg(from_id: int, m: Dictionary, limbo: Dictionary) -> void:
 			if name.is_empty():
 				name = "rider %d" % id
 			_players[id] = {
-				"ws": ws, "name": name, "bike": int(m.get("bike", 0)),
+				"ws": ws, "name": name, "bike": _as_int(m.get("bike", 0)),
 				"ready": false, "dist": 0.0, "finished": false, "ms": 0,
+				"racing": _phase == "lobby",
 			}
-			var welcome := {"t": "welcome", "id": id, "phase": _phase, "dist": _race_dist, "leader": _leader_id()}
+			var welcome := {
+				"t": "welcome", "id": id, "phase": _phase, "dist": _race_dist,
+				"leader": _leader_id(), "players": _lobby_players(),
+			}
 			if _phase == "racing":
 				welcome["seed"] = _seed
 			_send(ws, welcome)
 			_broadcast_lobby()
 			print("join: %s (#%d)" % [name, id])
+			return id
 		"leave":
-			if from_id != -1:
+			if from_id != -1 and _players.has(from_id):
 				_drop_player(from_id)
 		"ready":
 			if _players.has(from_id):
-				_players[from_id]["ready"] = bool(m.get("v", false))
+				_players[from_id]["ready"] = m.get("v") is bool and m.get("v")
 				_broadcast_lobby()
 		"bike":
 			if _players.has(from_id) and _phase == "lobby":
-				_players[from_id]["bike"] = int(m.get("i", 0))
+				_players[from_id]["bike"] = _as_int(m.get("i", 0))
 				_broadcast_lobby()
 		"start":
 			if _phase == "lobby" and from_id == _leader_id() and _all_players_ready():
@@ -374,17 +385,47 @@ func _on_msg(from_id: int, m: Dictionary, limbo: Dictionary) -> void:
 		"pose":
 			if _phase == "racing" and _players.has(from_id):
 				var p: Dictionary = _players[from_id]
-				var d: Array = m.get("d", [])
-				if d.size() >= 8 and not p["finished"]:
-					p["dist"] = float(d[7])
-					if p["dist"] >= _race_dist:
-						_finish(from_id)
-				m["id"] = from_id
-				_broadcast(m, from_id)
+				var raw_d: Variant = m.get("d")
+				if _valid_pose(raw_d):
+					if p.get("racing", true) and not p["finished"]:
+						p["dist"] = float(raw_d[7])
+						if p["dist"] >= _race_dist:
+							_finish(from_id)
+					m["id"] = from_id
+					_broadcast(m, from_id)
 		"ping":
 			var ws2: WebSocketPeer = _players[from_id]["ws"] if _players.has(from_id) else limbo.get("ws")
 			if ws2:
 				_send(ws2, {"t": "pong"})
+	return from_id
+
+
+func _as_int(v: Variant, fallback: int = 0) -> int:
+	match typeof(v):
+		TYPE_INT, TYPE_FLOAT, TYPE_BOOL:
+			return int(v)
+		TYPE_STRING, TYPE_STRING_NAME:
+			return int(v) if str(v).is_valid_int() else fallback
+	return fallback
+
+
+func _valid_pose(raw_d: Variant) -> bool:
+	if typeof(raw_d) != TYPE_ARRAY or raw_d.size() < 8:
+		return false
+	for i in 8:
+		if typeof(raw_d[i]) != TYPE_FLOAT and typeof(raw_d[i]) != TYPE_INT:
+			return false
+		if not is_finite(float(raw_d[i])):
+			return false
+	return true
+
+
+func _lobby_players() -> Array:
+	var players: Array = []
+	for id in _players:
+		var p: Dictionary = _players[id]
+		players.append({"id": id, "name": p["name"], "bike": p["bike"], "ready": p["ready"]})
+	return players
 
 
 func _leader_id() -> int:
@@ -405,12 +446,16 @@ func _start_race() -> void:
 	_phase = "racing"
 	_finish_order = []
 	_first_finish_t = -1.0
+	_race_field = _players.keys()
+	_race_names.clear()
 	for id in _players:
 		_players[id]["dist"] = 0.0
 		_players[id]["finished"] = false
 		_players[id]["ready"] = false
+		_players[id]["racing"] = true
+		_race_names[id] = _players[id]["name"]
 	_broadcast({"t": "start", "seed": _seed, "in": 3.0, "dist": _race_dist})
-	print("race start: seed=%d dist=%d riders=%d" % [_seed, int(_race_dist), _players.size()])
+	print("race start: seed=%d dist=%d riders=%d" % [_seed, int(_race_dist), _race_field.size()])
 
 
 func _finish(id: int) -> void:
@@ -420,7 +465,7 @@ func _finish(id: int) -> void:
 	if _finish_order.size() == 1:
 		_first_finish_t = _now()
 	_broadcast({"t": "finish", "id": id, "place": _finish_order.size()})
-	if _finish_order.size() >= _players.size():
+	if _finish_order.size() >= _race_field.size():
 		_end_race()
 
 
@@ -436,38 +481,50 @@ func _end_race() -> void:
 	var order: Array = []
 	for i in _finish_order.size():
 		var id: int = _finish_order[i]
-		order.append({"id": id, "name": _players[id]["name"], "place": i + 1, "dnf": false})
+		order.append({"id": id, "name": str(_race_names.get(id, "rider")), "place": i + 1, "dnf": false})
+	for id in _race_field:
+		if id in _finish_order:
+			continue
+		var dist := int(_players[id]["dist"]) if _players.has(id) else 0
+		order.append({"id": id, "name": str(_race_names.get(id, "rider")), "dnf": true, "d": dist})
 	for id in _players:
-		if not _players[id]["finished"]:
-			order.append({"id": id, "name": _players[id]["name"], "dnf": true, "d": int(_players[id]["dist"])})
 		_players[id]["ready"] = false
+		_players[id]["racing"] = true
+	_race_field.clear()
+	_race_names.clear()
 	_broadcast({"t": "results", "order": order})
 	_broadcast_lobby()
 	print("race over: %s" % str(order))
 
 
 func _drop_player(id: int) -> void:
-	var name: String = _players[id]["name"]
+	if not _players.has(id):
+		return
+	var p: Dictionary = _players[id]
+	var ws: WebSocketPeer = p["ws"]
+	if ws.get_ready_state() != WebSocketPeer.STATE_CLOSED:
+		ws.close()
+	var name: String = p["name"]
 	_players.erase(id)
 	_finish_order.erase(id)
+	_race_field.erase(id)
 	print("left: %s (#%d)" % [name, id])
 	if _players.is_empty():
 		_phase = "lobby"
 		_finish_order = []
 		_first_finish_t = -1.0
+		_race_names.clear()
 		return
 	_broadcast({"t": "left", "id": id})
 	_broadcast_lobby()
-	if _phase == "racing" and _finish_order.size() >= _players.size() and _finish_order.size() > 0:
-		_end_race()
+	if _phase == "racing":
+		if _race_field.is_empty() \
+				or (_finish_order.size() > 0 and _finish_order.size() >= _race_field.size()):
+			_end_race()
 
 
 func _broadcast_lobby() -> void:
-	var players: Array = []
-	for id in _players:
-		var p: Dictionary = _players[id]
-		players.append({"id": id, "name": p["name"], "bike": p["bike"], "ready": p["ready"]})
-	_broadcast({"t": "lobby", "players": players, "leader": _leader_id(), "phase": _phase})
+	_broadcast({"t": "lobby", "players": _lobby_players(), "leader": _leader_id(), "phase": _phase})
 
 
 func _broadcast(m: Dictionary, except_id: int = -1) -> void:
