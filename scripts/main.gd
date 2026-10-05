@@ -292,60 +292,13 @@ const MOODS := {
 		"angular_distance": 0.6,
 		"star_intensity": 3.5,
 		"galaxy_color": Color("7d8ed4"),
-		# Moonlight is sunlight, so it is nearly neutral — everything else in this
-		# mood is a *hue* saying shadow, and if the one light that actually falls
-		# on a face is blue too there is no silver in the frame anywhere. Sat 0.27
-		# against the fill's 0.50 and the ambient's 0.69: the moon-lit faces read
-		# cool silver, the shade reads navy, and the two separate on value *and*
-		# on chroma at once.
+		# Moonlit surfaces stay below daylight. The former strong fill made the
+		# pale terrace brighter at night and kept the woodland saturated green.
 		"light_color": Color("a8c2e6"),
-		# 2.2 -> 2.90, and it cannot go much higher. The headlight is driven off
-		# `inverse_lerp(day, night, sun_energy)`, which only reads "day 0, dusk 0,
-		# night 1" while night sits *below* day; push night past 3.0 and dusk's 5.5
-		# clamps to 1 as well, and the beam comes on at sunset.
-		#
-		# The key is the wrong lever for this mood anyway, and the arithmetic says
-		# why. At 12° the moon puts sin(12°) = 0.21 of itself on flat ground, so
-		# raising its energy to reach the ground mostly raises the slopes facing
-		# it: key-driven brightness arrives as a lit:shade ratio of about 20:1
-		# with the ground still at the floor. Form at night comes from the
-		# ridgelines against the sky and from the painted ranges, not from here.
-		"light_energy": 2.90,
-		# The fill, on the geometry. `_build_fill_light` stands this light at 64°,
-		# so it collects sin(64°) = 0.90 on every up-facing surface in the world
-		# against the moon's 0.21 — over four times as much per unit of energy, on
-		# precisely the surfaces that were reading as one dead value. It is still
-		# a direction, so up-facing slopes still differ by which way they turn and
-		# a face turned away from the moon still gets a fraction of a moon-facing
-		# face.
-		#
-		# 0.26 -> 3.6, and only 3.6 rather than the 5.0 that flattened form to
-		# 6:1, because the fog below turned out to carry the mid-distance ten
-		# times more cheaply. Ambient and fog do the lifting; this only has to
-		# put a directional edge on the near ground.
-		#
-		# 31527e -> 4d6d9a with it. The fill is now most of the light that lands on
-		# the near ground, and at 0.61 saturation that was enough to repaint the
-		# whole foreground one saturated blue. Lighter and less chroma; the blue is
-		# left to the ambient, which is where shadow belongs.
+		"light_energy": 0.80,
 		"fill_color": Color("4d6d9a"),
-		"fill_energy": 3.6,
-		# 0.36 -> 0.65, and no higher than this. `test_restart` asserts night is
-		# darker than day by comparing energy * colour luminance, which is the
-		# only correct way to compare two rows whose ambient colours differ: day's
-		# 0.32 against 6f8796 is 0.164, so this row has to stay under that and
-		# under dusk's 0.226. At 213b66 that caps the energy at 0.74.
-		#
-		# Small next to the fill and deliberately so: ambient is the one term here
-		# with no direction at all, so every unit of it arrives equally on a lit
-		# face and on the face turned away from the moon. Enough to keep deep
-		# shade a colour rather than a hole (1b3156 at 0.36 put the underside of
-		# every tree and the far side of every ridge at 0.02), not enough to
-		# compete with the two lights that have an angle.
-		"ambient": 0.65,
-		# With the shadow lifted, the shadow's own hue matters more than it did:
-		# 213b66 rather than 1b3156, so the darkest band is a readable navy with
-		# the grade's cool toe under it instead of the near-black it was.
+		"fill_energy": 0.35,
+		"ambient": 0.32,
 		"ambient_color": Color("213b66"),
 		"ambient_sky_mix": 0.30,
 		"exposure": 0.91,
@@ -367,11 +320,8 @@ const MOODS := {
 		# raises the convergence target, so the same fog now carries a moonlit
 		# haze outward instead of draining it.
 		#
-		# It is the cheap lever by an order of magnitude: 1.0 -> 6.0 moved the
-		# mean midtone share of the landscape band from 17% to 40%, against 2.4
-		# points for tripling the fill light. That is also why the fill above is
-		# only 3.6 — energy spent on fog keeps its hue and its distance falloff,
-		# while energy spent on a directional light is paid for in contrast.
+		# Fog carries the blue distance haze while the low fill preserves
+		# night contrast on nearby paving and foliage.
 		# Since cut to 1.8. At 2.9 the convergence target sat above the land it
 		# was converging, so past a few hundred metres every lake, field and
 		# ridge went the same milky teal: the overlooks read as one flat blue

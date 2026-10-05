@@ -193,7 +193,7 @@ func _build_surfaces(preview: SubViewport) -> void:
 
 
 func _build_lookouts(preview: SubViewport) -> void:
-	## The four overlook props, drawn on the frame after the world's, not this
+	## The overlook props, drawn on the frame after the world's, not this
 	## one. Their materials are sub-resources of the packed scene, so every
 	## instantiate is a new material object and a new program: this is the one
 	## list the real scene cannot reuse, and the only part of the warmup that adds
@@ -202,8 +202,14 @@ func _build_lookouts(preview: SubViewport) -> void:
 	## first appears at the lookoff is a visible hitch - but the boot frame does
 	## not need them, so they go one frame later, while the start menu is up and
 	## 2.8 km before the road gets there.
-	for asset: String in ["lookout_bench", "lookout_board", "lookout_bollard", "lookout_grove"]:
-		var packed: PackedScene = load("res://scenes/%s.tscn" % asset)
+	# Keep the same PackedScenes cached by the streamer: first arrival should
+	# reuse both imported resources and the programs compiled in this preview.
+	for asset: String in ["lookout_bench", "lookout_board", "lookout_bollard", "lookout_grove",
+		"lookout_deck", "lookout_rail", "lookout_pier", "lookout_balcony",
+		"lookout_stop", "lookout_bays", "lookout_tree"]:
+		var packed: PackedScene = RoadChunkGD._lookout_scene("res://scenes/%s.tscn" % asset)
+		if packed == null:
+			continue
 		var instance: Node3D = packed.instantiate()
 		instance.scale = Vector3.ONE * 0.02 if asset == "lookout_grove" else Vector3.ONE
 		instance.position = Vector3(0.0, 9.0, 0.0)

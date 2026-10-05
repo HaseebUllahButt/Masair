@@ -31,6 +31,42 @@ static func _ensure_rocks() -> void:
 		_rock_b = load(ROCK_B_PATH) as PackedScene
 
 
+## Authored lookout kit. Every piece is optional: with a file missing, the
+## procedural terrace stands in for it, so a half-finished kit never leaves an
+## overlook without a floor. Kit convention: origin on the walking surface, +X
+## toward the view, +Z along the route.
+const LOOKOUT_DECK := "res://scenes/lookout_deck.tscn"
+const LOOKOUT_RAIL := "res://scenes/lookout_rail.tscn"
+const LOOKOUT_BALCONY := "res://scenes/lookout_balcony.tscn"
+const LOOKOUT_PIER := "res://scenes/lookout_pier.tscn"
+const LOOKOUT_STOP := "res://scenes/lookout_stop.tscn"
+const LOOKOUT_BAYS := "res://scenes/lookout_bays.tscn"
+const LOOKOUT_TREE := "res://scenes/lookout_tree.tscn"
+const LOOKOUT_PINE := "res://scenes/lookout_pine.tscn"
+## The deck stands one kerb above the parking tarmac.
+const TERRACE_FLOOR := 0.12
+## Deck depth from the platform edge, and the rail line on its outer lip.
+const TERRACE_DEPTH := 6.6
+const TERRACE_RAIL_OUT := 6.45
+const TERRACE_PITCH := 4.0
+## The kit's bay paint is authored on the carriageway plane, but the spur's own
+## surfacing lies 60 mm proud of it (`_build_spur_ribbon`). Set at zero the paint
+## sat under the tarmac and vanished; this lands it 2 mm over the surface, just
+## under the 72 mm the procedural bay lines used.
+const BAYS_LIFT := 0.062
+## Kit trees are authored ten metres tall.
+const LOOKOUT_TREE_HEIGHT := 10.0
+
+static var _lookout_scenes: Dictionary = {}
+
+
+static func _lookout_scene(path: String) -> PackedScene:
+	## Loaded once per run; null while the kit has not shipped that piece.
+	if not _lookout_scenes.has(path):
+		_lookout_scenes[path] = (load(path) as PackedScene) if ResourceLoader.exists(path) else null
+	return _lookout_scenes[path]
+
+
 static func _rock_scene(prefer_a: bool) -> PackedScene:
 	_ensure_rocks()
 	if prefer_a:
@@ -578,6 +614,9 @@ var _vp_water_y: float = 0.0
 var _vista_basis: Basis = Basis.IDENTITY
 var _vista_origin: Vector3 = Vector3.ZERO
 var _vp_phase: float = 0.0
+## Height of the authored deck over the tarmac, or zero while the procedural
+## flags are in use. Set by `_build_belvedere` before any furniture goes down.
+var _terrace_floor: float = 0.0
 var _on_spur: bool = false
 var _on_lake: bool = false
 var _owns_platform: bool = false
@@ -743,6 +782,7 @@ func _build_highway_props_incremental() -> void:
 	await _build_furniture_incremental()
 	if not await _keep_streaming():
 		return
+	_build_approach_signs()
 	if _on_spur:
 		# Junction boards live on the highway verge so they stay readable when the
 		# climb itself is culled.
@@ -786,6 +826,15 @@ func _build_scenic_props_incremental() -> void:
 		await _build_lake_water_incremental()
 		if not await _keep_streaming():
 			return
+	# Then the platform, before any of the basin. It is the place the rider
+	# stops at, and it used to come last: ~500 frames behind the range, far
+	# ground and shore, so a fast arrival parked on a bare terrace while the
+	# benches were still queued. Its batched extras (bench plinths, the bin,
+	# planting and the backstop trees) still publish with the pass's one commit
+	# below, so this adds no MultiMesh and no draw call.
+	if _owns_platform:
+		if not await _set_piece_platform_incremental():
+			return
 	_build_spur_woodland(first, count)
 	if not await _keep_streaming():
 		return
@@ -821,9 +870,6 @@ func _build_scenic_props_incremental() -> void:
 	_build_spur_furniture()
 	if not await _keep_streaming():
 		return
-	if _owns_platform:
-		if not await _set_piece_platform_incremental():
-			return
 	await _commit_props_incremental(scenic_marks)
 	_tag_new_children(scenic_from, "scenic")
 	set_meta("scenic_done", true)
@@ -896,6 +942,7 @@ func _build_highway_props() -> void:
 		_build_ordinary_theme_scenery()
 	if not _on_lake:
 		_build_distant_scenery()
+	_build_approach_signs()
 	if _on_spur:
 		_build_junction()
 		_build_highway_spur_screen()
@@ -911,14 +958,15 @@ func _build_scenic_props() -> void:
 		return
 	var scenic_marks := _prop_marks()
 	var scenic_from := get_child_count()
+	# Same order as the streamed pass: the platform first.
+	if _owns_platform:
+		_set_piece_platform()
 	if bool(get_meta("stub_done", false)):
 		_build_spur_woodland(2, 3)
 	else:
 		_build_spur_woodland()
 	_build_viewpoint_landscape()
 	_build_spur_furniture()
-	if _owns_platform:
-		_set_piece_platform()
 	_commit_props(scenic_marks)
 	_tag_new_children(scenic_from, "scenic")
 	set_meta("scenic_done", true)
@@ -2115,6 +2163,7 @@ func _deck_cube(
 ) -> void:
 	## Sit a box on the spur deck, along the road's own up. World-Y placement is
 	## what left the benches hovering whenever the headland was pitched.
+	lift += _terrace_floor_at(z, lateral)
 	var flat: Basis = _path.frame_flat_at(z)
 	var frame := Basis(flat.x, flat.y, flat.z).rotated(flat.y, yaw)
 	var scaled := Basis(frame.x * size.x, frame.y * size.y, frame.z * size.z)
@@ -2127,6 +2176,7 @@ func _deck_blob(
 ) -> void:
 	## Heather, turf and low planting on the terrace — same deck placement as
 	## `_deck_cube`, or it floats the moment the headland pitches.
+	lift += _terrace_floor_at(z, lateral)
 	var flat: Basis = _path.frame_flat_at(z)
 	var frame := Basis(flat.x, flat.y, flat.z).rotated(flat.y, _rng.randf_range(0.0, TAU))
 	var scaled := Basis(frame.x * size.x, frame.y * size.y, frame.z * size.z)
@@ -2140,6 +2190,7 @@ func _deck_blob(
 
 
 func _deck_lamp(z: float, lateral: float, size: Vector3, color: Color, lift: float) -> void:
+	lift += _terrace_floor_at(z, lateral)
 	var flat: Basis = _path.frame_flat_at(z)
 	var scaled := Basis(flat.x * size.x, flat.y * size.y, flat.z * size.z)
 	_lamps.append(Transform3D(scaled, _p(z, lateral, -(lift + size.y * 0.5))))
@@ -2150,7 +2201,8 @@ func _deck_light(z: float, lateral: float, lift: float, color: Color, radius: fl
 	if _light_count >= MAX_LIGHTS_PER_CHUNK:
 		return
 	var light := OmniLight3D.new()
-	light.position = _p(z, lateral, -lift)
+	# Same deck allowance as the lamp it sits in, or the light hangs below its glass.
+	light.position = _p(z, lateral, -(lift + _terrace_floor_at(z, lateral)))
 	light.light_color = color
 	light.light_energy = energy
 	light.omni_range = radius
@@ -2338,7 +2390,9 @@ func _grow_broadleaf(frame: Transform3D, height: float, color: Color) -> void:
 	## Oak/beech shape: a short leaning trunk that forks into two or three boughs
 	## disappearing into a wide canopy.
 	var bark: Color = BARK.lightened(_rng.randf() * 0.14)
-	var trunk_h: float = height * _rng.randf_range(0.32, 0.44)
+	# A quarter of the height clear, not two fifths. Seen from a bike or a bench
+	# — always from below — the longer stem was a pole with a dark lid on it.
+	var trunk_h: float = height * _rng.randf_range(0.24, 0.32)
 	var thickness: float = height * _rng.randf_range(0.055, 0.075)
 	var lean := Vector3(_rng.randf_range(-0.09, 0.09), 0.0, _rng.randf_range(-0.09, 0.09)) * height
 	var fork := lean + Vector3(0, trunk_h, 0)
@@ -2352,8 +2406,10 @@ func _grow_broadleaf(frame: Transform3D, height: float, color: Color) -> void:
 		var tip := fork + Vector3(cos(a) * reach, height * _rng.randf_range(0.14, 0.24), sin(a) * reach)
 		_limb(frame, fork - Vector3(0, trunk_h * 0.18, 0), tip, thickness * 0.52, bark.darkened(0.08))
 
-	var crown_h: float = (height - fork.y) * _rng.randf_range(1.0, 1.15)
-	_canopy(frame, fork + Vector3(lean.x * 0.3, -crown_h * 0.08, lean.z * 0.3), width, crown_h, color)
+	# The crown keeps its old volume rather than growing into the freed stem:
+	# grown, it was the prime suspect for a ~0.6 ms leaf-fill loss on the forest road.
+	var crown_h: float = (height - fork.y) * _rng.randf_range(0.88, 0.98)
+	_canopy(frame, fork + Vector3(lean.x * 0.3, -crown_h * 0.13, lean.z * 0.3), width, crown_h, color)
 
 
 func _grow_cypress(frame: Transform3D, height: float, color: Color) -> void:
@@ -2390,10 +2446,14 @@ func _grow_birch(frame: Transform3D, height: float, color: Color) -> void:
 		var a: float = TAU * float(i) / float(stems) + _rng.randf_range(-0.4, 0.4)
 		var tall: float = height * _rng.randf_range(0.78, 1.0)
 		var out: float = tall * _rng.randf_range(0.06, 0.16)
-		var top := Vector3(cos(a) * out, tall * 0.72, sin(a) * out)
+		# Leafed from two fifths of the way up, not three fifths. With the small
+		# high crown, three pale stems and a tuft read as bare white sticks.
+		var top := Vector3(cos(a) * out, tall * 0.6, sin(a) * out)
 		_limb(frame, Vector3.ZERO, top, tall * 0.05, BARK_PALE.darkened(_rng.randf() * 0.3))
+		# Old crown size, seated lower: leafed from the same point without the
+		# extra leaf fill a bigger crown cost.
 		var width: float = tall * _rng.randf_range(0.42, 0.56)
-		_canopy(frame, top - Vector3(0, tall * 0.1, 0), width, tall * 0.5, color.lightened(_rng.randf() * 0.12))
+		_canopy(frame, top - Vector3(0, tall * 0.16, 0), width, tall * 0.5, color.lightened(_rng.randf() * 0.12))
 
 
 func _grow_palm(frame: Transform3D, height: float, color: Color) -> void:
@@ -3569,6 +3629,9 @@ func _scenery_forest_incremental() -> void:
 
 func _scenery_coast() -> void:
 	var z0: float = float(chunk_index) * LENGTH
+	# Weathered stone for every rock here. These used the fencing colour, and a
+	# pointed prism in warm `b8895a` under a dusk key is a traffic cone.
+	var stone := Color("8a8274")
 	# The inland bank. Eight low cool-grey blobs on warm sand used to leave this
 	# side a flat, colourless strip — the one dull quarter of the coast ride. It is
 	# a rugged rocky shoulder now: rocks that vary warm against cool and tall
@@ -3584,21 +3647,31 @@ func _scenery_coast() -> void:
 			if rock:
 				_asset_prop(rock, z, lx, s * 1.7, s * 0.9, -_rng.randf_range(0.0, 2.0))
 			else:
-				_prism(z, lx, Vector3(s * 1.8, s * 1.4, s * 1.8), _pal["prop_c"], -_rng.randf_range(0.0, 2.0))
+				_prism(z, lx, Vector3(s * 1.8, s * 1.4, s * 1.8), stone, -_rng.randf_range(0.0, 2.0))
 		elif roll < 0.68:
 			# Tall angular stack, warm stone, for the skyline edge the land side lacked.
 			var w := _rng.randf_range(3.0, 6.5)
-			_prism(z, lx, Vector3(w, _rng.randf_range(3.4, 7.2), w * 0.8), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.32))
+			_prism(z, lx, Vector3(w, _rng.randf_range(3.4, 7.2), w * 0.8), (stone as Color).darkened(_rng.randf() * 0.32))
 		else:
 			# Rounded boulder, warm/cool mixed so no two catch the light the same.
 			var w := _rng.randf_range(4.0, 9.0)
-			_blob(z, lx, Vector3(w, _rng.randf_range(2.4, 4.8), w * 0.75), (_pal["prop_b"] as Color).lerp(_pal["prop_c"], _rng.randf() * 0.6))
+			_blob(z, lx, Vector3(w, _rng.randf_range(2.4, 4.8), w * 0.75), (_pal["prop_b"] as Color).lerp(stone, _rng.randf() * 0.6))
 	# Marram and scrub on the sand — without this the land bank is bare tint.
 	for _i in 10:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var lx := -(HALF_WIDTH + 5.0 + _rng.randf_range(0.0, 64.0))
 		var w := _rng.randf_range(1.5, 3.4)
-		_blob(z, lx, Vector3(w, _rng.randf_range(0.6, 1.4), w * 0.9), (_pal["prop_a"] as Color).lerp(_pal["ground_alt"], _rng.randf()).darkened(_rng.randf() * 0.2), 0.0, true)
+		var h := _rng.randf_range(0.8, 1.6)
+		# Bedded a fifth of its height into the sand and nearer the scrub tone, so
+		# it grows out of the dune instead of lying on it as a dark disc.
+		_blob(
+			z,
+			lx,
+			Vector3(w, h, w * 0.9),
+			(_pal["ground_alt"] as Color).lerp(_pal["prop_a"], _rng.randf() * 0.6).darkened(_rng.randf() * 0.14),
+			-h * 0.2,
+			true
+		)
 	# Sea-side curb: scrub and rock only. Palms/cypress read as thin sticks at
 	# highway speed and fight the open Big Sur skyline.
 	for _i in 9:
@@ -3609,9 +3682,9 @@ func _scenery_coast() -> void:
 			_blob(
 				z,
 				lx,
-				Vector3(w * 2.1, w * 0.85, w * 1.7),
-				(_pal["prop_a"] as Color).lerp(_pal["ground_alt"], _rng.randf()).darkened(_rng.randf() * 0.18),
-				0.0,
+				Vector3(w * 1.8, w * 1.0, w * 1.5),
+				(_pal["ground_alt"] as Color).lerp(_pal["prop_a"], _rng.randf() * 0.6).darkened(_rng.randf() * 0.14),
+				-w * 0.18,
 				true,
 				true
 			)
@@ -3621,7 +3694,7 @@ func _scenery_coast() -> void:
 				z,
 				lx,
 				Vector3(s * 1.6, s * 0.9, s * 1.4),
-				(_pal["prop_c"] as Color).darkened(_rng.randf() * 0.22),
+				(stone as Color).darkened(_rng.randf() * 0.22),
 				0.0,
 				false,
 				true
@@ -3635,9 +3708,9 @@ func _scenery_coast() -> void:
 			if rock:
 				_asset_prop(rock, z, lx, s * 1.9, s * 0.95, -_rng.randf_range(0.0, 6.0))
 			else:
-				_prism(z, lx, Vector3(s * 1.8, s, s * 1.8), _pal["prop_c"], -_rng.randf_range(0.0, 6.0))
+				_prism(z, lx, Vector3(s * 1.8, s, s * 1.8), stone, -_rng.randf_range(0.0, 6.0))
 		else:
-			_prism(z, lx, Vector3(s * 1.8, s, s * 1.8), _pal["prop_c"], -_rng.randf_range(0.0, 6.0))
+			_prism(z, lx, Vector3(s * 1.8, s, s * 1.8), stone, -_rng.randf_range(0.0, 6.0))
 
 
 func _scenery_mountain() -> void:
@@ -4553,6 +4626,8 @@ func _spur_local(z: float, lateral: float) -> float:
 func _build_platform_bays(hard: LowPoly, z0: float) -> void:
 	## Marked parking bays along the outer edge of the platform, drawn into the
 	## ribbon so they lie exactly on it however the ground rolls underneath.
+	if _lookout_scene(LOOKOUT_BAYS) != null:
+		return
 	const PROUD := 0.072
 	# One bay deep, set off the outer kerb. Expressed against the platform's own
 	# half-width rather than in absolute metres, so narrowing the platform moves
@@ -4665,19 +4740,29 @@ func _build_highway_spur_screen() -> void:
 		_tree(species, z, inner, height, Color("2a4634").lerp(Color("4a6840"), _rng.randf() * 0.35), true)
 
 
-func _build_junction() -> void:
-	## Where the spur leaves and rejoins the carriageway: the sign, a hatched
-	## gore, and a chevron board at the nose. This is the whole invitation — if
-	## it is not legible at 180 km/h the rider never takes the detour.
+func _build_approach_signs() -> void:
+	## Both boards stand on the main-road verge *before* the extra lane exists, so
+	## the rider is not asked to read a sign standing in the tarmac they just
+	## opened. The far one is a distance plate; the near one is the P.
+	##
+	## Run by every chunk, not only spur chunks. The boards sit 90 and 240 m
+	## ahead of the mouth, which puts them in chunks outside the spur span; built
+	## from `_build_junction`, which only spur chunks run, neither ever appeared.
 	var z0 := float(chunk_index) * LENGTH
 	var entry := _vp_centre - RoadPathGD.SPUR_HALF_SPAN
-	# Both boards stand on the main-road verge *before* the extra lane exists, so
-	# the rider is not asked to read a sign standing in the tarmac they just
-	# opened. The far one is a distance plate; the near one is the P.
 	for pair in [[entry - 240.0, true], [entry - 90.0, false]]:
 		var at: float = float(pair[0])
 		if at >= z0 and at < z0 + LENGTH:
 			_build_viewpoint_sign(at, _vp_side, bool(pair[1]))
+
+
+func _build_junction() -> void:
+	## Where the spur leaves and rejoins the carriageway: the sign, a hatched
+	## gore, and a chevron board at the nose. This is the whole invitation — if
+	## it is not legible at 180 km/h the rider never takes the detour.
+	# The approach boards are `_build_approach_signs`: they stand outside the
+	# spur span, so a spur chunk never holds them.
+	var z0 := float(chunk_index) * LENGTH
 	# Chevron board at the nose of the gore — where the gore is actually wide
 	# enough to stand a board in. Placed at a fixed distance into the mouth it
 	# stood on tarmac the rider is invited to ride across, and they rode through
@@ -5775,7 +5860,7 @@ func _build_far_ground() -> void:
 		mesh = b.commit_to(self, "ViewpointFarGround")
 	if mesh:
 		mesh.material_override = LowPoly.terrain_material()
-		if _vp_theme == Env.COUNTRY or _vp_theme == Env.MOUNTAIN:
+		if _vp_theme == Env.COUNTRY or _vp_theme == Env.MOUNTAIN or _vp_theme == Env.FOREST:
 			# _range_quad_lit already shades these slopes. Preserve their local
 			# palette under the warm sunset while retaining normal distance fog.
 			var far_material: StandardMaterial3D = LowPoly.terrain_material().duplicate() as StandardMaterial3D
@@ -5806,6 +5891,22 @@ func _far_field_color(color: Color, zi: int, li: int) -> Color:
 		var moss: Color = Color("2f3d37").lerp(Color("7f8d8f"), smoothstep(0.0, 0.62, depth))
 		var patch: float = 0.5 + 0.5 * sin(float(zi) * 0.37 + float(li) * 1.9)
 		return moss.darkened(0.10 * patch * (1.0 - 0.4 * depth))
+	if _vp_theme == Env.FOREST:
+		## Woodland as a mosaic of stands instead of one wash. Lit, this sheet
+		## took the dusk key at a graze and came out mauve-brown under green
+		## ranges — a bare valley in a forest. Unshaded, the vertex colour is the
+		## surface, so the stands carry their own value: mostly dark mixed
+		## canopy, lighter broadleaf and clearings, and one parcel in six on the
+		## turn. Muted olive for that one, not gold; a saturated yellow parcel
+		## under the warm key is the jaundice this replaces.
+		const STANDS := [
+			Color("2c4733"), Color("33523a"), Color("3e5c3b"), Color("2a4232"), Color("475c39"), Color("585a38")
+		]
+		var stand: int = posmod(hash(Vector2i(chunk_index * 37 + zi / 5, (li / 2) * 13 + 7)), STANDS.size())
+		var tone: Color = STANDS[stand]
+		var grain: float = 0.5 + 0.5 * sin(float(zi) * 0.41 + float(li) * 1.7)
+		var reach: float = smoothstep(0.0, 1.0, clampf(float(li) / 7.0, 0.0, 1.0))
+		return tone.darkened(0.08 * grain).lerp(Color("5d6f6a"), 0.28 * reach)
 	if _vp_theme != Env.COUNTRY:
 		return color
 	# Each parcel retains the established six-by-two cell footprint.
@@ -5898,7 +5999,7 @@ func _build_far_ground_incremental() -> void:
 		mesh = b.commit_to(self, "ViewpointFarGround")
 	if mesh:
 		mesh.material_override = LowPoly.terrain_material()
-		if _vp_theme == Env.COUNTRY or _vp_theme == Env.MOUNTAIN:
+		if _vp_theme == Env.COUNTRY or _vp_theme == Env.MOUNTAIN or _vp_theme == Env.FOREST:
 			# _range_quad_lit already shades these slopes. Preserve their local
 			# palette under the warm sunset while retaining normal distance fog.
 			var far_material: StandardMaterial3D = LowPoly.terrain_material().duplicate() as StandardMaterial3D
@@ -7148,7 +7249,10 @@ func _build_far_shore_groves() -> void:
 		var flat: Basis = _path.frame_flat_at(_vp_centre)
 		var grove_scale: float = (0.65 if _vp_theme == Env.COUNTRY else 1.0) * lerpf(0.65, 1.0, 0.5 + 0.5 * sin(float(i) * 1.9 + _vp_phase))
 		var base_y: float = _far_ground_y(z, out) - 1.0
-		grove.transform = Transform3D(flat.scaled(Vector3.ONE * grove_scale), _far_point(z, _vp_side * out, base_y))
+		# Every grove turned its own way. Thirteen copies of one stand at one
+		# heading were the same ring of trees stamped down the valley.
+		var turn := Basis(Vector3.UP, fposmod(float(i) * 2.39996 + _vp_phase, TAU))
+		grove.transform = Transform3D((flat * turn).scaled(Vector3.ONE * grove_scale), _far_point(z, _vp_side * out, base_y))
 		# Conform each reused model to this site's terrain without sharing mutable
 		# transforms with another grove. Trunk/crown pairs keep identical bases.
 		for part in grove.get_children():
@@ -7156,8 +7260,9 @@ func _build_far_shore_groves() -> void:
 				part.multimesh = part.multimesh.duplicate()
 				for tree_index in part.multimesh.instance_count:
 					var tree_transform: Transform3D = part.multimesh.get_instance_transform(tree_index)
-					var tree_z: float = z + tree_transform.origin.z * grove_scale
-					var tree_out: float = out + _vp_side * tree_transform.origin.x * grove_scale
+					var turned: Vector3 = turn * tree_transform.origin
+					var tree_z: float = z + turned.z * grove_scale
+					var tree_out: float = out + _vp_side * turned.x * grove_scale
 					tree_transform.origin.y += (_far_ground_y(tree_z, tree_out) - base_y) / grove_scale
 					part.multimesh.set_instance_transform(tree_index, tree_transform)
 		add_child(grove)
@@ -7669,7 +7774,9 @@ func _range_sample(z: float, layer: Dictionary, phase: float, depth: int = 0) ->
 			extra = 0
 			floor_h = 0.02
 		Env.FOREST:
-			sharpness = 0.88
+			# Below linear, so the shoulders swell: at 0.88 every summit was a
+			# straight-sided cone, which wooded hills never are.
+			sharpness = 0.70
 			other = 0.74
 			sag0 = 0.40
 			inner_k = 0.58
@@ -7792,24 +7899,45 @@ func _platform_lateral(out: float, z: float = -1.0e12) -> float:
 
 
 func _set_piece_platform() -> void:
-	_build_belvedere()
-	_build_platform_furniture()
-	_build_platform_trees()
-	_build_platform_planting()
+	var rng := _platform_rng()
+	_platform_step(rng, _build_belvedere)
+	_platform_step(rng, _build_platform_furniture)
+	_platform_step(rng, _build_platform_trees)
+	_platform_step(rng, _build_platform_planting)
 
 
 func _set_piece_platform_incremental() -> bool:
-	_build_belvedere()
+	var rng := _platform_rng()
+	_platform_step(rng, _build_belvedere)
 	if not await _keep_streaming():
 		return false
-	_build_platform_furniture()
+	_platform_step(rng, _build_platform_furniture)
 	if not await _keep_streaming():
 		return false
-	_build_platform_trees()
+	_platform_step(rng, _build_platform_trees)
 	if not await _keep_streaming():
 		return false
-	_build_platform_planting()
+	_platform_step(rng, _build_platform_planting)
 	return await _keep_streaming()
+
+
+func _platform_rng() -> RandomNumberGenerator:
+	## The platform draws from its own sequence, seeded from the overlook. It is
+	## built first in the owner's scenic pass now, so the rider finds it standing
+	## on arrival; on the chunk's shared generator that move would have re-rolled
+	## every tree, rock and ridge built after it.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(int(round(_vp_centre)), int(_path.world_seed), 0x51a7))
+	return rng
+
+
+func _platform_step(rng: RandomNumberGenerator, step: Callable) -> void:
+	## One synchronous platform step on the platform's generator. Swapped only
+	## across a call that never awaits, so nothing else can draw from it.
+	var world_rng := _rng
+	_rng = rng
+	step.call()
+	_rng = world_rng
 
 
 func _build_platform_furniture() -> void:
@@ -7826,7 +7954,22 @@ func _build_platform_furniture() -> void:
 	for offset in RoadPathGD.PLATFORM_BENCH_Z:
 		_viewpoint_bench(centre + float(offset), side, RoadPathGD.PLATFORM_BENCH_OUT)
 	_viewpoint_board(centre + 14.0, side, RoadPathGD.PLATFORM_HALF_WIDTH + 1.6, timber)
-	_viewpoint_telescope(centre - 0.2, side, edge - 1.4)
+	# The kit's balcony carries its own coin viewer out over the drop.
+	if _lookout_scene(LOOKOUT_BALCONY) == null:
+		_viewpoint_telescope(centre - 0.2, side, edge - 1.4)
+	# Painted bays and the brown board at the way in, when the kit has them.
+	var bays: PackedScene = _lookout_scene(LOOKOUT_BAYS)
+	if bays:
+		for at in [-8.0, 8.0]:
+			_place_lookout(bays, centre + at, RoadPathGD.PLATFORM_HALF_WIDTH, BAYS_LIFT, "LookoutBays_%d" % int(at))
+	var stop: PackedScene = _lookout_scene(LOOKOUT_STOP)
+	if stop:
+		# One at the way in, and one a long stopping distance before it, so the
+		# rider is told before the bays open rather than as they pass them.
+		for pair in [[RoadPathGD.PLATFORM_HALF_LENGTH + 8.0, "LookoutStop"], [150.0, "LookoutStopAdvance"]]:
+			var stop_z: float = centre - float(pair[0])
+			var verge: float = float(_path.spur_half_width(stop_z)) + RoadPathGD.SPUR_SHOULDER + 1.4
+			_place_lookout(stop, stop_z, -verge, 0.0, str(pair[1]))
 	var bin_z := centre + 17.5
 	var bin_lat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 1.4, bin_z)
 	_deck_cube(bin_z, bin_lat, Vector3(0.62, 0.92, 0.62), timber.darkened(0.2), 0.0, -0.04)
@@ -7844,7 +7987,7 @@ func _viewpoint_lantern(z: float, out: float, lit: bool) -> void:
 	var packed: PackedScene = load("res://scenes/lookout_bollard.tscn")
 	var lamp: Node3D = packed.instantiate()
 	var lateral := _platform_lateral(out, z)
-	lamp.transform = Transform3D(_path.frame_flat_at(z), _p(z, lateral, -0.05))
+	lamp.transform = Transform3D(_path.frame_flat_at(z), _p(z, lateral, -0.05 - _terrace_floor_at(z, lateral)))
 	lamp.name = "LookoutLight_%d" % int(z)
 	add_child(lamp)
 	if lit:
@@ -7936,7 +8079,9 @@ func _build_platform_trees() -> void:
 				z,
 				back_lat,
 				_rng.randf_range(8.0, 14.0),
-				Color("1c3328").lerp(Color("2a4232"), _rng.randf()),
+				# Mid woodland green. The old near-black pair read as cut-outs even
+				# at noon, from the one spot where the rider stands right under them.
+				Color("2b4c35").lerp(Color("45683f"), _rng.randf()),
 				true
 			)
 	# Two sentinel trees at the terrace ends — the silhouette that says this
@@ -7949,14 +8094,34 @@ func _build_platform_trees() -> void:
 			var sentinel_lat: float = _platform_lateral(-RoadPathGD.PLATFORM_HALF_WIDTH - 2.4, cz)
 			if _on_tarmac(cz, sentinel_lat, 1.4):
 				continue
+			# The two trees nearest the bench are the kit's full-canopy model; the
+			# backstop stays in the batched buckets, where a dozen more scene
+			# instances would cost a draw call each for trees seen at forty metres.
+			var sentinel: PackedScene = _lookout_scene(LOOKOUT_TREE)
+			if sentinel:
+				_lookout_tree(sentinel, cz, sentinel_lat, 11.0 + end * 0.8, "LookoutSentinel_%d" % int(end))
+				continue
 			_tree(
 				Flora.BROADLEAF,
 				cz,
 				sentinel_lat,
 				11.0 + end * 0.8,
-				Color("243a2c"),
+				Color("2f4d36"),
 				true
 			)
+
+
+func _lookout_tree(packed: PackedScene, z: float, lateral: float, height: float, node_name: String) -> void:
+	## A kit tree grounded the way `_tree` grounds its own: footprint fitted to
+	## the slope, then scaled from the kit's ten metres to the height asked for.
+	var foot: float = clampf(height * 0.1, 0.35, 1.1)
+	var base: Vector3 = _ground_base_for_footprint(z, lateral, foot, foot) - _origin
+	var tree: Node3D = packed.instantiate()
+	tree.transform = Transform3D(
+		Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(Vector3.ONE * height / LOOKOUT_TREE_HEIGHT), base
+	)
+	tree.name = node_name
+	add_child(tree)
 
 
 func _platform_bloom() -> Color:
@@ -8028,6 +8193,14 @@ func _build_belvedere() -> void:
 	## shelf: furniture sat on a grass band and the lake showed through under
 	## the legs. This is a built place — paving, a parapet you can lean on, and
 	## four metres of masonry holding the drop.
+	##
+	## With the lookout kit present the deck, kerb and parapet are authored and
+	## only the masonry under the lip stays procedural, because that is the part
+	## that has to meet whatever ground the overlook was given.
+	var deck: PackedScene = _lookout_scene(LOOKOUT_DECK)
+	var rail: PackedScene = _lookout_scene(LOOKOUT_RAIL)
+	var authored: bool = deck != null and rail != null
+	_terrace_floor = TERRACE_FLOOR if authored else 0.0
 	var b := LowPoly.new()
 	var limestone := Color("737568")
 	var mortar := Color("62685e")
@@ -8037,16 +8210,20 @@ func _build_belvedere() -> void:
 	var z := _vp_centre - half
 	while z < _vp_centre + half:
 		var next: float = minf(z + step, _vp_centre + half)
-		_kerb_run(b, z, next, RoadPathGD.PLATFORM_HALF_WIDTH + 0.32, 0.46, 0.12, limestone.lightened(0.08))
-		# Weathered flags, not fresh limestone: at full value the paving was the
-		# brightest surface in the frame and the terrace read as a sand strip.
-		_belvedere_pave(b, z, next, limestone.lerp(shadow, 0.34))
+		if not authored:
+			_kerb_run(b, z, next, RoadPathGD.PLATFORM_HALF_WIDTH + 0.32, 0.46, 0.12, limestone.lightened(0.08))
+			# Weathered flags, not fresh limestone: at full value the paving was the
+			# brightest surface in the frame and the terrace read as a sand strip.
+			_belvedere_pave(b, z, next, limestone.lerp(shadow, 0.34))
 		_belvedere_wall(b, z, next, limestone, mortar, shadow)
 		z = next
 	_belvedere_ends(b, limestone, shadow)
 	var mesh: MeshInstance3D = b.commit_to(self, "PlatformKerbs")
 	if mesh:
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if authored:
+		_build_authored_terrace(deck, rail)
+		return
 	# Short stone piers at the corners, so the parapet has something to end on.
 	for end in [-1.0, 1.0]:
 		var pz: float = _vp_centre + end * (half - 0.4)
@@ -8063,6 +8240,92 @@ func _build_belvedere() -> void:
 		# Stepped finial, so each pier ends in a shape and not a slab.
 		pier_z += 7.7
 	_build_belvedere_railing()
+
+
+func _build_authored_terrace(deck: PackedScene, rail: PackedScene) -> void:
+	## The kit's deck and rail in four-metre segments, each squared to the road
+	## at its own station so the run follows the platform round its curve the way
+	## the procedural flags did. The deck's skirt and the rail's shared end posts
+	## cover the wedge that opens between neighbours on a bend.
+	var balcony: PackedScene = _lookout_scene(LOOKOUT_BALCONY)
+	var half: float = RoadPathGD.PLATFORM_HALF_LENGTH
+	var rail_out: float = RoadPathGD.PLATFORM_HALF_WIDTH + TERRACE_RAIL_OUT
+	var deck_zs: Array[float] = []
+	var rail_zs: Array[float] = []
+	var offset: float = -half + 1.0
+	while offset <= half - 1.0 + 0.01:
+		deck_zs.append(_vp_centre + offset)
+		# The balcony takes the two rail bays either side of the axis.
+		if balcony == null or absf(offset) > TERRACE_PITCH * 0.75:
+			rail_zs.append(_vp_centre + offset)
+		offset += TERRACE_PITCH
+	_place_lookout_run(deck, deck_zs, RoadPathGD.PLATFORM_HALF_WIDTH, TERRACE_FLOOR, "LookoutDeck")
+	_place_lookout_run(rail, rail_zs, rail_out, TERRACE_FLOOR, "LookoutRail")
+	if balcony:
+		_place_lookout(balcony, _vp_centre, rail_out, TERRACE_FLOOR, "LookoutBalcony")
+	# A pier at each end of the run, so the rail stops on something.
+	var pier: PackedScene = _lookout_scene(LOOKOUT_PIER)
+	if pier:
+		for end in [-1.0, 1.0]:
+			_place_lookout(pier, _vp_centre + end * (half + 1.0), rail_out, TERRACE_FLOOR, "LookoutPier_%d" % int(end))
+
+
+func _place_lookout_run(packed: PackedScene, zs: Array[float], out: float, lift: float, node_name: String) -> void:
+	## A run of identical kit modules as one MultiMesh, so twelve deck segments
+	## are one draw rather than twelve. A module that is not a single mesh falls
+	## back to one scene instance per station.
+	var proto: Node = packed.instantiate()
+	var source: MeshInstance3D = null
+	if proto.get_child_count() == 1:
+		source = proto.get_child(0) as MeshInstance3D
+	if source == null or source.mesh == null:
+		proto.free()
+		for z in zs:
+			_place_lookout(packed, z, out, lift, "%s_%d" % [node_name, int(z - _vp_centre)])
+		return
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = source.mesh
+	mm.instance_count = zs.size()
+	for i in zs.size():
+		var z: float = zs[i]
+		var flat: Basis = _path.frame_flat_at(z)
+		var station := Transform3D(
+			Basis(flat.x * _vp_side, flat.y, flat.z * _vp_side), _p(z, _platform_lateral(out, z), -lift)
+		)
+		mm.set_instance_transform(i, station * source.transform)
+	var run := MultiMeshInstance3D.new()
+	run.name = node_name
+	run.multimesh = mm
+	run.material_override = source.material_override
+	run.cast_shadow = source.cast_shadow
+	add_child(run)
+	proto.free()
+
+
+func _place_lookout(packed: PackedScene, z: float, out: float, lift: float, node_name: String) -> Node3D:
+	## One kit piece `out` metres from the spur centreline, turned with the
+	## overlook's side exactly as the benches are.
+	var piece: Node3D = packed.instantiate()
+	var flat: Basis = _path.frame_flat_at(z)
+	piece.transform = Transform3D(
+		Basis(flat.x * _vp_side, flat.y, flat.z * _vp_side), _p(z, _platform_lateral(out, z), -lift)
+	)
+	piece.name = node_name
+	add_child(piece)
+	return piece
+
+
+func _terrace_floor_at(z: float, lateral: float) -> float:
+	## Deck height over the tarmac at this point, zero off the deck. Everything
+	## that stands on the terrace goes up by this much, so the benches, planters
+	## and lamps sit on the authored deck rather than five centimetres inside it.
+	if _terrace_floor <= 0.0 or absf(z - _vp_centre) > RoadPathGD.PLATFORM_HALF_LENGTH + 1.0:
+		return 0.0
+	var out: float = lateral * _vp_side - float(_path.spur_offset(z)) - RoadPathGD.PLATFORM_HALF_WIDTH
+	if out < -0.05 or out > TERRACE_DEPTH:
+		return 0.0
+	return _terrace_floor
 
 
 func _build_belvedere_railing() -> void:
@@ -8132,7 +8395,10 @@ func _belvedere_wall(b: LowPoly, za: float, zb: float, limestone: Color, mortar:
 	## what makes the terrace a place the benches can stand on.
 	const LIP := 6.05
 	const FACE := 6.85
-	const CAP := 0.52
+	# Under the authored deck the cap comes down flush with it and becomes the
+	# rail's footing; standing at its own height it would push up through the
+	# deck's outer lip.
+	var cap: float = _terrace_floor if _terrace_floor > 0.0 else 0.52
 	# The terrace stands on a ledge of made ground now (PLATFORM_LIP_SHELF), so
 	# the masonry only has to be a parapet that is buried in it — not a nine-metre
 	# retaining wall reaching for a hillside that is no longer there. That depth
@@ -8149,11 +8415,11 @@ func _belvedere_wall(b: LowPoly, za: float, zb: float, limestone: Color, mortar:
 	var out_b := maxf(lip_b, face_b)
 	# Cap you can lean on.
 	b.add_quad(
-		_p(za, in_a, -CAP), _p(za, out_a, -CAP), _p(zb, out_b, -CAP), _p(zb, in_b, -CAP), limestone.lightened(0.12)
+		_p(za, in_a, -cap), _p(za, out_a, -cap), _p(zb, out_b, -cap), _p(zb, in_b, -cap), limestone.lightened(0.12)
 	)
 	# Inner face, toward the parking.
-	_wall_face(b, za, zb, lip_a, lip_b, 0.0, -CAP, mortar)
-	_wall_face(b, za, zb, face_a, face_b, -CAP, 2.4, limestone)
+	_wall_face(b, za, zb, lip_a, lip_b, 0.0, -cap, mortar)
+	_wall_face(b, za, zb, face_a, face_b, -cap, 2.4, limestone)
 	_wall_face(b, za, zb, face_a, face_b, 2.4, WALL, shadow)
 	# Underside, so the shelf has a bottom when seen from the drop.
 	b.add_quad(
@@ -8186,7 +8452,8 @@ func _belvedere_ends(b: LowPoly, limestone: Color, shadow: Color) -> void:
 		var lb: float = _platform_lateral(face, z)
 		var a := minf(la, lb)
 		var c := maxf(la, lb)
-		b.add_quad(_p(z, a, -0.52), _p(z, c, -0.52), _p(z, c, 3.0), _p(z, a, 3.0), limestone.lerp(shadow, 0.35))
+		var top: float = _terrace_floor if _terrace_floor > 0.0 else 0.52
+		b.add_quad(_p(z, a, -top), _p(z, c, -top), _p(z, c, 3.0), _p(z, a, 3.0), limestone.lerp(shadow, 0.35))
 
 
 func _kerb_run(b: LowPoly, za: float, zb: float, out: float, width: float, height: float, color: Color) -> void:
@@ -8218,7 +8485,9 @@ func _viewpoint_bench(z: float, side: float, out: float) -> void:
 	var packed: PackedScene = load("res://scenes/lookout_bench.tscn")
 	var bench: Node3D = packed.instantiate()
 	var flat: Basis = _path.frame_flat_at(z)
-	bench.transform = Transform3D(Basis(flat.x * side, flat.y, flat.z * side), _p(z, lateral, -0.07))
+	bench.transform = Transform3D(
+		Basis(flat.x * side, flat.y, flat.z * side), _p(z, lateral, -0.07 - _terrace_floor_at(z, lateral))
+	)
 	bench.name = "LookoutBench_%d" % int(z)
 	add_child(bench)
 
@@ -8226,7 +8495,10 @@ func _viewpoint_board(z: float, side: float, out: float, _timber: Color) -> void
 	var packed: PackedScene = load("res://scenes/lookout_board.tscn")
 	var board: Node3D = packed.instantiate()
 	var flat: Basis = _path.frame_flat_at(z)
-	board.transform = Transform3D(Basis(flat.x * side, flat.y, flat.z * side), _p(z, _platform_lateral(out, z), -0.05))
+	var lateral := _platform_lateral(out, z)
+	board.transform = Transform3D(
+		Basis(flat.x * side, flat.y, flat.z * side), _p(z, lateral, -0.05 - _terrace_floor_at(z, lateral))
+	)
 	board.name = "LookoutMap"
 	add_child(board)
 
@@ -8240,7 +8512,7 @@ func _viewpoint_telescope(z: float, side: float, out: float) -> void:
 	_deck_cube(z, lateral, Vector3(0.42, 0.16, 0.42), body.darkened(0.2), 0.0, 1.26)
 	# Barrel across the road axis, tipped down toward the water.
 	var flat: Basis = _path.frame_flat_at(z)
-	var base: Vector3 = _p(z, lateral, -1.48)
+	var base: Vector3 = _p(z, lateral, -1.48 - _terrace_floor_at(z, lateral))
 	var barrel := Basis(flat.z, side * deg_to_rad(-18.0)) * Basis(flat.x * 1.1, flat.y * 0.21, flat.z * 0.21)
 	_cubes.append(Transform3D(barrel, base + flat.x * side * 0.25))
 	_cube_cols.append(Color("2f3339"))
@@ -8251,6 +8523,20 @@ func _build_viewpoint_sign(z: float, side: float, advance: bool) -> void:
 	## recognises at 180 km/h. The advance sign stands 240 m before the junction
 	## with a distance plate; the second marks the start of the deceleration lane.
 	var lateral := side * (HALF_WIDTH + 2.6)
+	# The board at the mouth is the kit's VIEWPOINT/P sign, on this same anchor
+	# and the footing `_sign_label` uses, so the exit is announced at the size the
+	# parking is. The advance board stays procedural for its distance plate.
+	var kit: PackedScene = null if advance else _lookout_scene(LOOKOUT_STOP)
+	if kit:
+		var flat: Basis = _path.frame_flat_at(z)
+		var board: Node3D = kit.instantiate()
+		board.transform = Transform3D(
+			Basis(flat.x * side, flat.y, flat.z * side),
+			_ground_base_for_footprint(z, lateral, 1.2, 0.09, true) - _origin
+		)
+		board.name = "LookoutApproachSign"
+		add_child(board)
+		return
 	var blue := Color("1769aa")
 	var brown := Color("6b4630")
 	var white := Color("f5f7f2")
@@ -8462,9 +8748,12 @@ static func palette(t: int) -> Dictionary:
 				"stripe": Color("fff4cc"),
 				"shoulder": Color("8f8371"),
 				"curb": Color("a2957f"),
-				"verge": Color("94a06e"),
-				"ground": Color("c9ae74"),  # open sand
-				"ground_alt": Color("7c9483"),  # scrub holding the dune
+				# Sand a step greyer and the scrub a step greener. Under the warm key
+				# the old `c9ae74` came out as saturated yellow from curb to sea, and
+				# every dark bush on it read as a hole cut in the ground.
+				"verge": Color("84966a"),
+				"ground": Color("ae9f7e"),  # open sand
+				"ground_alt": Color("6f8a72"),  # scrub holding the dune
 				"rail": Color("c9c0ae"),
 				"prop_a": Color("39715b"),
 				"prop_b": Color("6f7f86"),  # weathered driftwood, cool

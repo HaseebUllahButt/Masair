@@ -26,10 +26,8 @@ uniform float crown_depth : hint_range(0.0, 1.0) = 0.42;
 // Per-tree value drift. A thousand instances of one hex colour is the mark of a
 // procedural forest; a few percent either way makes it a wood.
 uniform float instance_drift : hint_range(0.0, 0.3) = 0.09;
-// Sky scattered through the canopy. With no shadows in this game the faces the
-// rider sees are usually the ones turned from a low sun, and a crown lit only by
-// ambient is a black shape. Leaves pass and bounce skylight all through a tree,
-// so up-facing facets carry it and the underside keeps its shade.
+// Cool tint for sheltered canopy facets. The Environment supplies skylight,
+// so these surfaces follow day and night instead of emitting their own light.
 uniform vec3 canopy_sky : source_color = vec3(0.50, 0.62, 0.70);
 uniform float canopy_sky_strength : hint_range(0.0, 1.0) = 0.5;
 // A canopy is not a solid: light scattered through the leaves wraps round the
@@ -67,7 +65,9 @@ vec3 to_linear(vec3 c) {
 }
 
 void fragment() {
-	vec3 albedo = to_linear(COLOR.rgb);  // hex-authored vertex colour — see LowPoly._srgb()
+	// Match StandardMaterial3D: Compatibility shades in sRGB; only linear
+	// renderers need the vertex-colour decode; an unconditional decode crushed leaves.
+	vec3 albedo = OUTPUT_IS_SRGB ? COLOR.rgb : to_linear(COLOR.rgb);
 	float leaf_lum = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
 	// A floor, not a gain: conifer tiers multiply a dark vertex shade into an
 	// already dark instance colour and sat far below any fixed factor's reach.
@@ -79,9 +79,9 @@ void fragment() {
 	// Drift warms as it brightens, the way sun-bleached leaves do.
 	albedo *= depth * (1.0 + drift * instance_drift * 2.0);
 	albedo *= mix(vec3(1.0), vec3(1.05, 1.02, 0.9), max(drift, 0.0) * 2.0 * instance_drift * 4.0);
-	ALBEDO = albedo;
-	float up = (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y * 0.5 + 0.5;
-	EMISSION = albedo * canopy_sky * canopy_sky_strength * (0.35 + 0.65 * up) * depth;
+	// Keep a cool canopy tint, but let the environment and wrapped light
+	// illuminate it. Self-emission made the trees glow green after dark.
+	ALBEDO = albedo * mix(vec3(1.0), canopy_sky, canopy_sky_strength * 0.2);
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
 	BACKLIGHT = vec3(translucency);

@@ -562,7 +562,8 @@ func viewpoint_seat(z: float) -> Transform3D:
 	# the full width of the picture. Nobody sitting on a bench sees the bench.
 	# Half a metre forward puts its edge at 70° and out of shot, and buys a little
 	# more of the drop at the same time.
-	var eye := point_at(best, lateral) + flat.y * SEAT_EYE + flat.x * side * 0.42
+	# The authored terrace and bench stand 12 cm above the road-plane paving.
+	var eye := point_at(best, lateral) + flat.y * (SEAT_EYE + 0.12) + flat.x * side * 0.42
 	# Looking out over the water: away from the road, along the seat's own axis,
 	# and a little down — enough that the lake sits in the lower half, not so
 	# much that it becomes the floor. W/S still moves from here.
