@@ -113,10 +113,6 @@ cruise={
 ]
 }
 
-[input_devices]
-
-pointing/emulate_mouse_from_touch=true
-
 [layer_names]
 
 3d_physics/layer_1="player"
@@ -132,7 +128,6 @@ common/physics_interpolation=true
 
 textures/canvas_textures/default_texture_filter=0
 renderer/rendering_method="gl_compatibility"
-anti_aliasing/quality/msaa_3d=0
 anti_aliasing/quality/use_debanding=true
 environment/defaults/default_clear_color=Color(0.45, 0.62, 0.85, 1)
 anti_aliasing/quality/msaa_3d.mobile=0

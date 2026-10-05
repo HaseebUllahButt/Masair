@@ -89,6 +89,19 @@ var _touch_steer_axis: float = 0.0
 var _touch_auto_throttle: bool = false
 var _menu_scroll: ScrollContainer
 var _menu_stack: VBoxContainer
+var _menu_title: Label
+var _menu_intro: Label
+var _address_caption: Label
+var _address_fold: Button
+var _copy_link_button: Button
+var _share_label: Label
+var _pause_buttons: BoxContainer
+var _was_online: bool = false
+var _touch_brake: Button
+var _touch_menu_button: Button
+var _results_scroll: ScrollContainer
+var _ready_pending: bool = false
+var _hud_defaults: Dictionary = {}
 
 const MOOD_NAMES := ["GOLDEN DUSK", "DAYLIGHT", "MIDNIGHT"]
 const DIFFICULTY_NAMES := ["OPEN ROAD", "SUNDAY RUN", "THE TON"]
@@ -110,6 +123,7 @@ func _ready() -> void:
 	if confirm_panel:
 		confirm_panel.visible = false
 	flash_label.modulate.a = 0.0
+	_apply_display_scale()
 	if _touch_controls_wanted():
 		_build_touch_controls()
 	hint_label.text = _ride_hint()
@@ -125,6 +139,7 @@ func _ready() -> void:
 		_net.race_finish.connect(_on_race_finish)
 		_net.race_results.connect(_on_race_results)
 	_build_race_hud()
+	_build_pause_buttons()
 	if _game:
 		_game.distance_changed.connect(_on_distance)
 		_game.best_changed.connect(_on_best)
@@ -139,6 +154,7 @@ func _ready() -> void:
 		_bike_index = _game.selected_bike
 		_refresh_garage()
 	call_deferred("_show_initial_menu")
+	get_viewport().size_changed.connect(_layout_mobile_ui)
 
 
 func bind_player(player: Node) -> void:
@@ -187,8 +203,257 @@ func _process(delta: float) -> void:
 
 	if _game and _game.is_crashed:
 		crash_panel.modulate.a = minf(crash_panel.modulate.a + delta * 3.0, 1.0)
-	if get_tree().paused and Input.is_action_just_pressed("menu") and not _confirming_restart:
+	if get_tree().paused and Input.is_action_just_pressed("menu") and not _confirming_restart and _countdown_left <= 0.0:
 		_show_start_menu()
+
+
+func _apply_display_scale() -> void:
+	if not _touch_controls_wanted():
+		return
+	if OS.has_feature("web"):
+		var bridge := Engine.get_singleton("JavaScriptBridge")
+		if bridge:
+			var w := int(bridge.eval("window.innerWidth || 0"))
+			var h := int(bridge.eval("window.innerHeight || 0"))
+			if w > 0 and h > 0:
+				var want := Vector2i(maxi(w, 320), maxi(h, 320))
+				if get_window().content_scale_size != want:
+					get_window().content_scale_size = want
+				return
+	get_window().content_scale_size = Vector2i.ZERO
+
+
+func _layout_mobile_ui() -> void:
+	_release_touch_actions()
+	if OS.has_feature("web"):
+		_apply_display_scale()
+	if _start_menu and _start_menu.visible:
+		_layout_start_menu()
+	_layout_touch_controls()
+	_layout_hud_bounds()
+	if _race_panel and _menu_stack and _menu_intro and _race_toggle:
+		if _invite_layout():
+			_menu_stack.move_child(_race_panel, _menu_intro.get_index() + 1)
+		else:
+			_menu_stack.move_child(_race_panel, _race_toggle.get_index() + 1)
+
+
+func _invite_layout() -> bool:
+	return OS.has_feature("web") or _touch_controls != null
+
+
+func _layout_touch_controls() -> void:
+	if _touch_controls == null:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	var narrow := vp.x < 760.0
+	var short_land := vp.x >= 600.0 and vp.y < 450.0
+	var edge := 16.0
+	var pad_h := 96.0 if short_land else 116.0
+	var steer_width := 300.0 if not narrow else maxf(132.0, vp.x * 0.36)
+	var brake_width := 164.0 if not narrow else maxf(120.0, vp.x * 0.34)
+	if steer_width + brake_width > vp.x - edge * 2.0:
+		var half := maxf(96.0, (vp.x - edge * 2.0) * 0.5)
+		steer_width = half
+		brake_width = half
+	if _touch_steer:
+		_touch_steer.set_anchors_preset(Control.PRESET_TOP_LEFT)
+		_touch_steer.grow_horizontal = Control.GROW_DIRECTION_END
+		_touch_steer.grow_vertical = Control.GROW_DIRECTION_END
+		_touch_steer.text = "‹   SLIDE TO LEAN   ›" if not narrow else "‹  LEAN  ›"
+		_touch_steer.add_theme_font_size_override("font_size", 19 if not narrow else 15)
+		_touch_steer.clip_text = true
+		_touch_steer.custom_minimum_size = Vector2(steer_width, pad_h)
+		_touch_steer.size = _touch_steer.custom_minimum_size
+		_touch_steer.position = Vector2(edge, vp.y - edge - pad_h)
+		var track := _touch_steer.get_node_or_null("SteerTrack") as ColorRect
+		if track:
+			track.position = Vector2(24.0, pad_h - 37.0)
+			track.size = Vector2(maxf(_touch_steer.size.x - 48.0, 84.0), 3.0)
+		if _touch_steer_thumb:
+			_touch_steer_thumb.position = Vector2((_touch_steer.size.x - 42.0) * 0.5, pad_h - 40.0)
+	if _touch_brake:
+		_touch_brake.custom_minimum_size = Vector2(brake_width, pad_h)
+		_touch_brake.size = _touch_brake.custom_minimum_size
+		var pedals := _touch_brake.get_parent() as Container
+		if pedals:
+			pedals.set_anchors_preset(Control.PRESET_TOP_LEFT)
+			pedals.grow_horizontal = Control.GROW_DIRECTION_END
+			pedals.grow_vertical = Control.GROW_DIRECTION_END
+			pedals.size = pedals.get_combined_minimum_size()
+			pedals.position = vp - Vector2(edge, edge) - pedals.size
+	if _touch_menu_button:
+		if vp.x < 600.0:
+			_touch_menu_button.set_anchors_preset(Control.PRESET_TOP_LEFT)
+			_touch_menu_button.position = Vector2(vp.x - edge - maxf(_touch_menu_button.size.x, 112.0), 78.0)
+		elif vp.y < 500.0:
+			_touch_menu_button.set_anchors_preset(Control.PRESET_TOP_LEFT)
+			_touch_menu_button.position = Vector2(edge, 80.0)
+		else:
+			_touch_menu_button.set_anchors_preset(Control.PRESET_TOP_LEFT)
+			_touch_menu_button.position = Vector2(24.0, 88.0)
+	_update_drive_pads()
+
+
+func _layout_hud_bounds() -> void:
+	if _touch_controls == null:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	var portrait := vp.x < 600.0
+	var landscape := not portrait and vp.y < 500.0
+	var distance_caption := hud_root.get_node_or_null("DistanceCaption") as Label
+	var best_caption := hud_root.get_node_or_null("BestCaption") as Label
+	var hud_items: Array = [
+		distance_label, best_label, speed_label, flash_label, hint_label,
+		distance_caption, best_caption, _speed_caption,
+		crash_panel, pause_panel, confirm_panel, _results_panel,
+		_race_hud_card, _currency_hud, _results_scroll,
+	]
+	for item in hud_items:
+		if item != null and not _hud_defaults.has(item):
+			_hud_defaults[item] = _hud_snap(item)
+	if not portrait and not landscape:
+		for item in _hud_defaults:
+			_hud_restore(item, _hud_defaults[item])
+		if _pause_buttons:
+			_pause_buttons.vertical = false
+			for button in _pause_buttons.get_children():
+				button.custom_minimum_size.x = 150.0
+		return
+	_style_hud_label(distance_label, _font_head, 22)
+	_style_hud_label(best_label, _font_head, 22)
+	_style_hud_label(speed_label, _font_display, 40)
+	_style_hud_label(flash_label, _font_head, 28)
+	flash_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	flash_label.scale = Vector2.ONE
+	for label in [crash_label, pause_label, confirm_label]:
+		if label:
+			label.custom_minimum_size = Vector2.ZERO
+			label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var margin := 16.0
+	if portrait:
+		var half := (vp.x - margin * 3.0) * 0.5
+		_place(distance_caption, Vector2(margin, 12.0), Vector2(half, 18.0), HORIZONTAL_ALIGNMENT_LEFT)
+		_place(distance_label, Vector2(margin, 30.0), Vector2(half, 28.0), HORIZONTAL_ALIGNMENT_LEFT)
+		_style_hud_label(distance_label, _font_head, 22)
+		_place(best_caption, Vector2(vp.x - margin - half, 12.0), Vector2(half, 18.0), HORIZONTAL_ALIGNMENT_RIGHT)
+		_place(best_label, Vector2(vp.x - margin - half, 30.0), Vector2(half, 28.0), HORIZONTAL_ALIGNMENT_RIGHT)
+		_style_hud_label(best_label, _font_head, 22)
+		if _currency_hud:
+			_currency_hud.add_theme_font_size_override("font_size", 12)
+			_place(_currency_hud, Vector2(margin, 62.0), Vector2(160.0, 18.0), HORIZONTAL_ALIGNMENT_LEFT)
+		_place(speed_label, Vector2(margin, 82.0), Vector2(150.0, 55.0), HORIZONTAL_ALIGNMENT_LEFT)
+		_style_hud_label(speed_label, _font_display, 40)
+		_place(_speed_caption, Vector2(margin, 138.0), Vector2(150.0, 18.0), HORIZONTAL_ALIGNMENT_LEFT)
+		_place(flash_label, Vector2(margin, vp.y * 0.4), Vector2(vp.x - margin * 2.0, 48.0), HORIZONTAL_ALIGNMENT_CENTER)
+		_style_hud_label(flash_label, _font_head, 28)
+		hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_place(hint_label, Vector2(margin, vp.y - 182.0), Vector2(vp.x - margin * 2.0, 40.0), HORIZONTAL_ALIGNMENT_CENTER)
+		if _race_hud_card:
+			_race_hud_card.set_anchors_preset(Control.PRESET_TOP_LEFT)
+			_race_hud_card.custom_minimum_size = Vector2.ZERO
+			_race_hud_card.position = Vector2(margin, 164.0)
+			_race_hud_card.size = Vector2(vp.x - margin * 2.0, 96.0)
+	else:
+		_place(distance_caption, Vector2(margin, 10.0), Vector2(164.0, 16.0), HORIZONTAL_ALIGNMENT_LEFT)
+		_place(distance_label, Vector2(margin, 28.0), Vector2(164.0, 24.0), HORIZONTAL_ALIGNMENT_LEFT)
+		_style_hud_label(distance_label, _font_head, 22)
+		_place(best_caption, Vector2(vp.x - margin - 164.0, 10.0), Vector2(164.0, 16.0), HORIZONTAL_ALIGNMENT_RIGHT)
+		_place(best_label, Vector2(vp.x - margin - 164.0, 28.0), Vector2(164.0, 24.0), HORIZONTAL_ALIGNMENT_RIGHT)
+		_style_hud_label(best_label, _font_head, 22)
+		_place(speed_label, Vector2(vp.x - margin - 170.0, 82.0), Vector2(170.0, 44.0), HORIZONTAL_ALIGNMENT_RIGHT)
+		_style_hud_label(speed_label, _font_display, 40)
+		_place(_speed_caption, Vector2(vp.x - margin - 170.0, 124.0), Vector2(170.0, 16.0), HORIZONTAL_ALIGNMENT_RIGHT)
+		if _currency_hud:
+			_currency_hud.add_theme_font_size_override("font_size", 14)
+			_place(_currency_hud, Vector2((vp.x - 140.0) * 0.5, 106.0), Vector2(140.0, 18.0), HORIZONTAL_ALIGNMENT_CENTER)
+		if _race_hud_card:
+			_race_hud_card.set_anchors_preset(Control.PRESET_TOP_LEFT)
+			_race_hud_card.custom_minimum_size = Vector2.ZERO
+			_race_hud_card.position = Vector2((vp.x - 260.0) * 0.5, 10.0)
+			_race_hud_card.size = Vector2(260.0, 92.0)
+		_place(flash_label, Vector2(margin, vp.y * 0.36), Vector2(vp.x - margin * 2.0, 44.0), HORIZONTAL_ALIGNMENT_CENTER)
+		_style_hud_label(flash_label, _font_head, 28)
+		hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		var pad_h := 96.0 if vp.y < 450.0 else 116.0
+		var pad_edge := 16.0 if vp.y < 450.0 else 24.0
+		_place(hint_label, Vector2(margin, vp.y - pad_h - pad_edge - 38.0), Vector2(vp.x - margin * 2.0, 34.0), HORIZONTAL_ALIGNMENT_CENTER)
+	var panel_w := minf(560.0, vp.x - 32.0)
+	var panel_h := maxf(120.0, vp.y - 32.0)
+	if _results_scroll:
+		_results_scroll.custom_minimum_size = Vector2(
+			minf(320.0, panel_w - 56.0), maxf(72.0, vp.y - 144.0))
+	if _pause_buttons:
+		_pause_buttons.vertical = vp.x < 360.0
+		for button in _pause_buttons.get_children():
+			button.custom_minimum_size.x = 100.0
+	for panel in [crash_panel, pause_panel, confirm_panel, _results_panel]:
+		if panel == null:
+			continue
+		panel.z_index = 30
+		panel.custom_minimum_size = Vector2.ZERO
+		var need_h := clampf(panel.get_combined_minimum_size().y, 80.0, panel_h)
+		panel.set_anchors_preset(Control.PRESET_CENTER)
+		panel.offset_left = -panel_w * 0.5
+		panel.offset_right = panel_w * 0.5
+		panel.offset_top = -need_h * 0.5
+		panel.offset_bottom = need_h * 0.5
+	for label in [crash_label, pause_label, confirm_label]:
+		if label:
+			label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+
+func _hud_snap(c: Control) -> Dictionary:
+	var d := {
+		"al": c.anchor_left, "at": c.anchor_top,
+		"ar": c.anchor_right, "ab": c.anchor_bottom,
+		"ol": c.offset_left, "ot": c.offset_top,
+		"or": c.offset_right, "ob": c.offset_bottom,
+		"gh": c.grow_horizontal, "gv": c.grow_vertical,
+		"min": c.custom_minimum_size,
+		"ha": -1, "fs": 0, "wrap": -1,
+	}
+	if c is Label:
+		d["ha"] = c.horizontal_alignment
+		d["wrap"] = c.autowrap_mode
+		d["fs"] = c.get_theme_font_size("font_size")
+	return d
+
+
+func _hud_restore(c: Control, d: Dictionary) -> void:
+	c.anchor_left = d["al"]
+	c.anchor_top = d["at"]
+	c.anchor_right = d["ar"]
+	c.anchor_bottom = d["ab"]
+	c.offset_left = d["ol"]
+	c.offset_top = d["ot"]
+	c.offset_right = d["or"]
+	c.offset_bottom = d["ob"]
+	c.grow_horizontal = d["gh"]
+	c.grow_vertical = d["gv"]
+	c.custom_minimum_size = d["min"]
+	if c is Label:
+		c.horizontal_alignment = d["ha"]
+		c.autowrap_mode = d["wrap"]
+		if int(d["fs"]) > 0:
+			c.add_theme_font_size_override("font_size", d["fs"])
+
+
+func _place(c: Control, pos: Vector2, rect_size: Vector2, align: int = -1) -> void:
+	if c == null:
+		return
+	c.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	c.grow_horizontal = Control.GROW_DIRECTION_END
+	c.grow_vertical = Control.GROW_DIRECTION_END
+	c.custom_minimum_size = Vector2.ZERO
+	if c is Label:
+		c.clip_text = true
+	c.size = rect_size
+	c.position = pos
+	if c is Label:
+		c.set_deferred("size", rect_size)
+		if align >= 0:
+			c.horizontal_alignment = align
 
 
 func _update_prompt() -> void:
@@ -213,11 +478,28 @@ func _update_prompt() -> void:
 	hint_label.modulate.a = 0.62
 
 
+func _touch_drive_blocked() -> bool:
+	return get_tree().paused or (_results_panel and _results_panel.visible) or _countdown_left > 0.0
+
+
+func _update_drive_pads() -> void:
+	if _touch_controls == null:
+		return
+	var blocked := _touch_drive_blocked()
+	if _touch_steer:
+		_touch_steer.mouse_filter = Control.MOUSE_FILTER_IGNORE if blocked else Control.MOUSE_FILTER_STOP
+	if _touch_brake:
+		_touch_brake.disabled = blocked
+		_touch_brake.mouse_filter = Control.MOUSE_FILTER_IGNORE if blocked else Control.MOUSE_FILTER_STOP
+
+
 func _set_paused(should_pause: bool) -> void:
 	get_tree().paused = should_pause
 	pause_panel.visible = should_pause
 	if should_pause:
+		_release_touch_actions()
 		_update_pause_label()
+	_update_drive_pads()
 
 
 func _set_confirm_restart(show: bool) -> void:
@@ -330,6 +612,42 @@ func _update_pause_label() -> void:
 		pause_label.text = "ROADSIDE PAUSE\n\nESC / P  resume   ·   M  ride menu"
 
 
+func _pause_resume() -> void:
+	if get_tree().paused:
+		_set_paused(false)
+
+
+func _pause_to_lobby() -> void:
+	_show_start_menu()
+	if _net and _net.online() and _race_panel:
+		_race_panel.visible = true
+		_refresh_race_panel()
+		call_deferred("_focus_race_panel")
+
+
+func _build_pause_buttons() -> void:
+	var pause_box := VBoxContainer.new()
+	pause_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	pause_box.add_theme_constant_override("separation", 14)
+	pause_panel.remove_child(pause_label)
+	pause_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pause_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	pause_box.add_child(pause_label)
+	_pause_buttons = BoxContainer.new()
+	_pause_buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	_pause_buttons.add_theme_constant_override("separation", 12)
+	var resume := _menu_button("RESUME", 15)
+	resume.custom_minimum_size = Vector2(150.0, 52.0)
+	resume.pressed.connect(_pause_resume)
+	_pause_buttons.add_child(resume)
+	var lobby := _menu_button("LOBBY", 15)
+	lobby.custom_minimum_size = Vector2(150.0, 52.0)
+	lobby.pressed.connect(_pause_to_lobby)
+	_pause_buttons.add_child(lobby)
+	pause_box.add_child(_pause_buttons)
+	pause_panel.add_child(pause_box)
+
+
 func _build_start_menu() -> void:
 	## Cinematic title over the live road. Keep the left stack short so the bike
 	## owns the frame; settings and garage are one breath each.
@@ -375,13 +693,17 @@ void fragment() {
 	scroll.add_child(stack)
 
 	stack.add_child(_menu_label("OPEN COUNTRY", 13, Color("e8b089"), _font_kicker))
-	var title := _menu_label("SPLENDOR", 78, Color("f4efe4"), _font_display)
+	_menu_title = _menu_label("SPLENDOR", 78, Color("f4efe4"), _font_display)
+	var title := _menu_title
 	title.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45))
 	title.add_theme_constant_override("shadow_offset_x", 0)
 	title.add_theme_constant_override("shadow_offset_y", 4)
 	title.add_theme_constant_override("line_spacing", -8)
 	stack.add_child(title)
-	stack.add_child(_menu_label("coffee  ·  petrol  ·  the long way round", 16, Color("c8c2b4"), _font_italic))
+	_menu_intro = _menu_label("coffee  ·  petrol  ·  the long way round", 16, Color("c8c2b4"), _font_italic)
+	_menu_intro.name = "MenuIntro"
+	_menu_intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	stack.add_child(_menu_intro)
 
 	var spacer := Control.new()
 	spacer.custom_minimum_size.y = 18.0
@@ -437,6 +759,7 @@ void fragment() {
 
 	_build_music_panel()
 	add_child(_start_menu)
+	call_deferred("_layout_mobile_ui")
 
 
 func _build_music_panel() -> void:
@@ -459,7 +782,7 @@ func _build_music_panel() -> void:
 	preset_caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	preset_row.add_child(preset_caption)
 	var preset_prev := _garage_arrow("‹")
-	preset_prev.custom_minimum_size = Vector2(36.0, 36.0)
+	preset_prev.custom_minimum_size = Vector2(48.0, 48.0)
 	preset_prev.pressed.connect(_nudge_music_preset.bind(-1))
 	preset_row.add_child(preset_prev)
 	_music_preset = _menu_label("FLAT", 18, Color("f4efe4"), _font_head)
@@ -468,7 +791,7 @@ func _build_music_panel() -> void:
 	_music_preset.custom_minimum_size.x = 120.0
 	preset_row.add_child(_music_preset)
 	var preset_next := _garage_arrow("›")
-	preset_next.custom_minimum_size = Vector2(36.0, 36.0)
+	preset_next.custom_minimum_size = Vector2(48.0, 48.0)
 	preset_next.pressed.connect(_nudge_music_preset.bind(1))
 	preset_row.add_child(preset_next)
 	panel.add_child(preset_row)
@@ -476,6 +799,7 @@ func _build_music_panel() -> void:
 	_music_folder = Button.new()
 	_music_folder.text = "pick folder"
 	_music_folder.flat = true
+	_music_folder.custom_minimum_size = Vector2(0.0, 48.0)
 	_music_folder.alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_music_folder.focus_mode = Control.FOCUS_NONE
 	_music_folder.add_theme_font_override("font", _font_ui)
@@ -532,15 +856,15 @@ func _build_music_panel() -> void:
 	transport.alignment = BoxContainer.ALIGNMENT_END
 	transport.add_theme_constant_override("separation", 6)
 	var previous := _garage_arrow("‹")
-	previous.custom_minimum_size = Vector2(40.0, 40.0)
+	previous.custom_minimum_size = Vector2(48.0, 48.0)
 	previous.pressed.connect(_music_previous)
 	transport.add_child(previous)
 	_music_play = _garage_arrow("▶")
-	_music_play.custom_minimum_size = Vector2(48.0, 40.0)
+	_music_play.custom_minimum_size = Vector2(48.0, 48.0)
 	_music_play.pressed.connect(_music_toggle)
 	transport.add_child(_music_play)
 	var next := _garage_arrow("›")
-	next.custom_minimum_size = Vector2(40.0, 40.0)
+	next.custom_minimum_size = Vector2(48.0, 48.0)
 	next.pressed.connect(_music_next)
 	transport.add_child(next)
 	panel.add_child(transport)
@@ -673,7 +997,7 @@ func _build_garage(stack: VBoxContainer) -> void:
 	var bike_row := HBoxContainer.new()
 	bike_row.add_theme_constant_override("separation", 8)
 	var previous := _garage_arrow("‹")
-	previous.custom_minimum_size = Vector2(40.0, 48.0)
+	previous.custom_minimum_size = Vector2(48.0, 48.0)
 	previous.pressed.connect(_cycle_bike.bind(-1))
 	bike_row.add_child(previous)
 
@@ -692,7 +1016,7 @@ func _build_garage(stack: VBoxContainer) -> void:
 	bike_row.add_child(identity)
 
 	var next := _garage_arrow("›")
-	next.custom_minimum_size = Vector2(40.0, 48.0)
+	next.custom_minimum_size = Vector2(48.0, 48.0)
 	next.pressed.connect(_cycle_bike.bind(1))
 	bike_row.add_child(next)
 	stack.add_child(bike_row)
@@ -702,7 +1026,7 @@ func _build_garage(stack: VBoxContainer) -> void:
 	for category in BikeCatalog.TUNE_KEYS:
 		var tune := Button.new()
 		tune.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		tune.custom_minimum_size.y = 34.0
+		tune.custom_minimum_size.y = 48.0
 		tune.alignment = HORIZONTAL_ALIGNMENT_CENTER
 		tune.add_theme_font_override("font", _font_ui)
 		tune.add_theme_font_size_override("font_size", 12)
@@ -718,7 +1042,7 @@ func _build_garage(stack: VBoxContainer) -> void:
 func _garage_arrow(copy: String) -> Button:
 	var button := Button.new()
 	button.text = copy
-	button.custom_minimum_size = Vector2(44.0, 52.0)
+	button.custom_minimum_size = Vector2(48.0, 52.0)
 	button.add_theme_font_override("font", _font_display)
 	button.add_theme_font_size_override("font_size", 28)
 	button.add_theme_color_override("font_color", Color("f4efe4"))
@@ -808,7 +1132,7 @@ func _cycle_row(caption: String, value: Label, on_prev: Callable, on_next: Calla
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(label)
 	var previous := _garage_arrow("‹")
-	previous.custom_minimum_size = Vector2(36.0, 36.0)
+	previous.custom_minimum_size = Vector2(48.0, 48.0)
 	previous.pressed.connect(on_prev)
 	row.add_child(previous)
 	value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -816,7 +1140,7 @@ func _cycle_row(caption: String, value: Label, on_prev: Callable, on_next: Calla
 	value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(value)
 	var next := _garage_arrow("›")
-	next.custom_minimum_size = Vector2(36.0, 36.0)
+	next.custom_minimum_size = Vector2(48.0, 48.0)
 	next.pressed.connect(on_next)
 	row.add_child(next)
 	return row
@@ -870,6 +1194,7 @@ func _show_start_menu() -> void:
 	_clear_confirm_restart()
 	hud_root.visible = false
 	_start_menu.visible = true
+	_update_drive_pads()
 	if not _ride_started:
 		_park_on_road()
 	_preview_mood()
@@ -906,16 +1231,24 @@ func _show_initial_menu() -> void:
 		_show_start_menu()
 		# Web players almost certainly arrived at a host's address — put the
 		# join box on the table instead of hiding it behind a menu fold.
-		if _touch_controls_wanted() and _race_panel and not _race_panel.visible:
+		if _race_panel and not _race_panel.visible and _invite_layout():
 			_race_panel.visible = true
 			_refresh_race_panel()
-			call_deferred("_layout_start_menu")
+			call_deferred("_focus_race_panel")
+		if _net and _net.auto_join:
+			_net.auto_join = false
+			_race_panel.visible = true
+			_refresh_race_panel()
+			_on_join_pressed()
 
 
 func _focus_race_panel() -> void:
 	if _menu_scroll == null or _race_panel == null or not _race_panel.visible:
 		return
-	_menu_scroll.ensure_control_visible(_race_panel)
+	if _join_button:
+		_menu_scroll.ensure_control_visible(_join_button)
+	elif _name_edit:
+		_menu_scroll.ensure_control_visible(_name_edit)
 
 
 func _layout_start_menu() -> void:
@@ -923,13 +1256,18 @@ func _layout_start_menu() -> void:
 		return
 	var viewport_size := get_viewport().get_visible_rect().size
 	var narrow := viewport_size.x < 760.0
-	var margin := 24.0 if narrow else 40.0
+	var margin := 16.0 if narrow else 40.0
+	var keyboard := 0.0
+	if DisplayServer.has_feature(DisplayServer.FEATURE_VIRTUAL_KEYBOARD):
+		keyboard = float(DisplayServer.virtual_keyboard_get_height())
 	var panel_width := maxf(1.0, minf(440.0, viewport_size.x - margin * 2.0))
-	var panel_height := maxf(1.0, viewport_size.y - 72.0)
+	var panel_height := maxf(1.0, viewport_size.y - 56.0 - keyboard)
 	_menu_scroll.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	_menu_scroll.position = Vector2(margin, 36.0)
+	_menu_scroll.position = Vector2(margin, 28.0)
 	_menu_scroll.size = Vector2(panel_width, panel_height)
-	_menu_stack.custom_minimum_size.x = panel_width
+	_menu_stack.custom_minimum_size.x = maxf(1.0, panel_width - 16.0)
+	if _menu_title:
+		_menu_title.add_theme_font_size_override("font_size", 52 if narrow else 78)
 	var music := _start_menu.get_node_or_null("MusicPanel") as Control
 	if music:
 		music.visible = not narrow
@@ -938,6 +1276,8 @@ func _layout_start_menu() -> void:
 func _start_ride() -> void:
 	if _start_menu == null or not _start_menu.visible:
 		return
+	if _net and (_net.online() or _net.state == "connecting"):
+		_leave_lobby()
 	_set_hero_view(false)
 	if _game and not _game.select_bike(_bike_index):
 		_set_hero_view(true)
@@ -957,6 +1297,7 @@ func _start_ride() -> void:
 	get_tree().paused = false
 	_hint = 6.0
 	hint_label.text = _ride_hint()
+	_update_drive_pads()
 
 
 func _load_type() -> void:
@@ -1021,7 +1362,7 @@ func _input(event: InputEvent) -> void:
 		if _touch_controls == null:
 			_build_touch_controls()
 			return
-		if not _touch_controls.visible or not _ride_started or _touch_steer == null:
+		if not _touch_controls.visible or not _ride_started or _touch_steer == null or _touch_drive_blocked():
 			return
 		if event.pressed:
 			if _touch_steer_pointer == -1 and _touch_steer.get_global_rect().has_point(event.position):
@@ -1072,7 +1413,7 @@ func _build_touch_controls() -> void:
 	_touch_controls = Control.new()
 	_touch_controls.name = "TouchControls"
 	_touch_controls.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_touch_controls.mouse_filter = Control.MOUSE_FILTER_PASS
+	_touch_controls.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_touch_controls.z_index = 20
 	_touch_controls.hidden.connect(_release_touch_actions)
 	hud_root.add_child(_touch_controls)
@@ -1088,6 +1429,7 @@ func _build_touch_controls() -> void:
 	_touch_controls.add_child(_touch_steer)
 
 	var track := ColorRect.new()
+	track.name = "SteerTrack"
 	track.position = Vector2(24.0, 79.0)
 	track.size = Vector2(maxf(_touch_steer.size.x - 48.0, 84.0), 3.0)
 	track.color = Color(0.90, 0.68, 0.42, 0.38)
@@ -1102,9 +1444,11 @@ func _build_touch_controls() -> void:
 	_touch_steer.add_child(_touch_steer_thumb)
 
 	var pedals := VBoxContainer.new()
+	pedals.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pedals.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT, Control.PRESET_MODE_MINSIZE, 24)
 	pedals.add_theme_constant_override("separation", 10)
 	var pedal_top := HBoxContainer.new()
+	pedal_top.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pedal_top.alignment = BoxContainer.ALIGNMENT_END
 	pedal_top.add_theme_constant_override("separation", 10)
 	var auto_gas := _menu_label("AUTO GAS", 13, Color(0.56, 0.82, 0.48, 0.9), _font_kicker)
@@ -1115,16 +1459,17 @@ func _build_touch_controls() -> void:
 	pedal_top.add_child(horn)
 	pedals.add_child(pedal_top)
 	var brake_width := 164.0 if not narrow else maxf(120.0, viewport_width * 0.34)
-	var brake := _hold_pad("BRAKE", &"brake", Vector2(brake_width, 116.0), 23)
-	brake.size_flags_horizontal = Control.SIZE_SHRINK_END
-	pedals.add_child(brake)
+	_touch_brake = _hold_pad("BRAKE", &"brake", Vector2(brake_width, 116.0), 23)
+	_touch_brake.size_flags_horizontal = Control.SIZE_SHRINK_END
+	pedals.add_child(_touch_brake)
 	_touch_controls.add_child(pedals)
 
-	var menu := _pad("MENU", Vector2(112.0, 48.0), 16)
-	menu.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	menu.position = Vector2(24.0, 88.0)
-	menu.pressed.connect(_on_touch_menu)
-	_touch_controls.add_child(menu)
+	_touch_menu_button = _pad("MENU", Vector2(112.0, 48.0), 16)
+	_touch_menu_button.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_touch_menu_button.position = Vector2(24.0, 88.0)
+	_touch_menu_button.pressed.connect(_on_touch_menu)
+	_touch_controls.add_child(_touch_menu_button)
+	_layout_touch_controls()
 
 
 func _pad(copy: String, pad_size: Vector2, font_size: int) -> Button:
@@ -1179,7 +1524,8 @@ func _release_touch_actions() -> void:
 
 
 func _on_touch_menu() -> void:
-	_countdown_left = -1.0
+	if _countdown_left > 0.0:
+		return
 	if _game and _game.in_race():
 		_set_paused(not get_tree().paused)
 	else:
@@ -1335,23 +1681,35 @@ func _build_race_panel(stack: VBoxContainer) -> void:
 	_race_panel.add_child(_menu_label("HOST ONCE · FRIENDS OPEN THE LINK · READY · START", 14, Color("e8b089"), _font_head))
 
 	_race_status = _menu_label("STEP 1 · JOIN OR HOST A LOBBY", 13, Color("9a9588"), _font_kicker)
+	_race_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_race_panel.add_child(_race_status)
 
 	_race_panel.add_child(_menu_label("RIDER NAME", 11, Color("9a9588"), _font_kicker))
 	_name_edit = _race_edit("your name")
+	_name_edit.max_length = 16
 	_race_panel.add_child(_name_edit)
-	_race_panel.add_child(_menu_label("RACE SERVER ADDRESS", 11, Color("9a9588"), _font_kicker))
+	_address_fold = _menu_button("CHANGE ADDRESS  ›", 13)
+	_address_fold.custom_minimum_size = Vector2(0.0, 48.0)
+	_address_fold.pressed.connect(_toggle_address_fold)
+	_race_panel.add_child(_address_fold)
+	_address_caption = _menu_label("RACE SERVER ADDRESS", 11, Color("9a9588"), _font_kicker)
+	_address_caption.visible = false
+	_race_panel.add_child(_address_caption)
 	_server_edit = _race_edit("ws://your-host:8001")
+	_server_edit.max_length = 96
+	_server_edit.visible = false
 	_race_panel.add_child(_server_edit)
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	_join_button = _accent_button("JOIN", 17)
+	_join_button.name = "JoinRace"
 	_join_button.custom_minimum_size = Vector2(0.0, 50.0)
 	_join_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_join_button.pressed.connect(_on_join_pressed)
 	row.add_child(_join_button)
 	_ready_button = _menu_button("READY", 17)
+	_ready_button.name = "ReadyRace"
 	_ready_button.custom_minimum_size = Vector2(0.0, 50.0)
 	_ready_button.pressed.connect(_on_ready_pressed)
 	_ready_button.visible = false
@@ -1363,6 +1721,7 @@ func _build_race_panel(stack: VBoxContainer) -> void:
 	_race_panel.add_child(_lobby_label)
 
 	_race_start_button = _accent_button("WAITING FOR RIDER", 17)
+	_race_start_button.name = "StartRace"
 	_race_start_button.custom_minimum_size = Vector2(0.0, 50.0)
 	_race_start_button.visible = false
 	_race_start_button.pressed.connect(func() -> void:
@@ -1370,11 +1729,124 @@ func _build_race_panel(stack: VBoxContainer) -> void:
 			_net.request_start())
 	_race_panel.add_child(_race_start_button)
 
+	_share_label = _menu_label("", 13, Color("e8b55d"), _font_head)
+	_share_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_race_panel.add_child(_share_label)
+	if OS.has_feature("web"):
+		_copy_link_button = _menu_button("COPY GAME LINK", 15)
+		_copy_link_button.custom_minimum_size = Vector2(0.0, 48.0)
+		_copy_link_button.pressed.connect(_copy_game_link)
+		_race_panel.add_child(_copy_link_button)
 	var host := _menu_label(
-		"HOST: run SplendorServer and share http://your-address:8000. Friends open that link, choose a name, and tap JOIN RACE.",
+		"HOST: run ./play_with_friends.sh — friends join the same Wi-Fi, then open the link it shows.",
 		12, Color("9a9588"), _font_ui)
 	host.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_race_panel.add_child(host)
+
+
+func _toggle_address_fold() -> void:
+	var show := not _server_edit.visible
+	_server_edit.visible = show
+	_address_caption.visible = show
+	_address_fold.text = "HIDE ADDRESS  ›" if show else "CHANGE ADDRESS  ›"
+
+
+func _is_local_host(host: String) -> bool:
+	return host == "localhost" or host.ends_with(".localhost") \
+		or host.begins_with("127.") or host == "::1" or host == "[::1]"
+
+
+func _share_iface_blocked(iface_name: String) -> bool:
+	for bad in ["lo", "docker", "br-", "veth", "virbr", "tailscale", "ts"]:
+		if iface_name.begins_with(bad):
+			return true
+	return false
+
+
+func _share_link() -> String:
+	if OS.has_feature("web"):
+		var bridge := Engine.get_singleton("JavaScriptBridge")
+		if bridge == null:
+			return ""
+		var host := str(bridge.eval("location.hostname"))
+		var proto := str(bridge.eval("location.protocol"))
+		if _is_local_host(host) or (proto != "http:" and proto != "https:"):
+			return ""
+		var authority := "[%s]" % host if host.contains(":") else host
+		var port := str(bridge.eval("location.port"))
+		if not port.is_empty():
+			authority += ":" + port
+		return "%s//%s%s" % [proto, authority, str(bridge.eval("location.pathname"))]
+	if _net == null:
+		return ""
+	var url: String = _net.normalize_server_url(str(_net.server_url))
+	if url.is_empty():
+		return ""
+	var rest := url.substr(url.find("://") + 3)
+	rest = rest.get_slice("/", 0).get_slice("?", 0).get_slice("#", 0)
+	var host := rest
+	var ws_port := 8001
+	if rest.begins_with("["):
+		var close := rest.find("]")
+		if close < 0:
+			return ""
+		host = rest.substr(1, close - 1)
+		var after := rest.substr(close + 1)
+		if after.begins_with(":") and after.substr(1).is_valid_int():
+			ws_port = int(after.substr(1))
+	elif rest.contains(":"):
+		host = rest.get_slice(":", 0)
+		if rest.get_slice(":", 1).is_valid_int():
+			ws_port = int(rest.get_slice(":", 1))
+	var http_port := ws_port - 1
+	if http_port <= 0:
+		return ""
+	if not _is_local_host(host) and not host.is_empty():
+		var out_host := "[%s]" % host if host.contains(":") else host
+		return "http://%s:%d" % [out_host, http_port]
+	for iface in IP.get_local_interfaces():
+		if _share_iface_blocked(str(iface.get("name", ""))):
+			continue
+		for a in iface.get("addresses", []):
+			var addr := str(a)
+			if addr.count(".") == 3 and not addr.begins_with("127.") \
+					and not addr.begins_with("169.254."):
+				return "http://%s:%d" % [addr, http_port]
+	return ""
+
+
+func _copy_game_link() -> void:
+	var link := _share_link()
+	if link.is_empty():
+		_race_status.text = "HOLD THE BROWSER ADDRESS TO COPY THE GAME LINK."
+		return
+	if OS.has_feature("web"):
+		var bridge := Engine.get_singleton("JavaScriptBridge")
+		var secure := bridge != null and bool(bridge.eval(
+			"window.isSecureContext && !!(navigator.clipboard && navigator.clipboard.writeText)"))
+		if not secure:
+			_race_status.text = "HOLD THE BROWSER ADDRESS TO COPY THE GAME LINK."
+			return
+		bridge.eval("navigator.clipboard.writeText(%s)" % JSON.stringify(link))
+		_race_status.text = "LINK COPIED — SEND IT TO YOUR FRIENDS"
+		return
+	DisplayServer.clipboard_set(link)
+	_race_status.text = "LINK COPIED — SEND IT TO YOUR FRIENDS"
+
+
+func _update_share_label() -> void:
+	if _share_label == null:
+		return
+	var link := _share_link()
+	if _copy_link_button:
+		_copy_link_button.visible = not link.is_empty()
+	if link.is_empty():
+		if OS.has_feature("web"):
+			_share_label.text = "THIS DEVICE ONLY — FRIENDS USE THE LINK FROM ./play_with_friends.sh"
+		else:
+			_share_label.text = "FRIENDS USE THE LINK SHOWN BY ./play_with_friends.sh"
+		return
+	_share_label.text = "FRIENDS OPEN  %s" % link
 
 
 func _refresh_race_panel() -> void:
@@ -1386,17 +1858,40 @@ func _refresh_race_panel() -> void:
 	if url == "ws://127.0.0.1:8001" and suggested != url:
 		url = suggested # browser page came from the host — use its hostname
 	_server_edit.text = url
+	_update_share_label()
 	_sync_race_widgets()
+
+
+func _net_error_message(state: String) -> String:
+	match state.trim_prefix("error:"):
+		"refused":
+			return "NO LOBBY THERE — THE HOST RUNS ./play_with_friends.sh · SAME WI-FI"
+		"timeout":
+			return "NO ANSWER — CHECK YOU ARE ON THE HOST'S WI-FI"
+		"lost":
+			return "CONNECTION LOST — TAP JOIN TO REJOIN"
+		"invalid_address":
+			return "THAT ADDRESS DOESN'T WORK — PASTE THE GAME LINK"
+		_:
+			return "CONNECTION PROBLEM — TRY AGAIN"
 
 
 func _sync_race_widgets() -> void:
 	var online: bool = _net != null and _net.online()
 	var connecting: bool = _net != null and _net.state == "connecting"
-	_join_button.text = "LEAVE LOBBY" if online else "JOIN RACE"
-	_join_button.disabled = connecting
+	if online:
+		_join_button.text = "LEAVE LOBBY"
+	elif connecting:
+		_join_button.text = "CANCEL"
+	elif _net != null and str(_net.state).begins_with("error:"):
+		_join_button.text = "RETRY"
+	else:
+		_join_button.text = "JOIN RACE"
+	_join_button.disabled = false
 	_name_edit.editable = not online and not connecting
 	_server_edit.editable = not online and not connecting
 	if not online:
+		_ready_pending = false
 		_race_toggle.text = "PLAY WITH FRIENDS"
 		_ready_button.visible = false
 		_race_start_button.visible = false
@@ -1404,7 +1899,8 @@ func _sync_race_widgets() -> void:
 		if connecting:
 			_race_status.text = "CONNECTING TO RACE SERVER..."
 		elif _net != null and str(_net.state).begins_with("error:"):
-			_race_status.text = "COULDN'T CONNECT · CHECK THE ADDRESS"
+			_race_status.text = _net_error_message(str(_net.state))
+			_race_status.add_theme_color_override("font_color", Color("d98078"))
 		else:
 			_race_status.text = "STEP 1 · JOIN OR HOST A LOBBY"
 		return
@@ -1427,12 +1923,14 @@ func _update_lobby_state() -> void:
 		if int(id) == _net.leader_id:
 			leader_name = str(p.get("name", "the leader")).to_upper()
 	_ready_state = own_ready
+	_ready_pending = false
 	var is_leader: bool = _net.my_id >= 0 and _net.my_id == _net.leader_id
 	var in_lobby: bool = _net.phase == "lobby"
 	var all_ready := total >= 2 and ready_count == total
 	_race_toggle.text = "RACE LOBBY · %d" % total
 	_ready_button.visible = in_lobby
-	_ready_button.text = "READY ✓" if own_ready else "READY"
+	_ready_button.text = "READY"
+	_ready_button.disabled = _ready_pending
 	_race_start_button.visible = is_leader and in_lobby
 	_race_start_button.disabled = not all_ready
 	if total < 2:
@@ -1467,22 +1965,22 @@ func _update_lobby_state() -> void:
 func _on_join_pressed() -> void:
 	if _net == null:
 		return
-	if _net.online():
+	if _net.online() or _net.state == "connecting":
 		_leave_lobby()
 		return
 	var server := _server_edit.text.strip_edges()
 	var rider := _name_edit.text.strip_edges()
 	if server.is_empty():
-		_race_status.text = "ENTER THE RACE SERVER ADDRESS"
-		return
-	if rider.is_empty():
-		_race_status.text = "ENTER A RIDER NAME"
+		_race_status.text = "PASTE THE GAME LINK OR SERVER ADDRESS"
+		if not _server_edit.visible:
+			_toggle_address_fold()
 		return
 	_net.connect_to(server, rider)
 
 
 func _leave_lobby() -> void:
 	_ready_state = false
+	_ready_pending = false
 	if _net:
 		_net.leave()
 	if _game:
@@ -1493,22 +1991,37 @@ func _leave_lobby() -> void:
 
 
 func _on_ready_pressed() -> void:
-	_ready_state = not _ready_state
-	if _net:
-		_net.set_ready(_ready_state)
-	_ready_button.text = "READY ✓" if _ready_state else "READY"
-	if _ready_state:
-		_race_status.text = "READY SENT · WAITING FOR THE LOBBY"
+	if _net == null or not _net.online() or _ready_pending:
+		return
+	_ready_pending = true
+	_ready_button.disabled = true
+	_net.set_ready(not _ready_state)
+	_race_status.text = "READY SENT · WAITING FOR THE LOBBY"
 
 
 func _on_conn_state(state: String) -> void:
 	_sync_race_widgets()
-	if state != "online":
-		_ready_state = false
-		if _ready_button:
-			_ready_button.text = "READY"
-		if _game and _game.in_race():
-			_game.end_race()
+	if state == "online":
+		_was_online = true
+		return
+	if not _was_online:
+		return
+	_was_online = false
+	_ready_state = false
+	_ready_pending = false
+	if _ready_button:
+		_ready_button.text = "READY"
+		_ready_button.disabled = false
+	_countdown_left = -1.0
+	_release_touch_actions()
+	if _game and _game.in_race():
+		_game.end_race()
+	_results_panel.visible = false
+	_show_start_menu()
+	if _race_panel:
+		_race_panel.visible = true
+		_refresh_race_panel()
+		call_deferred("_focus_race_panel")
 
 
 func _on_lobby(list: Array, my_id: int, leader_id: int, phase: String) -> void:
@@ -1530,6 +2043,7 @@ func _on_race_starting(seed: int, delay_s: float, dist: float) -> void:
 	_race_dist = dist
 	_my_finish_place = 0
 	_ready_state = false
+	_release_touch_actions()
 	if _ready_button:
 		_ready_button.text = "READY"
 	_results_panel.visible = false
@@ -1541,12 +2055,15 @@ func _on_race_starting(seed: int, delay_s: float, dist: float) -> void:
 	_clear_confirm_restart()
 	if _game:
 		_game.select_bike(_bike_index)
-		_game.begin_race(seed)
+		# Each client takes its own lane on the grid: a shared start line with
+		# rider collisions on was a pile-up at the green light.
+		_game.begin_race(seed, _net.start_slot() if _net else Vector2i(0, 1))
 	_ride_started = true
 	get_tree().paused = true # restart() unpauses; hold everyone on the lights
 	hint_label.text = "RACE TO %.1f KM · FIRST RIDER TO THE FINISH" % (dist / 1000.0)
 	_hint = delay_s + 0.5
 	_countdown_left = maxf(delay_s, 0.01)
+	_update_drive_pads()
 	_update_race_pos()
 
 
@@ -1568,6 +2085,7 @@ func _tick_countdown(delta: float) -> void:
 		_flash = 0.55
 		hint_label.text = "RACE LIVE · %d M TO THE FINISH" % int(_race_dist)
 		_hint = 2.0
+		_update_drive_pads()
 
 
 func _on_race_finish(id: int, place: int) -> void:
@@ -1586,6 +2104,7 @@ func _on_race_finish(id: int, place: int) -> void:
 
 
 func _on_race_results(order: Array) -> void:
+	_countdown_left = -1.0
 	if _game:
 		_game.end_race()
 	_my_finish_place = 0
@@ -1606,6 +2125,7 @@ func _on_race_results(order: Array) -> void:
 		_race_hud_card.visible = false
 	get_tree().paused = true
 	pause_panel.visible = false
+	_update_drive_pads()
 	_update_race_pos()
 
 
@@ -1721,10 +2241,17 @@ func _build_race_hud() -> void:
 	var results_box := VBoxContainer.new()
 	results_box.add_theme_constant_override("separation", 14)
 	_results_panel.add_child(results_box)
+	_results_scroll = ScrollContainer.new()
+	_results_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_results_scroll.custom_minimum_size = Vector2(320.0, 200.0)
+	results_box.add_child(_results_scroll)
 	_results_label = _menu_label("", 19, Color("f4efe4"), _font_head)
-	results_box.add_child(_results_label)
+	_results_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_results_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_results_scroll.add_child(_results_label)
 	_results_button = _accent_button("BACK TO RACE LOBBY", 17)
-	_results_button.custom_minimum_size = Vector2(0.0, 42.0)
+	_results_button.name = "Rematch"
+	_results_button.custom_minimum_size = Vector2(0.0, 48.0)
 	_results_button.pressed.connect(_return_to_race_lobby)
 	results_box.add_child(_results_button)
 	_results_panel.visible = false
@@ -1736,3 +2263,4 @@ func _return_to_race_lobby() -> void:
 	_show_start_menu()
 	_race_panel.visible = true
 	_refresh_race_panel()
+	call_deferred("_focus_race_panel")
