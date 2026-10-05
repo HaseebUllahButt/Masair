@@ -10,6 +10,7 @@ signal currency_changed(balance: int)
 signal garage_changed
 
 const BikeCatalog := preload("res://scripts/bike_catalog.gd")
+const RoadPathGD := preload("res://scripts/road_path.gd")
 const SAVE_PATH := "user://splendor_save.cfg"
 const COMBO_WINDOW := 2.6
 const CREDIT_DISTANCE := 70.0
@@ -38,6 +39,8 @@ var _progress_dirty: bool = false
 var _save_cooldown: float = 0.0
 var persist_progress: bool = true
 var race_seed: int = -1 ## >= 0 while a shared-road race is live
+## This rider's place on the start grid: x = slot, y = riders in the race.
+var race_grid := Vector2i(0, 1)
 
 
 func _ready() -> void:
@@ -159,6 +162,12 @@ func restart() -> void:
 			path.call("randomize_world")
 	if _player and _player.has_method("reset_run"):
 		_player.call("reset_run")
+		# Racers take separate lanes. Every bike used to start on the centreline
+		# at kilometre zero, and since riders crash into each other the field
+		# killed itself the moment the start-line grace ran out.
+		if in_race():
+			var max_lateral: float = float(_player.get("max_lateral"))
+			_player.set("lateral", grid_lateral(race_grid.x, race_grid.y, max_lateral))
 	if scene:
 		var streamer := scene.get_node_or_null("RoadStreamer")
 		if streamer and streamer.has_method("reset_world"):
@@ -180,13 +189,27 @@ func in_race() -> bool:
 	return race_seed >= 0
 
 
-func begin_race(seed: int) -> void:
+func begin_race(seed: int, grid := Vector2i(0, 1)) -> void:
 	race_seed = seed
+	race_grid = grid
 	restart()
 
 
 func end_race() -> void:
 	race_seed = -1
+	race_grid = Vector2i(0, 1)
+
+
+static func grid_lateral(slot: int, count: int, max_lateral: float) -> float:
+	## Start position across the road for grid slot `slot` of `count`. One lane
+	## apart while the field fits the lanes, then spread evenly over the road,
+	## always the same distance from the line so nobody starts ahead. Every
+	## client sorts the same lobby, so the grid is identical everywhere.
+	if count <= 1:
+		return 0.0
+	var lane: float = RoadPathGD.HALF_WIDTH * 2.0 / float(RoadPathGD.LANE_COUNT)
+	var span: float = minf(lane * float(count - 1), 2.0 * maxf(max_lateral - 0.5, 0.0))
+	return -span * 0.5 + span * float(clampi(slot, 0, count - 1)) / float(count - 1)
 
 
 func bank_progress() -> void:
