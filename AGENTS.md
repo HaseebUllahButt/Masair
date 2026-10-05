@@ -54,3 +54,11 @@ You have GodotIQ MCP tools (`godotiq_*`). ALWAYS prefer them over raw file opera
 
 **Full reference:** `GODOTIQ_RULES.md` in the project root — read the relevant section before non-trivial work (3D building patterns, Godot quirks, verification recipes, spatial validation, per-tool reference).
 <!-- GODOTIQ RULES END -->
+
+## Multiplayer checks
+
+- Local host entry point: `./play_with_friends.sh`; defaults to the current Wi-Fi without starting a hotspot.
+- Run `godot --headless --path . --script res://tests/test_multiplayer.gd` and `godot --headless --path . --script res://tests/test_mobile_ui.gd` for networking and touch-layout changes.
+- Restart the host after a web export: compressed web files are refreshed at server startup.
+- Keep generated files under `build/` out of export presets; Godot can otherwise include test snapshots and screenshots in the game.
+
