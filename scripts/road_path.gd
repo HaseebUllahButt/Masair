@@ -676,13 +676,24 @@ func _crest_line(z: float, centre: float) -> float:
 	## pier, not a point. Instead the top is lens-shaped like the basin itself:
 	## full width opposite the platform, tailing away along the shore each way,
 	## with a wander so the edge is a coastline rather than a french curve.
-	var u := clampf(absf(z - centre) / LAKE_SPAN, 0.0, 1.0)
+	##
+	## And past the end of the water the top closes to nothing. `u` used to
+	## clamp at one, which left the tail a constant-width bench running on
+	## past the lake — a flat strip ending at a straight edge wherever the
+	## basin shaping faded. A point pinches out: the lip converges on the
+	## shore as the nose sinks.
+	var u := absf(z - centre) / LAKE_SPAN
 	var point := sqrt(maxf(1.0 - u * u, 0.0))
-	return (
-		HEADLAND_INNER
-		+ (HEADLAND_CREST - HEADLAND_INNER) * (0.32 + 0.68 * point)
-		+ 7.0 * sin(z * 0.017 + _terrain_phase * 0.9)
-	)
+	var tail := 1.0 - smoothstep(1.0, 1.45, u)
+	# A straight-sided taper still reads as a drawn cone. `tail * (1 - tail)`
+	# peaks halfway down the fade and vanishes at both ends, so it bulges the
+	# nose into a shoulder — a last spur standing proud before the tip —
+	# instead of a ruler line to the water.
+	var shoulder := tail * (1.0 - tail) * 4.0
+	var width: float = (HEADLAND_CREST - HEADLAND_INNER) * ((0.32 + 0.68 * point) * tail + 0.09 * shoulder)
+	# And the point is a knoll, not a needle: a floor on the width leaves a
+	# blunt rounded tip where the two faces would otherwise meet in a tent.
+	return HEADLAND_INNER + maxf(width, 14.0) + 7.0 * sin(z * 0.017 + _terrain_phase * 0.9) * tail
 
 
 func headland_rise(z: float, out: float) -> float:
@@ -696,8 +707,13 @@ func headland_rise(z: float, out: float) -> float:
 	# the top a back rather than a mesa, held off the platform so the made
 	# ground the terrace stands on is not undermined beside the parapet.
 	var along := 1.0 - smoothstep(PLATFORM_HALF_LENGTH + 80.0, LAKE_SPAN + 100.0, distance)
+	# And the last of it dives under the water entirely. The 0.35 floor kept the
+	# tail an eleven-metre bench the whole way past the end of the lake, so the
+	# nose never actually met the water — it just stopped where the basin mask
+	# faded, which is the cut the seated rider sees looking back along the rail.
+	var dive := 1.0 - smoothstep(LAKE_SPAN, LAKE_SPAN + 170.0, distance)
 	var sway := 1.0 + 0.14 * sin(z * 0.021 + _terrain_phase * 1.3) * smoothstep(50.0, 150.0, distance)
-	return HEADLAND_RISE * (0.35 + 0.65 * along) * sway * smoothstep(HEADLAND_INNER, _crest_line(z, centre), out)
+	return HEADLAND_RISE * (0.35 + 0.65 * along) * dive * sway * smoothstep(HEADLAND_INNER, _crest_line(z, centre), out)
 
 
 func spur_lift(z: float, lateral: float) -> float:
@@ -800,7 +816,11 @@ func viewpoint_far_shore(z: float, centre_z: float) -> float:
 		# A country waterway winds between meadows; it is narrower than the
 		# open lakes so the peninsula and its far pasture remain the subject.
 		far = near + 200.0
-	var shoreline: float = near + (far - near) * (0.25 + 0.75 * lens)
+	# And the bay closes: the lens used to bottom out at a quarter of its span,
+	# so past the end of the lake the far shore still held a channel's width of
+	# open water and the bank running on it ended as an island. Pinch it right
+	# down instead — the shores meet where the water does.
+	var shoreline: float = near + (far - near) * (0.08 + 0.92 * lens)
 	shoreline += 26.0 * sin(z * 0.0085 + _terrain_phase * 1.7)
 	var landform: float = 0.0
 	match theme_id:
@@ -821,9 +841,11 @@ func viewpoint_far_shore(z: float, centre_z: float) -> float:
 			landform += 78.0 * exp(-pow((along - 0.42) / 0.36, 2.0))
 			landform += 16.0 * sin(along * 5.0 + 0.4)
 	shoreline += landform * lens
-	# Leave enough water across the narrowest point and a complete far bank
-	# inside the authored terrain. The spur and its near shore are untouched.
-	return clampf(shoreline, near + 70.0, VIEWPOINT_OUTER - FAR_BANK - 60.0)
+	# Leave enough water across the narrowest point — inside the lake. At the
+	# end the same floor held the channel open; let it relax to a creek's
+	# width so the bay is allowed to shut.
+	var min_span: float = lerpf(16.0, 70.0, smoothstep(0.0, 0.15, lens))
+	return clampf(shoreline, near + min_span, VIEWPOINT_OUTER - FAR_BANK - 60.0)
 
 
 func viewpoint_reserves(z: float, lateral: float) -> bool:
@@ -858,14 +880,22 @@ func _viewpoint_terrain_drop(z: float, lateral: float, base: float) -> float:
 	# The spur reaches further along the route than the basin does, and the ground
 	# it is built on has to be flattened for all of it — cut this off at the lake
 	# and the last stretch of ramp floats over unmade hillside.
-	if distance > maxf(LAKE_SPAN + 70.0, SPUR_HALF_SPAN):
+	if distance > maxf(LAKE_SPAN * 1.55, SPUR_HALF_SPAN):
 		return base
 	var drop := base
 	if lateral * viewpoint_side_for(centre) > 0.0:
 		var out := absf(lateral)
 		if out > HEADLAND_INNER:
+			# Two fades, not one. The far bank still lets go where the water
+			# does, which is the taper `_far_scree_rise` draws; but the near
+			# headland has to keep its shaping out to the drowned tip of the
+			# point — letting go at the lake's end was what left the tail
+			# standing as a smooth mound in the middle of the water.
+			var basin_fade := 1.0 - smoothstep(LAKE_SPAN * 0.72, LAKE_SPAN + 65.0, distance)
+			var tail_fade := 1.0 - smoothstep(LAKE_SPAN * 1.2, LAKE_SPAN * 1.5, distance)
+			var across := smoothstep(viewpoint_near_shore(z) + 10.0, viewpoint_near_shore(z) + 90.0, out)
 			var mask := (
-				(1.0 - smoothstep(LAKE_SPAN * 0.72, LAKE_SPAN + 65.0, distance))
+				lerpf(tail_fade, basin_fade, across)
 				* smoothstep(HEADLAND_INNER, HEADLAND_INNER + 14.0, out)
 				* (1.0 - smoothstep(VIEWPOINT_OUTER, VIEWPOINT_OUTER + 90.0, out))
 			)
@@ -892,9 +922,15 @@ func _viewpoint_land_drop(z: float, out: float, centre_z: float) -> float:
 	# with the plan taper — the flat top is wide opposite the platform and
 	# pinches to a tail each way, and the face hangs off that moving edge.
 	var crest_line := _crest_line(z, centre_z)
-	var crest := -headland_rise(z, crest_line)
+	# Past the lake the point does not stop at a road-high knoll standing in
+	# the water — an island dune is the same fake cone all over again. The
+	# whole profile, lip and face together, keeps sliding down until the
+	# surface is the water: a spit at the waterline with the bay closing
+	# over it. Sinking the top alone left the face at road height — the dome.
+	var under := smoothstep(LAKE_SPAN * 0.92, LAKE_SPAN * 1.4, absf(z - centre_z))
+	var crest := lerpf(-headland_rise(z, crest_line), water + 0.5, under)
 	if out <= crest_line:
-		return -headland_rise(z, out)
+		return lerpf(-headland_rise(z, out), water + 0.5, under)
 	if out <= near:
 		# The face: from the crest down past the waterline. It goes over the edge
 		# steeply and eases into the shore, rather than the other way round —

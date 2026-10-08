@@ -24,8 +24,8 @@ func _initialize() -> void:
 	root.add_child(scene)
 	var cap := Capture.new()
 	cap.out_dir = opts.get("out", DEFAULT_OUT)
-	cap.shots = int(opts.get("shots", 6))
-	cap.gap = float(opts.get("gap", 4.0))
+	cap.shots = int(opts.get("shots", 8 if opts.has("sweep") else 6))
+	cap.gap = float(opts.get("gap", 1.0 if opts.has("sweep") else 4.0))
 	cap.warmup = float(opts.get("warmup", 2.5))
 	cap.mode = String(opts.get("mode", "dusk"))
 	cap.bench = opts.has("bench")
@@ -45,6 +45,10 @@ func _initialize() -> void:
 	cap.shot_name = String(opts.get("name", ""))
 	cap.nohud = opts.has("nohud")
 	cap.catalog = opts.has("catalog")
+	cap.sweep = opts.has("sweep")
+	cap.yaw = float(opts.get("yaw", 0.0))
+	cap.pitch = float(opts.get("pitch", 0.0))
+	cap.hide = String(opts.get("hide", ""))
 	cap.tree_ref = self
 	root.add_child(cap)
 
@@ -100,6 +104,16 @@ class Capture:
 	var nohud := false
 	## One boot, every rural biome on the road and seated at its first overlook.
 	var catalog := false
+	## Seated panorama: each shot turns the head another 45 degrees from --yaw,
+	## so one run photographs the whole ring around the bench. No steer input is
+	## ever pressed in a capture, so writing _seat_yaw directly is stable.
+	var sweep := false
+	## Seated head angles in degrees. Zero is the composed view off the rail.
+	var yaw := 0.0
+	var pitch := 0.0
+	## Comma-separated node names to hide — for telling one mesh's silhouette
+	## from another's when a shape cannot be traced back to its builder.
+	var hide: String = ""
 	var _catalog_jobs: Array[Dictionary] = []
 	var _cam: Camera3D
 	## Pin the world so a ride and a parked shot are of the same landscape. The
@@ -391,8 +405,8 @@ class Capture:
 			# Set the flag directly: _toggle_seat() would stand up if a previous
 			# catalog job already sat the rider down.
 			player.set("seated", true)
-			player.set("_seat_yaw", 0.0)
-			player.set("_seat_pitch", 0.0)
+			player.set("_seat_yaw", deg_to_rad(wrapf(yaw, -180.0, 180.0)))
+			player.set("_seat_pitch", deg_to_rad(pitch))
 		else:
 			player.set("seated", false)
 			look = "right" if side > 0.0 else "left"
@@ -434,6 +448,12 @@ class Capture:
 		elif _elapsed < warmup + gap * float(_taken):
 			return
 		_busy = true
+		if seated and sweep:
+			var player := get_tree().root.find_child("Player", true, false)
+			if player:
+				# The seat clamps yaw to [-PI, PI], so a full panorama must wrap
+				# the angle: feeding 225..315 raw clamps them all onto 180.
+				player.set("_seat_yaw", deg_to_rad(wrapf(yaw + _taken * 45.0, -180.0, 180.0)))
 		if seated:
 			# Stills of an overlook show its signature moment — the eagle on the
 			# water — not whichever lull the clock landed on.
@@ -466,10 +486,21 @@ class Capture:
 			Input.action_press("steer_left" if error > 0.0 else "steer_right")
 
 	func _shoot() -> void:
+		if hide != "":
+			for node_name in hide.split(","):
+				var node := get_tree().root.find_child(node_name.strip_edges(), true, false)
+				if node is Node3D:
+					(node as Node3D).visible = false
+		# Two frames: the one where the new seat yaw lands in _update_seat, and
+		# the one that is actually drawn. A single post_draw can race the rig.
+		await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw
 		var img := get_viewport().get_texture().get_image()
 		var stem := shot_name if shot_name != "" else mode
-		var path := "%s/%s.png" % [out_dir, stem] if shot_name != "" else "%s/%s_%02d.png" % [out_dir, stem, _taken]
+		var suffix := ""
+		if sweep:
+			suffix = "_y%03d" % int(round(fposmod(yaw + _taken * 45.0, 360.0)))
+		var path := "%s/%s%s.png" % [out_dir, stem, suffix] if shot_name != "" else "%s/%s%s_%02d.png" % [out_dir, stem, suffix, _taken]
 		img.save_png(path)
 		_ignore_next_frame = true
 		print("shot ", path)

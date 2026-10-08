@@ -1350,10 +1350,18 @@ func _face_mix(z: float, lateral: float) -> float:
 	# Broken along the route as well as down the slope, so it comes out as
 	# outcrop and gully instead of a stripe painted round the headland.
 	var grain: float = 0.5 + 0.5 * sin(z * 0.058 + out * 0.047) * sin(z * 0.019 - out * 0.021)
+	# And it belongs to the drop, not to the hill the ridge becomes past the
+	# end of the lake. Without this fade the whole tail kept its cliff paint
+	# and stood on the horizon as a smooth pale dune — the same fake cone the
+	# rock beds exist to kill. As the nose dives the paint recedes with it and
+	# the tail goes back to being green hillside.
+	var tail := 1.0 - smoothstep(
+		RoadPathGD.LAKE_SPAN, RoadPathGD.LAKE_SPAN * 1.45, absf(z - _vp_centre)
+	)
 	# The rock paint belongs to the steep face, not to the level made ground the
 	# terrace stands on — the lip shelf shares the face's lateral range, and
 	# painted flat it reads as a pale concrete apron hanging off the parapet.
-	return band * (0.3 + 0.7 * grain) * (1.0 - float(_path.spur_deck_blend(z, lateral)))
+	return band * (0.3 + 0.7 * grain) * (1.0 - float(_path.spur_deck_blend(z, lateral))) * tail
 
 
 func _face_color() -> Color:
@@ -4739,6 +4747,7 @@ func _dress_vista() -> void:
 	_build_far_bank_bands()
 	_build_far_bank_ground()
 	_build_vista_accent()
+	_dress_nose_tip()
 	match _vp_theme:
 		Env.FOREST:
 			_dress_vista_forest()
@@ -4746,6 +4755,38 @@ func _dress_vista() -> void:
 			_dress_vista_mountain()
 		_:
 			_dress_vista_country()
+
+
+func _dress_nose_tip() -> void:
+	## A real point is never bare: wind-battered pines and boulders cling to the
+	## spine and scree spills to the water. Bare of all of them the tail is the
+	## scarp's two flanks meeting in a smooth pale tent — the last smooth cone
+	## in the vista. A few pieces on the diving back break the silhouette no
+	## relief pass can; the water guards drop everything where the nose drowns.
+	for side: float in [-1.0, 1.0]:
+		for _i in 10:
+			var z: float = _vp_centre + side * _rng.randf_range(
+				RoadPathGD.LAKE_SPAN * 0.7, RoadPathGD.LAKE_SPAN * 1.45
+			)
+			var out: float = float(_path.headland_crest(z)) - _rng.randf_range(-6.0, 30.0)
+			if _height_above_water(z, out) < 2.5 or not _face_above_water(z, out, 0.8):
+				continue
+			if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.1:
+				continue
+			if _rng.randf() < 0.35:
+				_tree(
+					Flora.BROADLEAF if _vp_theme == Env.COUNTRY else Flora.CONIFER,
+					z,
+					_vp_side * out,
+					_rng.randf_range(6.0, 13.0),
+					Color("2c4036").lightened(_rng.randf() * 0.12),
+					true,
+					_face_ground_lift(z, out)
+				)
+			else:
+				_vista_rock(
+					z, _vp_side * out, _rng.randf_range(2.0, 6.5), _rng.randf_range(-0.4, 0.4) + _face_ground_lift(z, out)
+				)
 
 
 func _dress_vista_forest() -> void:
@@ -4943,8 +4984,16 @@ func _build_headland_face() -> void:
 	## seams, a grass lip on the brow and talus at the foot. A skin of quads
 	## stood a little proud of the rendered chord, stepped per stratum, gives
 	## all of that for a few hundred triangles.
-	var z0 := _vp_centre - 120.0
-	var z_span: float = 240.0
+	##
+	## It runs the length of the nose now, not just the patch under the seat.
+	## The skin used to stop dead ±110 m out while the face itself ran on for
+	## half a kilometre — a rock cliff that changed into a green curtain at a
+	## vertical line, which is the cut edge the left-looking rider sees. Where
+	## the nose finally dives under the water the face profile shortens to
+	## nothing and `_add_face_scarp` stops emitting on its own, so the skin
+	## ends where the land does.
+	var z0 := _vp_centre - RoadPathGD.LAKE_SPAN - 200.0
+	var z_span: float = RoadPathGD.LAKE_SPAN * 2.0 + 400.0
 	var b := LowPoly.new()
 	var pal := _face_scarp_palette()
 	var built := false
@@ -4964,8 +5013,8 @@ func _build_headland_face() -> void:
 
 
 func _build_headland_face_incremental() -> void:
-	var z0 := _vp_centre - 120.0
-	var z_span: float = 240.0
+	var z0 := _vp_centre - RoadPathGD.LAKE_SPAN - 200.0
+	var z_span: float = RoadPathGD.LAKE_SPAN * 2.0 + 400.0
 	var b := LowPoly.new()
 	var pal := _face_scarp_palette()
 	var built := false
@@ -5081,7 +5130,10 @@ func _scarp_relief(z: float, i: int, f: float) -> float:
 	var bed := float(posmod(hash(Vector2i(s * 37 + 11, int(round(z * 0.5)))), 997)) / 997.0
 	var under := -0.18 * float(i & 1)
 	var jit := 0.12 * sin(z * 1.13 + float(i) * 1.97)
-	return 0.18 + edge * (bed * 0.9 + under + jit)
+	# Craggier on the nose tail: out there the skin is the silhouette, and a
+	# metre of stratum is invisible — a rocky point wants blocks, not beds.
+	var crag := 1.0 + 1.7 * smoothstep(0.62, 1.3, absf(z - _vp_centre) / RoadPathGD.LAKE_SPAN)
+	return (0.18 + edge * (bed * 0.9 + under + jit)) * crag
 
 
 func _scarp_point(prof: Dictionary, z: float, i: int) -> Vector3:
@@ -5125,9 +5177,11 @@ func _scarp_color(pal: Dictionary, z: float, i: int, f: float) -> Color:
 
 
 func _add_face_scarp(b: LowPoly, za: float, zb: float, pal: Dictionary) -> bool:
-	## Only the drop under the rail. Running this the length of the lake put a
-	## paper wall along the water that the seated eye reads as cards.
-	if absf((za + zb) * 0.5 - _vp_centre) > 110.0:
+	## Wherever the nose still stands: the face profile goes empty where the
+	## headland has dived under the water, and that — not a fixed distance —
+	## is what ends the skin. Past the end of the basin nothing is emitted at
+	## all, so the loop bound in the callers only has to be generous.
+	if absf((za + zb) * 0.5 - _vp_centre) > RoadPathGD.LAKE_SPAN + 140.0:
 		return false
 	var prof_a := _face_profile(za)
 	var prof_b := _face_profile(zb)
@@ -5429,6 +5483,7 @@ func _build_far_ground() -> void:
 			color = Color("536535")
 	var inner: float = float(_path.viewpoint_far_shore(_vp_centre, _vp_centre)) + 50.0
 	var outer: float = inner + 720.0
+	var rises := _far_cliff_rises()
 	# 180 m across by 10 m along is a sliver, and a sliver split into two hard-
 	# normalled triangles shades as a herringbone rather than as a fold. Finer
 	# across the slope — where the height actually changes — squares the quads up
@@ -5440,6 +5495,13 @@ func _build_far_ground() -> void:
 		var zb := z0 + z_span * float(i + 1) / float(FAR_ZS)
 		var shift_a: float = _vp_side * (float(_path.viewpoint_far_shore(za, _vp_centre)) - float(_path.viewpoint_far_shore(_vp_centre, _vp_centre)))
 		var shift_b: float = _vp_side * (float(_path.viewpoint_far_shore(zb, _vp_centre)) - float(_path.viewpoint_far_shore(_vp_centre, _vp_centre)))
+		# Where the shore-side edge of this sheet meets the back of the drawn
+		# bank. The bank's own back row lands at forty-two percent of its height;
+		# a skirt edge standing any higher than that is a pale shelf hovering
+		# over whatever lies behind the bank — which at the diving ends of the
+		# lake is open water. Tuck it just under instead.
+		var cap_a: float = _vp_water_y + _far_scree_rise(za, rises.x, rises.y) * 0.42 + 0.35
+		var cap_b: float = _vp_water_y + _far_scree_rise(zb, rises.x, rises.y) * 0.42 + 0.35
 		for j in FAR_LS:
 			var out_a: float = lerpf(inner, outer, float(j) / float(FAR_LS))
 			var out_b: float = lerpf(inner, outer, float(j + 1) / float(FAR_LS))
@@ -5462,6 +5524,15 @@ func _build_far_ground() -> void:
 			ya1 = maxf(ya1, floor_y)
 			yb1 = maxf(yb1, floor_y)
 			yb0 = maxf(yb0, floor_y)
+			if j == 0:
+				# The inner edge is whichever vertex sits on `inner`: on the
+				# road's right that is the a corner, mirrored it is the b one.
+				if _vp_side > 0.0:
+					ya0 = minf(ya0, cap_a)
+					yb0 = minf(yb0, cap_b)
+				else:
+					ya1 = minf(ya1, cap_a)
+					yb1 = minf(yb1, cap_b)
 			var patch := _far_field_color(color, i, j)
 			_range_quad_lit(
 				b,
@@ -5568,6 +5639,7 @@ func _build_far_ground_incremental() -> void:
 			color = Color("536535")
 	var inner: float = float(_path.viewpoint_far_shore(_vp_centre, _vp_centre)) + 50.0
 	var outer: float = inner + 720.0
+	var rises := _far_cliff_rises()
 	const FAR_ZS := 64
 	const FAR_LS := 8
 	for i in FAR_ZS:
@@ -5575,6 +5647,10 @@ func _build_far_ground_incremental() -> void:
 		var zb := z0 + z_span * float(i + 1) / float(FAR_ZS)
 		var shift_a: float = _vp_side * (float(_path.viewpoint_far_shore(za, _vp_centre)) - float(_path.viewpoint_far_shore(_vp_centre, _vp_centre)))
 		var shift_b: float = _vp_side * (float(_path.viewpoint_far_shore(zb, _vp_centre)) - float(_path.viewpoint_far_shore(_vp_centre, _vp_centre)))
+		# Same tuck under the bank's back edge as the sync path: an edge standing
+		# above it is a pale shelf hovering over open water at the diving ends.
+		var cap_a: float = _vp_water_y + _far_scree_rise(za, rises.x, rises.y) * 0.42 + 0.35
+		var cap_b: float = _vp_water_y + _far_scree_rise(zb, rises.x, rises.y) * 0.42 + 0.35
 		for j in FAR_LS:
 			var out_a: float = lerpf(inner, outer, float(j) / float(FAR_LS))
 			var out_b: float = lerpf(inner, outer, float(j + 1) / float(FAR_LS))
@@ -5595,6 +5671,13 @@ func _build_far_ground_incremental() -> void:
 			ya1 = maxf(ya1, floor_y)
 			yb1 = maxf(yb1, floor_y)
 			yb0 = maxf(yb0, floor_y)
+			if j == 0:
+				if _vp_side > 0.0:
+					ya0 = minf(ya0, cap_a)
+					yb0 = minf(yb0, cap_b)
+				else:
+					ya1 = minf(ya1, cap_a)
+					yb1 = minf(yb1, cap_b)
 			var patch := _far_field_color(color, i, j)
 			_range_quad_lit(
 				b,
@@ -6674,7 +6757,19 @@ func _far_scree_rise(z: float, pass_rise: float, fell_rise: float) -> float:
 		+ 0.07 * sin(local * 0.0339 + _vp_phase * 0.6)
 	)
 	# Keep the far bank as a framing lip, not a vertical wall in the seated lens.
-	return maxf(base * (1.0 + fold), pass_rise * 0.5) * 0.72
+	var h: float = maxf(base * (1.0 + fold), pass_rise * 0.5) * 0.72
+	# And shed it like a ridge running into a lake, not a wall ending at a face.
+	# The old dive only shortened the last two hundred metres, which left the
+	# end standing as a smooth dome — an island the size of a hill in the middle
+	# of the water. A real bank loses height over a reach: a long fore-slope
+	# first, shouldered by `fold`, then the last of it slips under the water.
+	var retreat := 1.0 - 0.82 * smoothstep(
+		RoadPathGD.LAKE_SPAN * 0.35, RoadPathGD.LAKE_SPAN - 40.0, dist
+	)
+	retreat *= 1.0 - 0.92 * smoothstep(
+		RoadPathGD.LAKE_SPAN - 180.0, RoadPathGD.LAKE_SPAN - 6.0, dist
+	)
+	return h * retreat
 
 
 func _cliff_span(
@@ -7274,10 +7369,23 @@ func _range_massif(
 	local: float, centre: float, inner_w: float, outer_w: float, peak: float, sharpness: float
 ) -> float:
 	## Steep face toward the pass, long backslope the other way.
+	##
+	## A lone tent is a cone, and a green cone standing by itself on the valley
+	## floor is a witch's hat — pointed summit, straight sides, one silhouette
+	## and nothing to say it is a piece of a range. Two changes make it a hill:
+	## the summit comes off the point (`pow(t, 6)` only bites in the top sixth,
+	## so the flanks keep their shape while the apex lands as a brow), and a
+	## shoulder steps in partway down the outer flank, so the backslope descends
+	## in a stair instead of one ruled line.
 	var toward_pass: bool = (local - centre) * centre < 0.0
 	var half: float = inner_w if toward_pass else outer_w
-	var t: float = 1.0 - clampf(absf(local - centre) / maxf(half, 1.0), 0.0, 1.0)
-	return peak * _range_tent(t, sharpness)
+	var d: float = absf(local - centre)
+	var t: float = 1.0 - clampf(d / maxf(half, 1.0), 0.0, 1.0)
+	var body: float = _range_tent(t, sharpness)
+	var shoulder := 0.0
+	if not toward_pass:
+		shoulder = 0.22 * exp(-pow((d / maxf(half, 1.0) - 0.60) / 0.28, 2.0)) * (1.0 - body)
+	return peak * (body - 0.16 * pow(t, 6.0) + shoulder)
 
 
 func _range_sample(z: float, layer: Dictionary, phase: float, depth: int = 0) -> Vector2:
@@ -7339,12 +7447,15 @@ func _range_sample(z: float, layer: Dictionary, phase: float, depth: int = 0) ->
 			floor_h = 0.08
 		Env.FOREST:
 			# Below linear, so the shoulders swell: at 0.88 every summit was a
-			# straight-sided cone, which wooded hills never are.
+			# straight-sided cone, which wooded hills never are. `outer_k` stays
+			# generous for the same reason: at 0.24 a hero's backslope died inside
+			# four hundred metres and the summit stood alone as a green pyramid
+			# on the valley floor — the witch's hat in the seated frame.
 			sharpness = 0.70
 			other = 0.74
 			sag0 = 0.40
 			inner_k = 0.58
-			outer_k = 0.24
+			outer_k = 0.44
 			jag_a = 0.09
 			jag_b = 0.05
 			foothill_lo = 0.34
@@ -7584,12 +7695,17 @@ func _build_platform_pergola() -> void:
 	const HEIGHT := 2.85
 	for pz in posts:
 		for out in [inner, outer]:
+			# The parapet line keeps only its end posts. Its middle pair stood a
+			# hand's width from the seated rider, so turning the head put a timber
+			# column across half the frame; the beam spans the gap on its own.
+			if out == outer and pz != z_a and pz != z_b:
+				continue
 			var lat: float = _platform_lateral(out, pz)
 			_deck_cube(pz, lat, Vector3(0.36, 0.3, 0.36), stone, 0.0, -0.04)
 			_deck_cube(pz, lat, Vector3(0.2, HEIGHT - 0.26, 0.2), timber, 0.0, 0.26)
-			# Climbers on every post, thicker at the foot.
-			_deck_blob(pz, lat, Vector3(0.5, 0.7, 0.5), Color("35573a"), 0.2, true)
-			_deck_blob(pz, lat, Vector3(0.36, 0.9, 0.36), Color("3f6443").darkened(_rng.randf() * 0.15), 1.1, true)
+			# A low planting at the foot. Climber pods hung up the shaft read as
+			# green seed cases on a stick, not as a vine.
+			_deck_blob(pz, lat, Vector3(0.55, 0.42, 0.55), Color("3f6443").darkened(_rng.randf() * 0.15), 0.18, true)
 	# Beams along the walk, running a little past the end posts.
 	var span: float = z_b - z_a + 1.0
 	for out in [inner, outer]:
@@ -7609,14 +7725,19 @@ func _build_platform_pergola() -> void:
 		var bo: float = _rng.randf_range(inner - 0.3, outer + 0.3)
 		var s: float = _rng.randf_range(0.5, 0.9)
 		var col: Color = Color("486c44").darkened(_rng.randf() * 0.2)
-		if _rng.randf() < 0.55:
-			col = bloom.lightened(_rng.randf() * 0.15)
+		if _rng.randf() < 0.5:
+			col = Color("a993cf").lerp(Color("d8cbe9"), _rng.randf() * 0.4)
 		_deck_blob(bz, _platform_lateral(bo, bz), Vector3(s * 1.4, s * 0.55, s * 1.2), col, HEIGHT + 0.3, true)
-	for _i in 20:
+	# Wisteria racemes: short, slim and lilac whatever the trough grows. Long
+	# lozenges in the trough's own colour hung at eye height like fruit — in the
+	# country's yellow they were a ceiling of bananas.
+	var wisteria := Color("a993cf")
+	for _i in 34:
 		var hz: float = _rng.randf_range(z_a, z_b)
 		var ho: float = _rng.randf_range(inner + 0.2, outer - 0.2)
-		var hl: float = _rng.randf_range(0.45, 0.8)
-		_deck_blob(hz, _platform_lateral(ho, hz), Vector3(0.24, hl, 0.24), bloom.lightened(_rng.randf() * 0.2), HEIGHT + 0.2 - hl, true)
+		var hl: float = _rng.randf_range(0.22, 0.4)
+		var tint: Color = wisteria.lerp(Color("d8cbe9"), _rng.randf() * 0.5)
+		_deck_blob(hz, _platform_lateral(ho, hz), Vector3(0.14, hl, 0.14), tint, HEIGHT + 0.18 - hl, true)
 	# Lanterns hung off the rafters — the glow that reads as "sit here" at dusk.
 	# Emissive glass only; the chunk's two real lights are spent on the walk.
 	for lz in [z_a + 1.6, z_mid, z_b - 1.6]:
