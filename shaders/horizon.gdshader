@@ -16,8 +16,6 @@ render_mode unshaded, fog_disabled, shadows_disabled, specular_disabled, cull_ba
 //
 // COLOR.r snow cap, COLOR.g per-facet grit, COLOR.b height, COLOR.a layer haze.
 
-instance uniform float vista_visibility : hint_range(0.0, 1.0) = 1.0;
-
 uniform vec3 foot_color : source_color = vec3(0.24, 0.18, 0.16);
 uniform vec3 crest_color : source_color = vec3(0.34, 0.33, 0.38);
 uniform vec3 haze_color : source_color = vec3(0.96, 0.69, 0.42);
@@ -53,7 +51,7 @@ uniform float weather_haze : hint_range(0.0, 1.0) = 0.0;
 // Mist lying in the valleys between ranges: the far layers rise out of it, and
 // that is what separates one ridgeline from the next without a single line.
 uniform vec3 mist_color : source_color = vec3(0.70, 0.76, 0.84);
-uniform float mist_strength : hint_range(0.0, 1.0) = 0.38;
+uniform float mist_strength : hint_range(0.0, 1.0) = 0.24;
 
 varying vec3 world_n;
 varying float snow_v;
@@ -94,16 +92,19 @@ void vertex() {
 }
 
 void fragment() {
-	// Opaque screen-door fade: keep every vertex fixed during the vista handover.
-	float threshold = fract(52.9829189 * fract(dot(floor(FRAGCOORD.xy), vec2(0.06711056, 0.00583715))));
-	if (threshold >= vista_visibility) { discard; }
 	vec3 n = normalize(world_n);
 	float steep = 1.0 - smoothstep(0.42, 0.72, n.y);
 	vec3 eye_p = INV_VIEW_MATRIX[3].xyz;
 	vec2 to_eye = eye_p.xz - world_p.xz;
 	if (dot(to_eye, to_eye) > 1.0) {
 		vec2 flat_dir = normalize(to_eye) * length(n.xz);
-		n = normalize(mix(n, vec3(flat_dir.x, n.y, flat_dir.y), azimuth_flatten));
+		// The far band carries the biggest silhouettes and needs a fold to
+		// read as a fold: half of each panel's azimuth comes back so one face
+		// can shade while the next stays lit. The near bands keep the full
+		// flatten — their panels are degrees wide and honestly lit they
+		// stripe into curtains.
+		float flatten_eff = azimuth_flatten * (1.0 - 0.45 * smoothstep(0.40, 0.70, haze_v));
+		n = normalize(mix(n, vec3(flat_dir.x, n.y, flat_dir.y), flatten_eff));
 	}
 	vec3 sun = normalize(sun_dir);
 	float key = clamp(dot(n, sun) * 0.5 + 0.5, 0.0, 1.0);
@@ -151,7 +152,9 @@ void fragment() {
 	// blue-grey scree, so pushing the shadow further towards blue as well as
 	// darkening it is what turned a backlit peak into a navy spike.
 	vec3 shade_tint = vec3(0.78, 0.84, 1.02);
-	vec3 sun_tint = vec3(1.10, 1.00, 0.82);
+	// Cooled and pulled back: at 1.10 warm a lit face went over 1.0 and ACES
+	// returned it as cream — half the "sand dune" problem was the sun tint.
+	vec3 sun_tint = vec3(1.03, 0.97, 0.85);
 	vec3 col = rock * lum * mix(shade_tint, sun_tint, lit);
 	// Ambient, on both sides of the terminator.
 	//
@@ -178,7 +181,12 @@ void fragment() {
 	// half of the tall back layers under snow, and four white layers merged into
 	// one pale wall. Relative to the layer's own top, only the planted heroes
 	// reach it; the cols between them stay rock.
-	float snow_edge = 0.64 + snow_bias + (relief - 0.5) * 0.22 - (rake - 0.5) * 0.08;
+	// The farthest band only ever shows its summit band above the ranges in
+	// front, and a fixed snowline puts that whole window under snow — the
+	// tallest peak in the frame arrives as a blank pale sheet. Far ranges
+	// hold snow on their tips alone so the visible face stays rock.
+	float snow_edge = 0.64 + snow_bias + 0.38 * smoothstep(0.30, 0.70, haze_v)
+		+ (relief - 0.5) * 0.22 - (rake - 0.5) * 0.08;
 	float hold = smoothstep(0.05, 0.38, n.y);
 	// The nearest ring is foothills: caps start on the ranges behind.
 	hold *= smoothstep(0.1, 0.2, haze_v);
@@ -193,7 +201,7 @@ void fragment() {
 	// Valley mist lying at the foot of each layer, so every ridgeline stands
 	// out of the one in front of it.
 	float foot = 1.0 - smoothstep(-140.0, 60.0, band_v);
-	col = mix(col, mist_color, foot * foot * mist_strength * (0.4 + haze_v));
+	col = mix(col, mist_color, foot * foot * mist_strength * (0.3 + 0.6 * haze_v));
 	// Aerial perspective is the depth cue. Each layer steps most of the way to
 	// the air behind it, snow included — an unhazed cap on the farthest range
 	// glowed brighter than the near one and flattened the stack.
@@ -205,8 +213,25 @@ void fragment() {
 	// therefore matched neither. That is what a mountain range looks like when
 	// it is mud. At 0.25 the aerial target stays the cool near-side air, so the
 	// haze reads as distance rather than as a third colour in the frame.
-	vec3 air = mix(mist_color, haze_color, 0.25);
-	col = mix(col, air, clamp(haze_v * 0.95 + weather_haze * (0.45 + haze_v), 0.0, 0.94));
+	// Air is light scattered off the path between eye and ridge, and scattered
+	// light is sky's colour, not ground's: cool and blue-shifted. The earlier
+	// mist-heavy mix sat nearly on top of the pale horizon hue, and at the far
+	// layer's haze weight the range arrived as a bleached white card — the
+	// "whited-out mountains" complaint. Cool the target and hold the mix down
+	// so even the back range keeps over half its own colour: distance should
+	// read as a blue step, not as erasure.
+	// Air is blue-shifted and darker than the sky itself: scattered light on a
+	// kilometre of path cools a range, it does not bleach it. The old target sat
+	// near the horizon colour's own lightness, so the heaviest haze band — the
+	// tallest, farthest range — arrived as a flat pale-grey sheet instead of a
+	// blue mountain.
+	vec3 air = mix(mix(mist_color, sky_color, 0.62), haze_color, 0.12) * vec3(0.58, 0.66, 0.78);
+	// A linear haze weight is fine up to the third range, but at the fourth's
+	// 0.66 it erased almost half the mountain's own colour — which is where the
+	// biggest silhouette in the frame lived, and it arrived as a flat pale
+	// sheet. Compressing the top of the ladder keeps the far range a step
+	// bluer than the one in front without whitewashing it.
+	col = mix(col, air, clamp(haze_v * 0.68 * (1.0 - 0.40 * haze_v) + weather_haze * (0.45 + haze_v), 0.0, 0.80));
 	// Soften the ring into the air at the extreme edges of a wide lens, but
 	// keep the mountains when the rider looks aside.
 	vec3 cam = INV_VIEW_MATRIX[3].xyz;
@@ -219,6 +244,6 @@ void fragment() {
 		ahead = dot(normalize(radial), normalize(fwd));
 	}
 	float side = 1.0 - smoothstep(0.12, 0.78, ahead);
-	col = mix(col, air, side * 0.08);
+	col = mix(col, air, side * 0.05);
 	ALBEDO = col;
 }

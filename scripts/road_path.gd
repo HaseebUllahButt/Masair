@@ -63,8 +63,9 @@ var _cached_terrain_drop: Dictionary = {}
 func _ready() -> void:
 	randomize_world()
 
-## RoadChunk.Env: FOREST, COAST, MOUNTAIN, COUNTRY. CITY stays unused.
-const THEME_POOL: Array[int] = [1, 2, 3, 4]
+## RoadChunk.Env ids in rotation: FOREST, MOUNTAIN, COUNTRY. CITY and COAST
+## stay unused.
+const THEME_POOL: Array[int] = [1, 3, 4]
 ## ~12 km at riding speed: several minutes in one world before the next.
 const BIOME_LENGTH := 12000.0
 ## How far the *road* eases from one biome's shape into the next. Scenery can
@@ -74,13 +75,12 @@ const BIOME_LENGTH := 12000.0
 const BIOME_BLEND := 2800.0
 ## wander, twist, long-hill, short-hill. Same sine waves everywhere; only the
 ## mix changes, so the path stays C1 across a region cut.
-## Forest: enclosed and twisty. Coast: long sweepers, quieter hills. Mountain:
-## tighter radius and more pitch. Country: the rolling baseline.
+## Forest: enclosed and twisty. Mountain: tighter radius and more pitch.
+## Country: the rolling baseline.
 const SHAPE_FOREST := Vector4(0.72, 1.55, 0.90, 0.85)
-const SHAPE_COAST := Vector4(1.38, 0.38, 0.68, 0.42)
 const SHAPE_MOUNTAIN := Vector4(0.82, 1.82, 1.20, 1.12)
 const SHAPE_COUNTRY := Vector4(1.00, 1.00, 1.00, 1.00)
-var _biome_order: Array[int] = [1, 2, 3, 4]
+var _biome_order: Array[int] = [1, 3, 4]
 
 
 func theme_for_chunk(index: int) -> int:
@@ -98,8 +98,6 @@ func _shape_for_theme(theme_id: int) -> Vector4:
 	match theme_id:
 		1:
 			return SHAPE_FOREST
-		2:
-			return SHAPE_COAST
 		3:
 			return SHAPE_MOUNTAIN
 		_:
@@ -198,7 +196,7 @@ func set_world_seed(value: int) -> void:
 
 
 func _rebuild_biome_order(rng: RandomNumberGenerator) -> void:
-	## A permutation of the four rural biomes, then that order repeats forever.
+	## A permutation of the rural biomes, then that order repeats forever.
 	_biome_order.clear()
 	for theme_id in THEME_POOL:
 		_biome_order.append(theme_id)
@@ -270,7 +268,18 @@ const SPUR_EASE := 0.14
 const SPUR_OUT := 168.0  # far enough that the main road disappears behind woodland
 const SPUR_LIFT := 42.0  # a real climb before the lake-and-range reveal
 const SPUR_HALF_WIDTH := 3.2
-const SPUR_MOUTH := 160.0  # junction taper; long enough to read at speed
+## The exit lane's own half width while it is still a lane bolted to the
+## carriageway edge — it widens into a two-way minor road only where the gore
+## has opened between them.
+const SPUR_LANE_HALF := 1.8
+## Lane-gain taper. A real junction mouth reaches a full lane within a few car
+## lengths — the widening is a painted boundary on the carriageway edge, not a
+## wedge of tarmac shrinking to a point over a hundred and sixty metres.
+const SPUR_LANE_TAPER := 42.0
+## The lane flares to road width across the opening gore: by the time the
+## painted gore is five and a half metres wide the spur is a whole road.
+const SPUR_WIDEN := 5.5
+const SPUR_MOUTH := 160.0  # fallback nose position when the gore never qualifies
 const SPUR_SHOULDER := 0.85  # surfaced shoulder beyond the rideable edge
 ## The parking platform at the top. The rideable apron is what the bike can
 ## reach; the terrace beyond it is made ground the bike cannot enter, which is
@@ -466,13 +475,21 @@ func spur_half_width(z: float) -> float:
 
 
 func _uncached_spur_half_width(z: float) -> float:
-	## Zero at the very ends (so the junction opens as a gore rather than a step),
-	## a lane and a half along the ramps, and the full apron at the top.
+	## Zero before the mouth, a lane through the junction, a road past the gore.
+	##
+	## A real exit does not grow a road out of a point: the lane reaches full
+	## width within a few car lengths of the nose — the taper is a painted
+	## boundary on the carriageway edge, not a wedge of tarmac shrinking to
+	## nothing over the whole mouth. Once the gore has opened between the two
+	## roads the lane flares into the two-way minor road the climb is, and the
+	## parking apron widens on top of that.
 	var distance := absf(z - viewpoint_centre_for(z))
 	if distance >= SPUR_HALF_SPAN:
 		return 0.0
-	var mouth := smoothstep(SPUR_HALF_SPAN, SPUR_HALF_SPAN - SPUR_MOUTH, distance)
-	return SPUR_HALF_WIDTH * mouth + (PLATFORM_HALF_WIDTH - SPUR_HALF_WIDTH) * platform_blend(z)
+	var taper := smoothstep(SPUR_HALF_SPAN, SPUR_HALF_SPAN - SPUR_LANE_TAPER, distance)
+	var widen := smoothstep(0.5, SPUR_WIDEN, spur_gap(z))
+	var running := lerpf(SPUR_LANE_HALF, SPUR_HALF_WIDTH, widen)
+	return taper * (running + (PLATFORM_HALF_WIDTH - running) * platform_blend(z))
 
 
 func platform_blend(z: float) -> float:
@@ -718,12 +735,10 @@ func viewpoint_water_y(centre_z: float) -> float:
 
 func _basin_near(theme_id: int) -> float:
 	## Distance from the carriageway to the near shore. Forest is a gorge you
-	## almost cannot see until the terrace; coast drops sooner onto open water.
+	## almost cannot see until the terrace.
 	match theme_id:
 		1:
 			return 228.0
-		2:
-			return 268.0
 		3:
 			return 292.0
 		_:
@@ -734,8 +749,6 @@ func _basin_far(theme_id: int) -> float:
 	match theme_id:
 		1:
 			return 410.0
-		2:
-			return 1180.0
 		3:
 			return 495.0
 		_:
@@ -746,8 +759,6 @@ func _basin_drop(theme_id: int) -> float:
 	match theme_id:
 		1:
 			return 48.0
-		2:
-			return 56.0
 		3:
 			return 36.0
 		_:
@@ -758,8 +769,6 @@ func _basin_far_rise(theme_id: int) -> float:
 	match theme_id:
 		1:
 			return 52.0
-		2:
-			return 8.0
 		3:
 			return 58.0
 		_:
@@ -800,12 +809,6 @@ func viewpoint_far_shore(z: float, centre_z: float) -> float:
 			landform = -70.0 * exp(-pow((along + 0.30) / 0.20, 2.0))
 			landform += 34.0 * exp(-pow((along + 0.69) / 0.19, 2.0))
 			landform += 46.0 * exp(-pow((along - 0.22) / 0.31, 2.0))
-		2:
-			# One long cape holds the left side; the opposite shore recedes
-			# around a broad open bay rather than making a matching headland.
-			landform = -180.0 * exp(-pow((along + 0.44) / 0.32, 2.0))
-			landform += 118.0 * exp(-pow((along - 0.32) / 0.42, 2.0))
-			landform += 28.0 * along
 		3:
 			# A splayed rock shoulder enters the tarn from one side, while
 			# the wider opposite bay leaves water beneath the alpine pass.
@@ -900,16 +903,12 @@ func _viewpoint_land_drop(z: float, out: float, centre_z: float) -> float:
 		# the crest instead put a shoulder of gentle grass between the platform
 		# and anything worth looking at.
 		var t := clampf((out - crest_line) / maxf(near - crest_line, 1.0), 0.0, 1.0)
-		# Coast and forest fall faster so the water is a drop, not a beach. Country
+		# Forest falls faster so the water is a drop, not a beach. Country
 		# keeps the Wastwater talus. Mountain is a tarn: steep, then a shelf.
 		var fall_exp := 1.5
 		match theme_id:
 			1:
 				fall_exp = 1.18
-			2:
-				# A wall under the rail, not a beach. Higher exponent drops the
-				# first metres fastest, which is what reads as a cliff from the bench.
-				fall_exp = 2.15
 			3:
 				fall_exp = 1.32
 		var fall := 1.0 - pow(1.0 - t, fall_exp)
@@ -930,14 +929,11 @@ func _viewpoint_land_drop(z: float, out: float, centre_z: float) -> float:
 		return water + 1.6 + LAKE_BED * sin(PI * s)
 	var r := clampf((out - far) / FAR_BANK, 0.0, 1.0)
 	# Country and mountain: mass on the sides, a pass in the middle. Forest: the
-	# gorge walls stay up. Coast: the far shore barely exists, so the sea meets
-	# the sky instead of a second range of hills.
+	# gorge walls stay up.
 	var col := 1.0
 	match theme_id:
 		1:
 			col = 1.0 - 0.10 * exp(-pow((z - centre_z) / 220.0, 2.0))
-		2:
-			col = 0.16 + 0.20 * (1.0 - exp(-pow((z - centre_z) / 420.0, 2.0)))
 		3:
 			col = 1.0 - 0.58 * exp(-pow((z - centre_z) / 260.0, 2.0))
 		_:

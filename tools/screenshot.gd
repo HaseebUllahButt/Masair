@@ -187,14 +187,14 @@ class Capture:
 			streamer.call("reset_world")
 
 	func _prepare_catalog() -> void:
-		## Four seeds whose first biome (and therefore first overlook) is each
+		## Three seeds whose first biome (and therefore first overlook) is each
 		## rural theme. The permutation is shuffled from the seed, so walking
 		## small integers is enough.
 		var path := get_tree().root.get_node("RoadPath")
-		var labels := {1: "forest", 2: "coast", 3: "mountain", 4: "country"}
+		var labels := {1: "forest", 3: "mountain", 4: "country"}
 		var seeds := {}
 		var probe := 1
-		while seeds.size() < 4 and probe < 20000:
+		while seeds.size() < 3 and probe < 20000:
 			path.call("set_world_seed", probe)
 			var theme_id: int = int(path.call("theme_for_chunk", 0))
 			if theme_id in labels and not seeds.has(theme_id):
@@ -202,7 +202,7 @@ class Capture:
 				print("catalog seed %s=%d" % [labels[theme_id], probe])
 			probe += 1
 		_catalog_jobs.clear()
-		for theme_id in [1, 2, 3, 4]:
+		for theme_id in [1, 3, 4]:
 			var label: String = labels[theme_id]
 			var seed: int = int(seeds.get(theme_id, 72117))
 			var road := {
@@ -210,19 +210,10 @@ class Capture:
 				"seed": seed,
 				"kind": "road",
 				"z": 1600.0,
-				# Five seconds was enough for three biomes and not for the fourth:
-				# the coast frame came out as a slab of tarmac ending in mid-air
-				# because the chunks in front of the bike had not finished
-				# streaming. A catalog shot that races the streamer is a shot that
-				# reports a regression the game does not have.
+				# A catalog shot that races the streamer is a shot that reports a
+				# regression the game does not have: give the chunks in front of
+				# the bike time to finish streaming.
 				"warmup": 11.0,
-				# No forced look. The coast shot used to hold look-left through the
-				# capture on the theory that the sea is what a coast ride is about,
-				# but a ninety-degree head turn puts the camera side-on across the
-				# carriageway: the road becomes a featureless slab with the lane
-				# dashes running across it and the sea reduced to a sliver at the
-				# frame edge. Facing down the route the sea reads perfectly well
-				# beside it, and the frame is comparable with the other three.
 				"look": "",
 			}
 			var lookoff := {
@@ -444,8 +435,8 @@ class Capture:
 			return
 		_busy = true
 		if seated:
-			# Stills of an overlook show its signature moment — the whale in the
-			# air, the eagle on the water — not whichever lull the clock landed on.
+			# Stills of an overlook show its signature moment — the eagle on the
+			# water — not whichever lull the clock landed on.
 			var life := get_tree().root.find_child("LookoutLife", true, false)
 			if life and life.has_method("stage_capture"):
 				life.call("stage_capture")

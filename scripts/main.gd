@@ -135,14 +135,19 @@ const MOODS := {
 		# hue every biome's woods, rock, scree and mist get diluted with. At
 		# 8b625f that was a brick — hue 4, and the derived forest and country
 		# woods came out as the same warm grey-brown, so the overlook had one
-		# material and four biomes' worth of nothing. 8a7a86 is a cool dusk
+		# material and three biomes' worth of nothing. 8a7a86 is a cool dusk
 		# haze instead: hue 315, roughly half the chroma, and lighter, which
 		# also pushes the `daylight` term the shader uses to blend biome colour
 		# back in towards its cap. Day's 9b9f92 (hue 78, near-zero chroma) is
 		# the model here — a mood's air should be a value, not a colour.
 		"fog_color": Color("8a7a86"),
 		"fog_energy": 0.90,
-		"fog_density": 0.0010,
+		# Down from 0.0010. Exponential fog reaches 65% at a kilometre and 86% at
+		# two, and an overlook's whole mid-ground — lake, far shore, fells — sits
+		# inside that band, which is why half the view arrived greyed out. The
+		# vista ranges are fog-disabled and carry their own air; the engine fog
+		# only needs to bed the streamed edge in, not repainted as milk.
+		"fog_density": 0.00052,
 		# The dusk sun sits low and dead ahead. Strong sun scatter plus a ground
 		# fog layer therefore lit the tarmac itself into a bright wedge that
 		# followed the camera down the road — a haze sitting on the surface the
@@ -241,12 +246,20 @@ const MOODS := {
 		"white": 1.30,
 		"fog_color": Color("9b9f92"),
 		"fog_energy": 1.0,
-		"fog_density": 0.00082,
+		# 0.00082 put the whole view past a kilometre inside 55%+ fog, converged
+		# on a near-white grey — the bleached far hills and the milky basin were
+		# the same number. Enough stays to soften the streamed edge and the
+		# valleys between ridges.
+		"fog_density": 0.00032,
 		"fog_sun_scatter": 0.12,
-		"fog_aerial": 0.22,
+		# Aerial perspective drags the fog colour toward the sky's pale horizon
+		# band. At 0.22 it read as a second, brighter fog layered over the first.
+		"fog_aerial": 0.12,
 		"fog_sky": 0.07,
 		"fog_height": 6.0,
-		"fog_height_density": 0.005,
+		# Halved: over the lake basin the sightline runs hundreds of metres
+		# through the low band and the water drowned in it.
+		"fog_height_density": 0.0025,
 		"glow": 0.55,
 		"glow_bloom": 0.06,
 		# Contrast over saturation. Turning saturation up to compensate for a flat
@@ -327,7 +340,9 @@ const MOODS := {
 		# ridge went the same milky teal: the overlooks read as one flat blue
 		# card. The midtone lift is kept where it matters, on the near ground.
 		"fog_energy": 1.8,
-		"fog_density": 0.00115,
+		# Night fog is a navy, not a milk — density here dims the streamed edge
+		# rather than bleaching it, so it can stay inside the tested band.
+		"fog_density": 0.00105,
 		"fog_sun_scatter": 0.20,
 		# Aerial takes the fog toward the sky's colour, and the night sky's
 		# horizon is the moonlit teal glow. A little is air; a quarter painted
@@ -335,7 +350,7 @@ const MOODS := {
 		"fog_aerial": 0.10,
 		"fog_sky": 0.04,
 		"fog_height": 3.5,
-		"fog_height_density": 0.006,
+		"fog_height_density": 0.003,
 		"glow": 0.58,
 		"glow_bloom": 0.06,
 		"contrast": 1.30,
@@ -388,7 +403,7 @@ func _ready() -> void:
 	var scenic_warmup: Node = load("res://scripts/scenic_warmup.gd").new()
 	scenic_warmup.name = "ScenicWarmup"
 	add_child(scenic_warmup)
-	# Birds, whales, balloons and mist over the overlooks. Idle unless the rider
+	# Birds, balloons and mist over the overlooks. Idle unless the rider
 	# is sitting on a bench; see lookout_life.gd.
 	var lookout_life: Node3D = load("res://scripts/lookout_life.gd").new()
 	lookout_life.name = "LookoutLife"
@@ -879,7 +894,10 @@ func _apply_lighting() -> void:
 	# rider sees it from, its far half carries the horizon colour back to the
 	# eye. Dimmed by the mood's own horizon glow so a flat grey sky still reads
 	# as flat grey water.
-	var sky_glow: float = 0.30 + 0.80 * float(mood["horizon_glow"])
+	# Down from 0.30 + 0.80 * glow. The mirror colour is multiplied across the
+	# whole basin: at the old weight the near water rendered as a pale cream
+	# slab — the single largest "greyed out" area at every overlook.
+	var sky_glow: float = 0.15 + 0.40 * float(mood["horizon_glow"])
 	RoadChunkGD.set_water_sky(
 		(mood["horizon_color"] as Color) * sky_glow,
 		(mood["mid_color"] as Color) * sky_glow

@@ -150,7 +150,7 @@ func _run() -> void:
 
 	var city: Dictionary = RoadChunkGD.palette(RoadChunkGD.Env.CITY)
 	check(city.has("shoulder"), "city palette defines a shoulder colour")
-	for env in [RoadChunkGD.Env.FOREST, RoadChunkGD.Env.COAST, RoadChunkGD.Env.MOUNTAIN, RoadChunkGD.Env.COUNTRY]:
+	for env in [RoadChunkGD.Env.FOREST, RoadChunkGD.Env.MOUNTAIN, RoadChunkGD.Env.COUNTRY]:
 		check(RoadChunkGD.palette(env)["road"] == city["road"], "tarmac colour stays continuous across environments")
 	var overlook_chunk := int(floor(RoadPathGD.VIEWPOINT_FIRST / RoadChunkGD.LENGTH))
 	check(RoadChunkGD.is_viewpoint_chunk(overlook_chunk, RoadChunkGD.Env.FOREST), "the first overlook has an owning chunk whatever the theme")
@@ -243,6 +243,27 @@ func _run() -> void:
 
 	# The overlook chunk carries the whole set piece: the spur's own road surface
 	# inside the ribbon, the water, and the range across it.
+	# A gate over the main road on an overlook chunk is in plain view of the
+	# spur, so committing to the detour must not free it.
+	var gate_index := -1
+	var first_spur := int(floor((RoadPathGD.VIEWPOINT_FIRST - RoadPathGD.SPUR_HALF_SPAN) / RoadChunkGD.LENGTH))
+	for i in range(first_spur, first_spur + 90):
+		var gz := (float(i) + 0.5) * RoadChunkGD.LENGTH
+		if i % 7 == 3 and float(path.call("spur_half_width", gz)) > 0.0 and float(path.call("spur_gap", gz)) >= 14.0:
+			gate_index = i
+			break
+	check(gate_index >= 0, "an overlook spur passes a mountain gate chunk")
+	if gate_index >= 0:
+		var gated: Node3D = RoadChunkGD.new()
+		gated.name = "SpurGateTest"
+		get_root().add_child(gated)
+		gated.call("setup", gate_index, RoadChunkGD.Env.MOUNTAIN)
+		var gate := gated.get_node_or_null("SpurGate")
+		check(gate != null, "the mountain gate is built on an overlook chunk")
+		gated.call("apply_corridor", true, true, true)
+		check(is_instance_valid(gate) and (gate as Node3D).visible, "the gate stays drawn once the rider commits to the spur")
+		gated.free()
+
 	var viewpoint: Node3D = RoadChunkGD.new()
 	viewpoint.name = "ViewpointChunkTest"
 	get_root().add_child(viewpoint)
@@ -258,7 +279,10 @@ func _run() -> void:
 	var vista_c: Vector3 = viewpoint.call("_far_point", RoadPathGD.VIEWPOINT_FIRST - 400.0, 1800.0, 0.0)
 	var vista_d: Vector3 = viewpoint.call("_far_point", RoadPathGD.VIEWPOINT_FIRST + 400.0, 1800.0, 0.0)
 	check((vista_b - vista_a).is_equal_approx(vista_d - vista_c), "vista rows remain parallel through road bends")
-	check(absf((vista_b - vista_a).length() - 800.0) < 0.1, "distant water keeps its authored length")
+	# The sheet is drawn flat (p.y = y), so a pitched overlook centre shortens
+	# the along-route span by cos(pitch) — compare against that projection.
+	var vista_pitch: float = float(path.call("pitch_at", float(viewpoint.get("_vp_centre"))))
+	check(absf((vista_b - vista_a).length() - 800.0 * cos(vista_pitch)) < 0.1, "distant water keeps its authored length")
 	check(absf((vista_c - vista_a).length() - 600.0) < 0.1, "distant water keeps its authored width")
 
 	check(viewpoint.get_node_or_null("ViewpointFarGround") != null, "the drawn ground reaches the foot of the range")
@@ -494,7 +518,7 @@ func _run() -> void:
 
 	# Other rural biomes still produce a viewpoint landscape: water, a far side,
 	# no towers or hamlets. The spur maths are shared; only the dressing changes.
-	for env in [RoadChunkGD.Env.FOREST, RoadChunkGD.Env.COAST, RoadChunkGD.Env.MOUNTAIN]:
+	for env in [RoadChunkGD.Env.FOREST, RoadChunkGD.Env.MOUNTAIN]:
 		var themed: Node3D = RoadChunkGD.new()
 		themed.name = "ViewpointTheme%d" % env
 		get_root().add_child(themed)
@@ -508,12 +532,6 @@ func _run() -> void:
 		check(dressed, "biome %d overlook is not an empty platform" % env)
 		check(themed.get_node_or_null("Architecture") == null, "biome %d overlook has no towers" % env)
 		check(themed.get_node_or_null("ViewpointWaterfall") == null, "biome %d overlook has no cardboard waterfall" % env)
-		if env == RoadChunkGD.Env.COAST:
-			check(themed.get_node_or_null("ViewpointRange") != null, "the coast keeps a distant headland on the horizon")
-			check(themed.get_node_or_null("ViewpointCliffs") == null, "the coast overlook has no far-shore wall in the water")
-			check(themed.get_node_or_null("ViewpointHeadland") != null, "the coast overlook has a cliff under the bench")
-			check(themed.get_node_or_null("Birds") == null, "the coast view runs no gulls")
-			check(not themed.is_processing(), "a coast platform does not process")
 		if env == RoadChunkGD.Env.MOUNTAIN:
 			check(themed.get_node_or_null("Birds") == null, "the mountain col runs no raptors")
 			check(not themed.is_processing(), "a mountain platform does not process")
@@ -524,24 +542,18 @@ func _run() -> void:
 		check(not themed.has_method("_build_far_settlement"), "biome %d far shore has no hamlet" % env)
 		themed.free()
 
-	var sea: ShaderMaterial = RoadChunkGD.water_material_sea()
-	check(float(sea.get_shader_parameter("wave_height")) < 0.03, "the coast sheet is calmer than the lake")
-
 	var country_view := _first_overlook(path, RoadChunkGD.Env.COUNTRY)
 	var forest_view := _first_overlook(path, RoadChunkGD.Env.FOREST)
-	var coast_view := _first_overlook(path, RoadChunkGD.Env.COAST)
 	var mountain_view := _first_overlook(path, RoadChunkGD.Env.MOUNTAIN)
-	check(country_view > 0.0 and forest_view > 0.0 and coast_view > 0.0 and mountain_view > 0.0, "each biome owns an overlook")
+	check(_first_overlook(path, RoadChunkGD.Env.COAST) < 0.0, "the coast owns no overlook")
+	check(country_view > 0.0 and forest_view > 0.0 and mountain_view > 0.0, "each biome owns an overlook")
 	var country_far: float = float(path.call("viewpoint_far_shore", country_view, country_view))
 	var forest_far: float = float(path.call("viewpoint_far_shore", forest_view, forest_view))
-	var coast_far: float = float(path.call("viewpoint_far_shore", coast_view, coast_view))
 	var mountain_far: float = float(path.call("viewpoint_far_shore", mountain_view, mountain_view))
-	check(coast_far > country_far * 1.35, "coast water runs out to the horizon (%.0f vs %.0f)" % [coast_far, country_far])
 	# Inland basins now include a narrow country bend. Measure open water,
 	# not distance from the highway, so changing that bend cannot redefine
 	# the forest gorge or mountain tarn. Their authored widths are roughly
 	# 180-200 m before coves and shoreline variation; 320 m keeps them compact.
-	var coast_width: float = coast_far - float(path.call("viewpoint_near_shore", coast_view))
 	for basin: Dictionary in [
 		{"name": "forest gorge", "centre": forest_view, "far": forest_far},
 		{"name": "mountain tarn", "centre": mountain_view, "far": mountain_far},
@@ -552,7 +564,6 @@ func _run() -> void:
 		var water_width: float = float(basin["far"]) - near_shore
 		var terrace_edge: float = float(path.call("spur_offset", centre)) + RoadPathGD.PLATFORM_HALF_WIDTH + RoadPathGD.PLATFORM_TERRACE
 		check(water_width >= 70.0 and water_width <= 320.0, "%s keeps a compact open waterway (%.0f m)" % [basin["name"], water_width])
-		check(coast_width > water_width * 2.0, "open coast is wider than the %s (%.0f vs %.0f m)" % [basin["name"], coast_width, water_width])
 		check(near_shore > terrace_edge, "%s water clears the overlook terrace (%.0f vs %.0f m)" % [basin["name"], near_shore, terrace_edge])
 
 	var cairn_index := int(floor((mountain_view + 150.0) / RoadChunkGD.LENGTH))
@@ -569,16 +580,6 @@ func _run() -> void:
 	wall.call("setup", wall_index, RoadChunkGD.Env.COUNTRY)
 	check(wall.get_node_or_null("ViewpointWall") != null, "the country view has a dry-stone wall on the far shore")
 	wall.free()
-	# Like the cairn and wall, the sea-stack cluster plants on whichever vista
-	# chunk covers its z — with forty-metre chunks that is usually a neighbour
-	# of the platform chunk, not the platform chunk itself.
-	var cypress_index := int(floor((coast_view + 42.0) / RoadChunkGD.LENGTH))
-	var stacks: Node3D = RoadChunkGD.new()
-	stacks.name = "ViewpointCypressTest"
-	get_root().add_child(stacks)
-	stacks.call("setup", cypress_index, RoadChunkGD.Env.COAST)
-	check(stacks.get_node_or_null("ViewpointCypress") != null, "the coast view has a framing sea-stack")
-	stacks.free()
 	var peak_index := int(floor((mountain_view + float(RoadChunkGD.RANGE_LAYERS[0]["left"])) / RoadChunkGD.LENGTH))
 	var peak: Node3D = RoadChunkGD.new()
 	peak.name = "PeakRangeTest"
@@ -589,7 +590,7 @@ func _run() -> void:
 	check(not peak.is_processing(), "a static vista chunk does not process")
 	peak.free()
 
-	# Forest, coast and mountain roadside scenery still builds when those biomes
+	# Forest and mountain roadside scenery still builds when those biomes
 	# are the chunk theme — not just countryside hedges.
 	var forest_chunk: Node3D = RoadChunkGD.new()
 	forest_chunk.name = "ForestSceneryTest"
@@ -601,15 +602,6 @@ func _run() -> void:
 	)
 	check(not forest_chunk.is_processing(), "a roadside chunk does not run a vista animator")
 	forest_chunk.free()
-	var coast_chunk: Node3D = RoadChunkGD.new()
-	coast_chunk.name = "CoastSceneryTest"
-	get_root().add_child(coast_chunk)
-	coast_chunk.call("setup", 2, RoadChunkGD.Env.COAST)
-	check(
-		coast_chunk.get_node_or_null("Fronds") != null or coast_chunk.get_node_or_null("Rocks") != null,
-		"coast chunks still have shoreline scenery"
-	)
-	coast_chunk.free()
 	var mountain_chunk: Node3D = RoadChunkGD.new()
 	mountain_chunk.name = "MountainSceneryTest"
 	get_root().add_child(mountain_chunk)
@@ -628,8 +620,8 @@ func _run() -> void:
 	var fall: Node3D = RoadChunkGD.new()
 	fall.name = "FallLandmarkTest"
 	get_root().add_child(fall)
-	fall.call("setup", 3, RoadChunkGD.Env.COAST)
-	check(fall.get_node_or_null("Waterfall") != null, "coast landmarks are a hillside fall")
+	fall.call("setup", 3, RoadChunkGD.Env.MOUNTAIN)
+	check(fall.get_node_or_null("Waterfall") != null, "mountain landmarks are a hillside fall")
 	var fall_mesh := fall.get_node_or_null("Waterfall") as MeshInstance3D
 	check(fall_mesh != null and fall_mesh.mesh != null and fall_mesh.mesh.get_surface_count() > 0, "the fall is a sheet of water, not an empty node")
 	check(fall.get_node_or_null("ViewpointWaterfall") == null, "the fall is not bolted to an overlook")
@@ -731,8 +723,7 @@ func _run() -> void:
 			skyline_rider.lateral = float(path.call("viewpoint_side_for", 2800.0)) * float(path.call("spur_offset", skyline_rider.track_z))
 			horizon.call("_follow_player")
 			check(horizon.scale.is_equal_approx(Vector3.ONE), "seed %d horizon never collapses at distance %.0f" % [seed_value, distance])
-			if absf(distance) <= 350.0:
-				check(not horizon.visible, "authored lookoff view replaces the generic ring")
+			check(horizon.visible, "seed %d skyline stays solid all the way up the spur (%.0f)" % [seed_value, distance])
 	horizon.free()
 	skyline_rider.free()
 

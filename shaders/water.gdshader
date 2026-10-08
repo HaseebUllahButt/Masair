@@ -15,7 +15,7 @@ uniform vec3 sky_mirror : source_color = vec3(0.10, 0.11, 0.12);
 // The sky higher up, reflected where the eye looks down on the water steeply.
 uniform vec3 sky_high : source_color = vec3(0.08, 0.10, 0.14);
 // Stylised floor under the Fresnel term — see fragment().
-uniform float mirror_floor : hint_range(0.0, 1.0) = 0.34;
+uniform float mirror_floor : hint_range(0.0, 1.0) = 0.27;
 
 varying vec3 world_position;
 
@@ -106,7 +106,10 @@ void fragment() {
 	// bands where the swell rolls and a finer glitter on top. Kept under the
 	// material's own shimmer_amount so the sea — kilometres of it — does not
 	// carry the lake's sparkle density as stripes.
-	float structure = 0.95 + 0.8 * shimmer * shimmer_amount + 0.18 * wave_phase;
+	// This used to run to ~1.93 on a bright swell, which doubled the reflected
+	// sky and turned the far basin into a pale cream slab — the largest
+	// "greyed out" area in every overlook view.
+	float structure = 0.88 + 0.5 * shimmer * shimmer_amount + 0.15 * wave_phase;
 	// Light scattered back up out of the body of the water. Small, but it is
 	// what keeps deep water teal under a key of any colour instead of taking the
 	// hue of the sunset like a painted floor would.

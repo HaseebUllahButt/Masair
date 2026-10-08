@@ -27,12 +27,15 @@ const RING := {
 const OVERLOOK := {
 	# Forest: wooded to the crest, every ridge a darker green than the one behind.
 	1: {"treeline": 320.0, "woods": Color("1f4632"), "snow_bias": 1.0, "light_soft": 0.8},
-	# Coast: turf over the headlands, bare where the sea has cut them.
-	2: {"treeline": 150.0, "woods": Color("56703f"), "snow_bias": 1.0, "light_soft": 0.3, "slope_rock": 1.0},
-	# Mountain: pines only at the foot, bare rock above, snow on the tops.
-	3: {"treeline": 50.0, "woods": Color("27432f"), "snow_bias": -0.12, "light_soft": 0.8, "slope_rock": 1.0},
-	# Country: grass fells, rounded and green to the top.
-	4: {"treeline": 460.0, "woods": Color("5c7436"), "snow_bias": 1.0, "light_soft": 0.8, "slope_rock": 0.6},
+	# Mountain: pines skirt the lower slopes, bare rock above, snow on the tops.
+	# Snow at -0.12 crept halfway down every summit, and half a view of white
+	# caps over pale rock is what read as a wall of cream. A 50 m treeline left
+	# the whole face bare grey; the green skirt is the colour the vista needs.
+	3: {"treeline": 130.0, "woods": Color("27432f"), "snow_bias": -0.02, "light_soft": 0.8, "slope_rock": 1.0},
+	# Country: green feet under pale open brows — chalk downland goes bare over
+	# the treeline, and a firmer terminator keeps a rolling face from shading as
+	# one soft balloon.
+	4: {"treeline": 46.0, "woods": Color("5c7436"), "snow_bias": 1.0, "light_soft": 0.5, "slope_rock": 0.7},
 }
 
 static var _ring: ShaderMaterial
@@ -85,8 +88,14 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	## colour lit by a backlit sun is a card whichever way the facets point.
 	## Night fog is already a navy; darkening it again crushed the near range
 	## into the same black triangles the Lambert overlooks used to be.
-	mat.set_shader_parameter("foot_color", fog.darkened(0.16).lerp(Color("3c4a62"), 0.38))
-	var crest: Color = fog.lerp(Color("6a7a98"), 0.48).lightened(0.06)
+	## Rock sits darker than the air it is seen through. Both colours used to
+	## land within a few percent of the haze's own value, so once the aerial
+	## term had mixed in, near and far range had the same pale value and the
+	## distance read as white-out instead of as depth — sunlit faces blew out
+	## to sand-coloured dunes against a pale sky. Darker and bluer at both
+	## ends keeps a range a mountain at any hour.
+	mat.set_shader_parameter("foot_color", fog.darkened(0.40).lerp(Color("2a3a52"), 0.56))
+	var crest: Color = fog.darkened(0.16).lerp(Color("4a6488"), 0.60)
 	mat.set_shader_parameter("crest_color", crest)
 	## What an up-facing plane collects from the dusk dome. This is the term
 	## that keeps the backlit face off zero without smearing sunset over it.

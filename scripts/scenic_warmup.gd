@@ -12,7 +12,7 @@ extends Node
 ## compile, it does not shorten it. What this file can do is make the warmup cheap
 ## rather than expensive - measured, it adds ~300 ms to the boot frame where the
 ## version it replaces added ~900 ms - and pay for the programs the boot frame
-## never touches (the lake and sea sheets, the vista rock, the overlook dressing,
+## never touches (the lake sheet, the vista rock, the overlook dressing,
 ## the contact patch under the first car) while the start menu is up rather than
 ## at the moment a chunk that uses one streams in at 165 km/h.
 ##
@@ -155,8 +155,8 @@ func _build_surfaces(preview: SubViewport) -> void:
 	var materials: Array[Material] = [LowPolyGD.solid_material(), LowPolyGD.glow_material(),
 		LowPolyGD.road_material(), LowPolyGD.terrain_material(), LowPolyGD.metal_material(),
 		LowPolyGD.paint_material(), LowPolyGD.foliage_material(), LowPolyGD.mirror_material(),
-		RoadChunkGD.water_material(), RoadChunkGD.water_material_sea(), RoadChunkGD.beacon_material(),
-		RangeMaterialGD.ring(), RangeMaterialGD.overlook(1), RangeMaterialGD.overlook(2),
+		RoadChunkGD.water_material(), RoadChunkGD.beacon_material(),
+		RangeMaterialGD.ring(), RangeMaterialGD.overlook(1),
 		RangeMaterialGD.overlook(3), RangeMaterialGD.overlook(4), RoadChunkGD._vista_rock_material(Color("5a5148"))]
 	for i in materials.size():
 		var position_hint := Vector3(float(i % 6) * 4.0 - 10.0, float(i / 6) * 4.0 - 6.0, 0.0)

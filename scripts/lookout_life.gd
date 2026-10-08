@@ -4,9 +4,8 @@ extends Node3D
 ## The vistas are static meshes — a lake, a far bank, a range, a sky — and a
 ## landscape in which nothing moves is a painting: something glanced at, not sat
 ## in front of. This puts life into the frame. Birds work the wind over every
-## lake; the coast gets a whale and a pod of dolphins, the pass an eagle that
-## stoops on the tarn, the gorge its mist and a heron, the vale its balloons and
-## a murmuration at dusk.
+## lake; the pass gets an eagle that stoops on the tarn, the gorge its mist and
+## a heron, the vale its balloons and a murmuration at dusk.
 ##
 ## All of it exists only while the rider is sitting: built on the frame they sit
 ## down, freed the frame they stand. The ride never pays for any of it, and the
@@ -23,9 +22,8 @@ const BIRD_SHADER: Shader = preload("res://shaders/life_bird.gdshader")
 const MIST_SHADER: Shader = preload("res://shaders/life_mist.gdshader")
 const GLOW_SHADER: Shader = preload("res://shaders/life_glow.gdshader")
 
-## RoadPath theme ids for the four overlook biomes.
+## RoadPath theme ids for the three overlook biomes.
 const FOREST := 1
-const COAST := 2
 const MOUNTAIN := 3
 const COUNTRY := 4
 
@@ -130,9 +128,6 @@ func stage_capture() -> void:
 	var hero: StringName = _events[0] if not _events.is_empty() else &""
 	var lead: float = 0.0
 	match _theme:
-		COAST:
-			hero = &"breach"
-			lead = 1.5
 		MOUNTAIN:
 			hero = &"eagle_dive"
 			lead = 2.4
@@ -219,7 +214,7 @@ func _step(dt: float) -> void:
 		_start_event(_events[_event_index % _events.size()])
 		_event_index += 1
 		_next_event = _t + _rng.randf_range(EVENT_GAP.x, EVENT_GAP.y)
-	if _theme != COAST and _t >= _next_fish:
+	if _t >= _next_fish:
 		_fish_jump()
 		_next_fish = _t + _rng.randf_range(2.5, 6.5)
 	if _mood == Mood.NIGHT and _t >= _next_star:
@@ -231,8 +226,6 @@ func _step(dt: float) -> void:
 
 func _event_cycle() -> Array[StringName]:
 	match _theme:
-		COAST:
-			return [&"dolphins", &"breach", &"cormorants", &"spout"]
 		MOUNTAIN:
 			return [&"eagle_dive", &"choughs", &"eagle_dive", &"choughs"]
 		FOREST:
@@ -242,14 +235,6 @@ func _event_cycle() -> Array[StringName]:
 
 func _start_event(id: StringName) -> void:
 	match id:
-		&"breach":
-			_whale_breach()
-		&"spout":
-			_whale_spout()
-		&"dolphins":
-			_dolphins()
-		&"cormorants":
-			_crossing(7, _dark_bird().lightened(0.04), 2.1, _rng.randf_range(90.0, 150.0), -6.0, 13.0, true)
 		&"eagle_dive":
 			_eagle_dive()
 		&"choughs":
@@ -268,8 +253,6 @@ func _ambient() -> void:
 	## What is always there while you sit. The events come and go over it.
 	var before: int = _actors.size()
 	match _theme:
-		COAST:
-			_soarers(6, _gull(), 2.0, Vector2(26.0, 70.0), Vector2(-4.0, 10.0), 9.0)
 		MOUNTAIN:
 			_soarers(2, Color("3b2e24"), 4.6, Vector2(90.0, 150.0), Vector2(12.0, 30.0), 11.0)
 			_mist(5)
@@ -358,7 +341,7 @@ func _dark_bird() -> Color:
 	return Color("1d1a24")
 
 
-func _gull() -> Color:
+func _pale_bird() -> Color:
 	return Color("737a88") if _mood == Mood.NIGHT else Color("ece8df")
 
 
@@ -399,7 +382,7 @@ static func bird_material() -> ShaderMaterial:
 
 
 static func body_material() -> StandardMaterial3D:
-	## Whales, dolphins and fish: wet skin, so a little sheen off the low sun.
+	## Fish: wet skin, so a little sheen off the low sun.
 	if _body_shared == null:
 		_body_shared = StandardMaterial3D.new()
 		_body_shared.vertex_color_use_as_albedo = true
@@ -573,42 +556,7 @@ static func _loft_body(
 			_tri(st, p00, p11, p10, col, centroid - axis)
 
 
-static func _make_whale_mesh() -> ArrayMesh:
-	## A humpback: dark back, white throat, the long white flippers and a broad
-	## fluke. Thirteen metres, nose to -Z.
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var dark := Color("27303a")
-	var pale := Color("d6d0c4")
-	var profile := [
-		[-6.6, 0.12], [-5.8, 0.85], [-4.4, 1.42], [-2.6, 1.72], [-0.6, 1.66],
-		[1.4, 1.32], [3.2, 0.86], [4.7, 0.46], [5.9, 0.24], [6.6, 0.13],
-	]
-	_loft_body(st, profile, 10, 0.86, dark, pale, -0.35)
-	for s: float in [-1.0, 1.0]:
-		var root_a := Vector3(1.25 * s, -0.55, -3.2)
-		var root_b := Vector3(1.3 * s, -0.6, -2.1)
-		var tip := Vector3(5.4 * s, -1.6, -0.4)
-		var mid := Vector3(3.4 * s, -1.05, -1.0)
-		var fin := Color("e2dccf")
-		_tri(st, root_a, mid, root_b, fin, Vector3.UP)
-		_tri(st, root_b, mid, tip, fin, Vector3.UP)
-		_tri(st, root_a, tip, mid, fin, Vector3.UP)
-		# Flukes: dark above, white beneath, as a pair of sheets back to back.
-		var notch := Vector3(0.0, 0.0, 7.3)
-		var root := Vector3(0.0, 0.0, 6.2)
-		var ftip := Vector3(2.9 * s, 0.12, 7.9)
-		var lead := Vector3(1.5 * s, 0.0, 6.7)
-		_tri(st, root + Vector3(0, 0.04, 0), lead + Vector3(0, 0.04, 0), ftip + Vector3(0, 0.04, 0), dark, Vector3.UP)
-		_tri(st, root + Vector3(0, 0.04, 0), ftip + Vector3(0, 0.04, 0), notch + Vector3(0, 0.04, 0), dark, Vector3.UP)
-		_tri(st, root - Vector3(0, 0.04, 0), lead - Vector3(0, 0.04, 0), ftip - Vector3(0, 0.04, 0), pale, Vector3.DOWN)
-		_tri(st, root - Vector3(0, 0.04, 0), ftip - Vector3(0, 0.04, 0), notch - Vector3(0, 0.04, 0), pale, Vector3.DOWN)
-	# The small dorsal hump a humpback is named for.
-	_tri(st, Vector3(0.0, 1.05, 2.0), Vector3(0.0, 1.55, 2.9), Vector3(0.0, 0.95, 3.5), dark, Vector3.RIGHT)
-	return st.commit()
-
-
-static func _make_dolphin_mesh(length: float, dark: Color, pale: Color) -> ArrayMesh:
+static func _make_fish_mesh(length: float, dark: Color, pale: Color) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var h := length * 0.5
@@ -712,7 +660,7 @@ func _set_wings(f: Dictionary, i: int, flap: float, fold: float) -> void:
 
 func _crossing(count: int, color: Color, span: float, dist: float, elev: float, speed: float, v_form: bool) -> void:
 	## A flock crossing the frame from one edge to the other: geese in a skein,
-	## cormorants low over the sea, a loose chatter of choughs.
+	## a loose chatter of choughs.
 	var flock := _flock(count, color, span, Vector2(13.0, 17.0) if v_form else Vector2(22.0, 30.0), 1.0)
 	var hand: float = -1.0 if _rng.randf() < 0.5 else 1.0
 	var start := _sky(-58.0 * hand, dist, elev)
@@ -758,9 +706,8 @@ func _step_crossing(a: Dictionary, dt: float) -> bool:
 
 
 func _soarers(count: int, color: Color, span: float, dist: Vector2, rise: Vector2, speed: float) -> void:
-	## Birds riding the air in slow circles: gulls off the headland, buzzards and
-	## eagles over the woods and the pass. Mostly gliding; now and then a few
-	## wingbeats to hold height.
+	## Birds riding the air in slow circles: buzzards and eagles over the woods
+	## and the pass. Mostly gliding; now and then a few wingbeats to hold height.
 	var flock := _flock(count, color, span, Vector2(9.0, 12.0), 0.0)
 	var centres := PackedVector3Array()
 	var radii := PackedFloat32Array()
@@ -950,7 +897,7 @@ func _birds_burst() -> void:
 	var count: int = 36
 	# Pale undersides: against a dark wood and darker water, wings taking the
 	# low sun are the only birds the eye can find.
-	var flock := _flock(count, _gull().lerp(Color("f2d2b8"), 0.4), 1.5, Vector2(30.0, 38.0), 1.0)
+	var flock := _flock(count, _pale_bird().lerp(Color("f2d2b8"), 0.4), 1.5, Vector2(30.0, 38.0), 1.0)
 	var src := _view(_rng.randf_range(-14.0, 14.0), _rng.randf_range(34.0, 48.0), -_rng.randf_range(34.0, 44.0))
 	var hand: float = -1.0 if _rng.randf() < 0.5 else 1.0
 	var scatter := PackedVector3Array()
@@ -984,168 +931,7 @@ func _step_burst(a: Dictionary, dt: float) -> bool:
 	return t < 24.0
 
 
-# ---------------------------------------------------------- whales and fish
-
-
-func _whale_breach() -> void:
-	var spot := _water_spot(165.0, 240.0, HERO_ANGLE - 6.0, 45.0)
-	if spot == Vector3.INF:
-		return
-	var heading := (_right * (1.0 if _rng.randf() < 0.5 else -1.0) + _fwd * _rng.randf_range(-0.3, 0.3)).normalized()
-	var whale := _body_node(_make_whale_mesh())
-	# Twice life size. From a hundred metres up and two hundred out a true
-	# fifteen-metre humpback is a dash; the leap has to read as a whale.
-	whale.scale = Vector3.ONE * 2.0
-	whale.visible = false
-	_actors.append({"fn": _step_breach, "t": 0.0, "node": whale, "at": spot, "dir": heading, "cue": 0})
-
-
-func _step_breach(a: Dictionary, dt: float) -> bool:
-	var t: float = a["t"]
-	var whale: MeshInstance3D = a["node"]
-	var heading: Vector3 = a["dir"]
-	var at: Vector3 = a["at"]
-	var fly: float = clampf(t, 0.0, 4.4)
-	var y: float = _water_y - 8.5 + 19.0 * fly - 4.9 * fly * fly
-	var pos: Vector3 = at + heading * 3.2 * fly
-	pos.y = y
-	# Nose to the sky on the way up, then over onto its back for the landing.
-	var pitch: float = deg_to_rad(lerpf(82.0, -40.0, smoothstep(0.7, 4.0, fly)))
-	var roll: float = deg_to_rad(150.0) * smoothstep(1.2, 3.8, fly)
-	var b := Basis.looking_at(heading, Vector3.UP) * Basis(Vector3.RIGHT, pitch) * Basis(Vector3.BACK, roll)
-	whale.transform = Transform3D(b.scaled(whale.scale), pos)
-	whale.visible = t < 4.5
-	var cue: int = a["cue"]
-	var nose: Vector3 = pos + b * Vector3(0.0, 0.0, -7.0) * whale.scale.x
-	if cue == 0 and t > 0.3:
-		a["cue"] = 1
-		_splash(Vector3(nose.x, _water_y, nose.z), 80, 9.0, 4.5, 0.8)
-		_ring(Vector3(nose.x, _water_y, nose.z), 2.0, 11.0, 3.0, 0.8)
-	if cue == 1 and t > 3.36:
-		a["cue"] = 2
-		var hit := Vector3(pos.x, _water_y, pos.z)
-		_splash(hit, 170, 14.0, 9.0, 1.3)
-		_splash(hit + heading * 6.0, 70, 8.0, 7.0, 0.9)
-		_ring(hit, 3.0, 22.0, 4.5, 0.95)
-		_ring(hit, 1.0, 13.0, 3.2, 0.7)
-	if cue == 2 and t > 4.1:
-		a["cue"] = 3
-		_ring(Vector3(pos.x, _water_y, pos.z), 6.0, 30.0, 5.5, 0.5)
-	return t < 8.0
-
-
-func _whale_spout() -> void:
-	## Two breaths at the surface — back, blow, back — and then the fluke dive.
-	var spot := _water_spot(140.0, 250.0, HERO_ANGLE - 4.0, 45.0)
-	if spot == Vector3.INF:
-		return
-	var heading := (_right * (1.0 if _rng.randf() < 0.5 else -1.0) + _fwd * _rng.randf_range(-0.5, 0.5)).normalized()
-	var whale := _body_node(_make_whale_mesh())
-	whale.scale = Vector3.ONE * 2.0
-	_actors.append({"fn": _step_spout, "t": 0.0, "node": whale, "at": spot, "dir": heading, "cue": 0})
-
-
-func _step_spout(a: Dictionary, dt: float) -> bool:
-	var t: float = a["t"]
-	var whale: MeshInstance3D = a["node"]
-	var heading: Vector3 = a["dir"]
-	var pos: Vector3 = (a["at"] as Vector3) + heading * 2.4 * t
-	var pitch: float = 0.0
-	var y: float = _water_y - 3.0
-	if t < 8.0:
-		# Two rolls at the surface: rise, show the back, sink a little.
-		var u: float = fposmod(t, 4.0) / 4.0
-		y = _water_y - 2.3 + 1.05 * sin(PI * u)
-		pitch = deg_to_rad(6.0 * cos(PI * u))
-	else:
-		# Fluke up: the head goes down and the tail comes clear of the water.
-		var u: float = clampf((t - 8.0) / 2.6, 0.0, 1.0)
-		pitch = deg_to_rad(-80.0) * smoothstep(0.0, 1.0, u)
-		y = lerpf(_water_y - 1.4, _water_y - 4.8, smoothstep(0.0, 1.0, u)) - maxf(t - 10.4, 0.0) * 4.5
-	pos.y = y
-	var b := Basis.looking_at(heading, Vector3.UP) * Basis(Vector3.RIGHT, pitch)
-	whale.transform = Transform3D(b.scaled(whale.scale), pos)
-	var head: Vector3 = pos + b * Vector3(0.0, 0.0, -4.2) * whale.scale.x
-	var cue: int = a["cue"]
-	if (cue == 0 and t > 1.4) or (cue == 1 and t > 5.4):
-		a["cue"] = cue + 1
-		_blow(Vector3(head.x, _water_y + 0.6, head.z))
-		_ring(Vector3(head.x, _water_y, head.z), 2.0, 9.0, 3.0, 0.45)
-	if t > 9.4 and t < 11.4 and _rng.randf() < 0.6:
-		# Water streaming off the trailing edge of the flukes.
-		var tail: Vector3 = pos + b * Vector3(_rng.randf_range(-3.0, 3.0), 0.0, 7.6) * whale.scale.x
-		if tail.y > _water_y:
-			_emit(tail, Vector3(_rng.randf_range(-0.4, 0.4), -0.5, _rng.randf_range(-0.4, 0.4)), 1.4, 0.32, 0.4)
-	if cue == 2 and t > 11.2:
-		a["cue"] = 3
-		_ring(Vector3(pos.x, _water_y, pos.z), 3.0, 18.0, 4.5, 0.6)
-	return t < 14.0
-
-
-func _blow(at: Vector3) -> void:
-	## A whale's breath: a column of mist that rises, spreads and hangs.
-	for _i in 70:
-		var v := Vector3(_rng.randfn(0.0, 0.8), _rng.randf_range(8.0, 13.0), _rng.randfn(0.0, 0.8))
-		_emit(at, v, _rng.randf_range(1.8, 2.8), _rng.randf_range(0.35, 0.7), 1.3)
-
-
-func _dolphins() -> void:
-	## A pod crossing the bay, leaping in turn.
-	var spot := _water_spot(120.0, 200.0, 12.0, 40.0)
-	if spot == Vector3.INF:
-		return
-	var hand: float = -1.0 if _rng.randf() < 0.5 else 1.0
-	var heading := (_right * hand + _fwd * _rng.randf_range(-0.25, 0.25)).normalized()
-	var start: Vector3 = spot - heading * 70.0
-	var mesh := _make_dolphin_mesh(3.6, Color("4f5b66"), Color("c9cbc6"))
-	var pod: Array = []
-	for i in 5:
-		var mi := _body_node(mesh)
-		mi.visible = false
-		pod.append({
-			"mi": mi, "lag": float(i) * 4.5 + _rng.randf_range(-1.0, 1.0), "side": _rng.randf_range(-4.0, 4.0),
-			"ph": float(i) * 0.47 + _rng.randf_range(0.0, 0.3), "wet": 0,
-		})
-	var holder := Node3D.new()
-	_root.add_child(holder)
-	for d in pod:
-		var mi: MeshInstance3D = d["mi"]
-		mi.reparent(holder)
-	_actors.append({"fn": _step_dolphins, "t": 0.0, "node": holder, "start": start, "dir": heading, "pod": pod})
-
-
-func _step_dolphins(a: Dictionary, dt: float) -> bool:
-	var t: float = a["t"]
-	var heading: Vector3 = a["dir"]
-	var across := heading.cross(Vector3.UP).normalized()
-	var period: float = 2.1
-	var air: float = 0.48
-	for d: Dictionary in a["pod"]:
-		var mi: MeshInstance3D = d["mi"]
-		var travel: float = t * 7.5 - float(d["lag"])
-		var base: Vector3 = (a["start"] as Vector3) + heading * travel + across * float(d["side"])
-		var cycle: float = fposmod(t + float(d["ph"]), period) / period
-		if cycle < air and t > 0.4 and t < 16.0:
-			var u: float = cycle / air
-			var h: float = 2.6 * sin(PI * u) - 0.6
-			var slope: float = 2.6 * PI * cos(PI * u) / (air * period * 7.5)
-			var pos := base + Vector3.UP * (_water_y + h - base.y)
-			var b := Basis.looking_at(heading, Vector3.UP) * Basis(Vector3.RIGHT, atan(slope))
-			mi.transform = Transform3D(b, pos)
-			mi.visible = true
-			var wet: int = d["wet"]
-			if wet == 0 and u > 0.08:
-				d["wet"] = 1
-				_splash(Vector3(pos.x, _water_y, pos.z) - heading * 1.0, 14, 3.5, 1.6, 0.3)
-				_ring(Vector3(pos.x, _water_y, pos.z) - heading * 1.0, 0.6, 4.5, 1.8, 0.6)
-			elif wet == 1 and u > 0.88:
-				d["wet"] = 2
-				_splash(Vector3(pos.x, _water_y, pos.z) + heading * 1.2, 18, 3.0, 2.0, 0.3)
-				_ring(Vector3(pos.x, _water_y, pos.z) + heading * 1.2, 0.6, 5.0, 2.0, 0.6)
-		else:
-			mi.visible = false
-			d["wet"] = 0
-	return t < 17.0
+# -------------------------------------------------------------------- fish
 
 
 func _fish_jump() -> void:
@@ -1154,7 +940,7 @@ func _fish_jump() -> void:
 	if spot == Vector3.INF:
 		return
 	var heading := Vector3(_rng.randf_range(-1.0, 1.0), 0.0, _rng.randf_range(-1.0, 1.0)).normalized()
-	var fish := _body_node(_make_dolphin_mesh(1.1, Color("6f7a72"), Color("d9d6c8")))
+	var fish := _body_node(_make_fish_mesh(1.1, Color("6f7a72"), Color("d9d6c8")))
 	fish.visible = false
 	_actors.append({"fn": _step_fish, "t": 0.0, "node": fish, "at": spot, "dir": heading, "cue": 0})
 
