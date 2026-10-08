@@ -90,6 +90,23 @@ const ROAD_TARMAC := Color("636369")
 const DASH_PERIOD := 5.0
 const DASH_ON := 2.8
 const PROP_ROAD_CLEARANCE := 0.75
+## Clear air over the rideable surface. The corridor is the carriageway and the
+## scenic spur, each widened by its shoulder; a rider's head and eyes live in
+## the first couple of metres above it, and the foliage shader swings every
+## crown a few percent of its width besides.
+##
+## Two rules, both measured against the road surface under the plant: growth
+## whose lowest reach sits under FOLIAGE_LOW_HEIGHT keeps
+## FOLIAGE_LOW_CLEARANCE of air past the corridor edge, and nothing at all may
+## cross the edge below FOLIAGE_OVERHANG_HEIGHT. A tree is still welcome right
+## beside the road — only its crown has to clear it, not just its trunk.
+const FOLIAGE_LOW_CLEARANCE := 1.5
+const FOLIAGE_LOW_HEIGHT := 6.0
+const FOLIAGE_OVERHANG_HEIGHT := 9.0
+## foliage.gdshader displaces a vertex by sway_strength * lever * gust, lever
+## being mesh-local height (~1 for a crown). Per metre of instance width that
+## is ~6 cm of travel; 12% of the measured reach covers it with room to spare.
+const FOLIAGE_SWAY := 0.12
 ## Bushes packed onto the first few metres of verge. Indexed by Env. Split across
 ## frames while streaming — planting all of them at once was a 35–90 ms hitch.
 const VERGE_BUSH_COUNT := [8, 34, 18, 26, 32]
@@ -1085,9 +1102,11 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5) -> voi
 			continue
 		var towards_summit: float = 1.0 - clampf((distance - 80.0) / 1100.0, 0.0, 1.0)
 		for road_side in [-1.0, 1.0]:
-			# Near row only on most stations. Outer row is rare — Multimesh cost.
+			# Near row only on most stations. The outer row carries more of the
+			# stand now that crowns may not lean over the spur — a tree slid back
+			# to clear the corridor still wants company beside it, not a gap.
 			for row in 2:
-				if row == 1 and (station % 2 == 1 or _rng.randf() > 0.22):
+				if row == 1 and (station % 2 == 1 or _rng.randf() > 0.38):
 					continue
 				var jitter_z: float = z + _rng.randf_range(-2.0, 2.0)
 				# Sample the spur at the plant point, not the station. The apron
@@ -1960,6 +1979,185 @@ func _ground_scatter_allowed(z: float, lateral: float, clearance: float = 0.6) -
 	return not _on_tarmac(z, lateral, clearance) and not _viewpoint_reserves_sightline(z, lateral)
 
 
+var _corridor_frames: Dictionary = {}
+
+
+func _corridor_frame(z: float) -> Array:
+	## [centre, right, bands] for one station, cached on a 1 m grid. Every
+	## pushed plant sweeps the same stretch of route, so the path queries —
+	## the expensive part of the corridor check — are paid once per station,
+	## not once per plant part per station.
+	var key := snappedf(z, 1.0)
+	var cached: Variant = _corridor_frames.get(key)
+	if cached != null:
+		return cached
+	var flat: Basis = _path.frame_flat_at(key)
+	var frame := [_path.center_at(key), flat.x, _road_bands(key)]
+	_corridor_frames[key] = frame
+	return frame
+
+
+func _road_bands(z: float) -> Array[Vector2]:
+	## Rideable strips at this station, each widened by its shoulder: the main
+	## carriageway and — on the climb to an overlook — the scenic spur, which is
+	## the same tarmac to a rider even though it lives sixty metres out.
+	var bands: Array[Vector2] = [
+		Vector2(-HALF_WIDTH - RoadPathGD.SPUR_SHOULDER, HALF_WIDTH + RoadPathGD.SPUR_SHOULDER)
+	]
+	var spur: Vector2 = _path.spur_interval(z)
+	if spur != Vector2.ZERO:
+		bands.append(
+			Vector2(spur.x - RoadPathGD.SPUR_SHOULDER, spur.y + RoadPathGD.SPUR_SHOULDER)
+		)
+	return bands
+
+
+func _band_hit(z: float, slat: float, need: float) -> bool:
+	## Whether a disc of half-width `need` at this lateral touches a corridor band.
+	if absf(slat) <= HALF_WIDTH + RoadPathGD.SPUR_SHOULDER + need:
+		return true
+	var spur: Vector2 = _path.spur_interval(z)
+	return (
+		spur != Vector2.ZERO
+		and slat >= spur.x - RoadPathGD.SPUR_SHOULDER - need
+		and slat <= spur.y + RoadPathGD.SPUR_SHOULDER + need
+	)
+
+
+func _foliage_road_push(world_pos: Vector3, reach: float, bottom_y: float, sways: bool = true) -> float:
+	## How far to slide a plant along the road's lateral axis so none of it dips
+	## into the corridor: 0.0 when it already clears, a signed lateral delta to
+	## add when a sideways move rescues it, and INF when nothing nearby does.
+	##
+	## `world_pos` is the centre of the part's horizontal extent, `reach` that
+	## extent, and `bottom_y` the lowest point of the part in world space — the
+	## margin a part owes depends on how far above the tarmac it hangs. Stations
+	## are sampled across the part's own span because a crown on the inside of a
+	## bend can reach the road well away from its trunk's station.
+	var sway: float = reach * FOLIAGE_SWAY + 0.05 if sways else 0.0
+	var need_max: float = reach + sway + FOLIAGE_LOW_CLEARANCE
+	# The part is checked against the road across its own z-span plus the
+	# corridor's wander: on the climb the spur sweeps several metres sideways
+	# per station, so a part can reach the band well past its own footprint.
+	var span: float = need_max + 8.0
+	# Cheap far-field exit: this is sampled per plant part, so most calls are a
+	# hundred metres from the nearest band and should cost two path queries. The
+	# slop covers the centreline's worst-case wander across the span
+	# (curvature*span²/2 at the sharpest bend the path generates) plus the
+	# spur's sideways sweep.
+	var station0 := _corridor_frame(world_pos.z)
+	var slat0: float = (world_pos - (station0[0] as Vector3)).dot(station0[1])
+	var halo := need_max + 2.5 + span * span * 0.006
+	var near_band := false
+	for band: Vector2 in station0[2]:
+		if slat0 + halo > band.x and slat0 - halo < band.y:
+			near_band = true
+	if not near_band:
+		return 0.0
+	# Stations every couple of metres across the part's own span: the band edges
+	# swing on a bend, and a crown checked only at its trunk's station can still
+	# reach the tarmac twenty metres along. Each station votes for the nearer
+	# escape; a part caught between the carriageway and the spur at a junction
+	# wants both at once, and there is no slide that fixes that — it is refused.
+	var push_right := 0.0
+	var push_left := 0.0
+	var sz: float = world_pos.z - span
+	while sz <= world_pos.z + span + 0.01:
+		var station := _corridor_frame(sz)
+		var slat: float = (world_pos - (station[0] as Vector3)).dot(station[1])
+		for band: Vector2 in station[2]:
+			# A station that is clear under the largest possible margin stays
+			# clear under the real one — do not pay for a road-height sample
+			# until the lateral test says the part is actually near the edge.
+			if slat + need_max <= band.x or slat - need_max >= band.y:
+				continue
+			var edge_lat: float = clampf(slat, band.x, band.y)
+			var road_y: float = (_path.point_at(sz, edge_lat) as Vector3).y
+			if bottom_y >= road_y + FOLIAGE_OVERHANG_HEIGHT:
+				continue
+			var margin := FOLIAGE_LOW_CLEARANCE if bottom_y < road_y + FOLIAGE_LOW_HEIGHT else 0.0
+			var need: float = reach + sway + margin
+			if slat + need <= band.x or slat - need >= band.y:
+				continue
+			# Escape through the nearer edge of the band, with enough slack that
+			# the curve between two sampled stations cannot reopen the overlap —
+			# on the sweeping spur the band itself slides a metre per station,
+			# so the slack is wider than a sampling step can be wrong by.
+			if slat >= (band.x + band.y) * 0.5:
+				push_right = maxf(push_right, band.y + need + 0.9 - slat)
+			else:
+				push_left = minf(push_left, band.x - need - 0.9 - slat)
+		sz += 2.0
+	if push_right > 0.0 and push_left < 0.0:
+		return INF
+	var push: float = push_right if push_right > 0.0 else push_left
+	if absf(push) > 60.0:
+		return INF
+	return push
+
+
+func _xform_road_push(xform: Transform3D, mesh: Mesh, sways: bool = true) -> float:
+	## Corridor check for one prepared instance transform: measure the mesh's
+	## real horizontal reach and underside under this transform, then ask
+	## `_foliage_road_push` how far sideways clears it. Every foliage bucket is
+	## placed through this, so the regression test measures exactly what the
+	## placement code measured.
+	var aabb: AABB = mesh.get_aabb()
+	var centre_local: Vector3 = aabb.get_center()
+	var reach := 0.0
+	var bottom := INF
+	for corner in 8:
+		var local: Vector3 = aabb.position + aabb.size * Vector3(
+			float(corner & 1), float((corner >> 1) & 1), float((corner >> 2) & 1)
+		)
+		var off: Vector3 = xform.basis * (local - centre_local)
+		reach = maxf(reach, Vector2(off.x, off.z).length())
+		bottom = minf(bottom, (xform.basis * local).y)
+	return _foliage_road_push(
+		xform * centre_local + _origin, reach, bottom + xform.origin.y + _origin.y, sways
+	)
+
+
+func _planted_parts_road_push(marks: Dictionary) -> float:
+	## Measure what the grow functions just appended — every limb and crown gets
+	## its real horizontal reach and underside from the mesh bounds under its
+	## transform — and answer the sideways shove that clears all of it off the
+	## corridor, or INF if the tree cannot be saved by sliding.
+	var push_right := 0.0
+	var push_left := 0.0
+	var buckets: Array = [
+		[_trunks, unit_trunk(), false, int(marks["trunks"])],
+		[_crowns, unit_crown(), true, int(marks["crowns"])],
+		[_conifers, unit_conifer(), true, int(marks["conifers"])],
+	]
+	for entry: Array in buckets:
+		var xforms: Array = entry[0]
+		for i in range(int(entry[3]), xforms.size()):
+			var d: float = _xform_road_push(xforms[i], entry[1], entry[2])
+			if is_inf(d):
+				return INF
+			if d > 0.0:
+				push_right = maxf(push_right, d)
+			elif d < 0.0:
+				push_left = minf(push_left, d)
+	# A trunk voting left while its crown votes right is a tree straddling the
+	# corridor; no single slide fixes that, so the whole planting is refused.
+	if push_right > 0.0 and push_left < 0.0:
+		return INF
+	return push_right if push_right > 0.0 else push_left
+
+
+func _rollback_planted_parts(marks: Dictionary) -> void:
+	## Drop everything a rejected grow attempt appended. Half-keeping a shifted
+	## tree would leave orphan boughs standing where the trunk used to be.
+	_trunks.resize(int(marks["trunks"]))
+	_trunk_cols.resize(int(marks["trunks"]))
+	_crowns.resize(int(marks["crowns"]))
+	_crown_cols.resize(int(marks["crowns"]))
+	_conifers.resize(int(marks["conifers"]))
+	_conifer_cols.resize(int(marks["conifers"]))
+
+
 func _profile_drop_at(lateral: float, z: float) -> float:
 	## Match the outer terrain ribbon's profile. ground_at() is the road/path
 	## surface; the rendered verge/ground bands add this extra drop below it.
@@ -2044,18 +2242,30 @@ func _deck_blob(
 	z: float, lateral: float, size: Vector3, color: Color, lift: float = 0.0, leafy: bool = true
 ) -> void:
 	## Heather, turf and low planting on the terrace — same deck placement as
-	## `_deck_cube`, or it floats the moment the headland pitches.
-	lift += _terrace_floor_at(z, lateral)
-	var flat: Basis = _path.frame_flat_at(z)
-	var frame := Basis(flat.x, flat.y, flat.z).rotated(flat.y, _rng.randf_range(0.0, TAU))
-	var scaled := Basis(frame.x * size.x, frame.y * size.y, frame.z * size.z)
-	var xform := Transform3D(scaled, _p(z, lateral, -(lift + size.y * 0.42)))
-	if leafy:
-		_leaves.append(xform)
-		_leaf_cols.append(color)
-	else:
-		_blobs.append(xform)
-		_blob_cols.append(color)
+	## `_deck_cube`, or it floats the moment the headland pitches. The leafy ones
+	## also keep the corridor rule: a trough bloom leaning over the slip road
+	## brushes a rider the same as a hedge does.
+	for _attempt in 3:
+		var rng_state: int = _rng.state
+		var deck_lift: float = lift + _terrace_floor_at(z, lateral)
+		var flat: Basis = _path.frame_flat_at(z)
+		var frame := Basis(flat.x, flat.y, flat.z).rotated(flat.y, _rng.randf_range(0.0, TAU))
+		var scaled := Basis(frame.x * size.x, frame.y * size.y, frame.z * size.z)
+		var xform := Transform3D(scaled, _p(z, lateral, -(deck_lift + size.y * 0.42)))
+		if leafy:
+			var push := _xform_road_push(xform, unit_sphere(), true)
+			if is_inf(push):
+				return
+			if push != 0.0:
+				lateral += push
+				_rng.state = rng_state
+				continue
+			_leaves.append(xform)
+			_leaf_cols.append(color)
+		else:
+			_blobs.append(xform)
+			_blob_cols.append(color)
+		return
 
 
 func _deck_lamp(z: float, lateral: float, size: Vector3, color: Color, lift: float) -> void:
@@ -2148,29 +2358,44 @@ func _blob(
 	## corner fit — right for a big smooth hill hump, where a single centre sample
 	## is imperceptible but the nine were a real streaming cost.
 	var radius := maxf(size.x, size.z) * 0.5
-	# Forced planting still cannot sit on tarmac. Vista rocks use forced to stand
-	# in reserved ground; the slip road is not reserved, and the mountain midfield
-	# uses forced to skip the nine-sample query.
-	if _on_tarmac(z, lateral, maxf(radius, 0.8)):
+	for _attempt in 3:
+		var rng_state: int = _rng.state
+		# Forced planting still cannot sit on tarmac. Vista rocks use forced to
+		# stand in reserved ground; the slip road is not reserved, and the
+		# mountain midfield uses forced to skip the nine-sample query.
+		if _on_tarmac(z, lateral, maxf(radius, 0.8)):
+			return
+		if not forced and not _footprint_is_clear(z, lateral, radius, radius):
+			return
+		var base: Vector3 = _ground_base_for_footprint(z, lateral, radius, radius, follow_terrain) - _origin + Vector3(0, lift, 0)
+		var basis := Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(size)
+		var up: Vector3 = _path.frame_flat_at(z).y if follow_terrain else Vector3.UP
+		var xform := Transform3D(basis, base + up * (size.y * 0.42))
+		# Planting is measured against the analytic surface, but the waterline
+		# checks run on the ribbon's chord — a leafy clump that slips between the
+		# two lands in the lake, standing in open water like litter. Rocks are
+		# allowed to sit in the shallows; foliage is not.
+		if leafy and _on_lake and xform.origin.y + _origin.y < _vp_water_y - 0.4:
+			return
+		if leafy:
+			# The corridor rule is about leaves, not stone: a hedge or bush keeps
+			# its whole body — sway included — out of the rider's airspace, so it
+			# slides out along the verge rather than clipping the shoulder. The
+			# stream is rewound per retry so the shift moves the blob it measured.
+			var push := _xform_road_push(xform, unit_sphere(), true)
+			if is_inf(push):
+				return
+			if push != 0.0:
+				lateral += push
+				_rng.state = rng_state
+				continue
+		if leafy:
+			_leaves.append(xform)
+			_leaf_cols.append(color)
+		else:
+			_blobs.append(xform)
+			_blob_cols.append(color)
 		return
-	if not forced and not _footprint_is_clear(z, lateral, radius, radius):
-		return
-	var base: Vector3 = _ground_base_for_footprint(z, lateral, radius, radius, follow_terrain) - _origin + Vector3(0, lift, 0)
-	var basis := Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(size)
-	var up: Vector3 = _path.frame_flat_at(z).y if follow_terrain else Vector3.UP
-	var xform := Transform3D(basis, base + up * (size.y * 0.42))
-	# Planting is measured against the analytic surface, but the waterline
-	# checks run on the ribbon's chord — a leafy clump that slips between the
-	# two lands in the lake, standing in open water like litter. Rocks are
-	# allowed to sit in the shallows; foliage is not.
-	if leafy and _on_lake and xform.origin.y + _origin.y < _vp_water_y - 0.4:
-		return
-	if leafy:
-		_leaves.append(xform)
-		_leaf_cols.append(color)
-	else:
-		_blobs.append(xform)
-		_blob_cols.append(color)
 
 
 func _hay_bale(z: float, lateral: float, radius: float, length: float, color: Color) -> void:
@@ -2196,32 +2421,56 @@ func _tree(
 ) -> void:
 	## One whole tree, grounded and road-checked exactly once.
 	##
-	## The old builder tested each part against the road separately, so a tree on
-	## the verge could keep its trunk and lose its crown. Here the trunk footprint
-	## decides, and the canopy is free to lean out over the tarmac — a bough over
-	## the road is worth more than another identical ball five metres back.
+	## The trunk footprint decides, but the crown is checked too: the tree is
+	## grown speculatively, every limb and crown is measured against the
+	## corridor (bends included), and the whole tree is slid sideways until its
+	## foliage clears the road — or given up on. A bough over the tarmac puts
+	## leaves in the rider's face, which is the one thing a roadside tree may
+	## never do.
 	##
 	## `forced` is for authored planting inside ground the overlook reserves — the
 	## far shore of its lake is exactly the place the random pass must not touch
 	## and the set piece must. `lift` raises the whole tree off the ground it was
 	## sampled on, which is how anything gets planted on an island: the terrain
-	## under one is the lake bed, several metres down.
+	## under one is the lake bed, several metres down. Forced still has to clear
+	## the corridor — the spur woodland is authored planting right beside tarmac.
 	var foot: float = clampf(height * 0.1, 0.35, 1.1)
-	if _on_tarmac(z, lateral, foot + PROP_ROAD_CLEARANCE):
-		return
-	if not forced and not _footprint_is_clear(z, lateral, foot, foot):
-		return
-	var base: Vector3 = _ground_base_for_footprint(z, lateral, foot, foot) - _origin + Vector3(0.0, lift, 0.0)
-	var frame := Transform3D(Basis(Vector3.UP, _rng.randf_range(0.0, TAU)), base)
-	match species:
-		Flora.CONIFER:
-			_grow_conifer(frame, height, color)
-		Flora.BIRCH:
-			_grow_birch(frame, height, color)
-		Flora.PINE:
-			_grow_pine(frame, height, color)
-		_:
-			_grow_broadleaf(frame, height, color)
+	# A tree rooted well clear of every corridor band cannot swing a crown onto
+	# the road from there; the deep-scenery majority skips the grow-measure-shift
+	# dance entirely and pays only for its own shape.
+	var corridor_near: bool = _band_hit(z, lateral, height * 0.75 + FOLIAGE_LOW_CLEARANCE + 11.0)
+	for _attempt in 4:
+		if _on_tarmac(z, lateral, foot + PROP_ROAD_CLEARANCE):
+			return
+		if not forced and not _footprint_is_clear(z, lateral, foot, foot):
+			return
+		# Rewind the stream on every retry: a shift must move the *same* tree it
+		# measured, not roll a new shape whose crown lands somewhere unexpected.
+		var rng_state: int = _rng.state
+		var base: Vector3 = _ground_base_for_footprint(z, lateral, foot, foot) - _origin + Vector3(0.0, lift, 0.0)
+		var frame := Transform3D(Basis(Vector3.UP, _rng.randf_range(0.0, TAU)), base)
+		var marks := {
+			"trunks": _trunks.size(), "crowns": _crowns.size(), "conifers": _conifers.size()
+		}
+		match species:
+			Flora.CONIFER:
+				_grow_conifer(frame, height, color)
+			Flora.BIRCH:
+				_grow_birch(frame, height, color)
+			Flora.PINE:
+				_grow_pine(frame, height, color)
+			_:
+				_grow_broadleaf(frame, height, color)
+		if not corridor_near:
+			return
+		var push := _planted_parts_road_push(marks)
+		if push == 0.0:
+			return
+		_rollback_planted_parts(marks)
+		if is_inf(push):
+			return
+		lateral += push
+		_rng.state = rng_state
 
 
 func _limb(frame: Transform3D, from: Vector3, to: Vector3, thickness: float, color: Color) -> void:
@@ -2833,6 +3082,36 @@ func _build_guardrail_incremental() -> void:
 			return
 
 
+func _grass_at(z: float, lateral: float, size: Vector3, color: Color) -> void:
+	## One grass tuft, grounded on the terrain under it. Grass is foliage too —
+	## it sways, and a blade at knee height still brushes a shoulder — so it
+	## answers the corridor the way the trees do: measured under its own
+	## transform and slid outward until it clears, not just kept off the tarmac
+	## by a fixed strip.
+	for _attempt in 3:
+		if (
+			_on_tarmac(z, lateral, FOLIAGE_LOW_CLEARANCE + 0.6)
+			or ((_on_lake or _on_spur) and _viewpoint_reserves_sightline(z, lateral))
+		):
+			return
+		var rng_state: int = _rng.state
+		var flat: Basis = _path.frame_flat_at(z)
+		var xform := Transform3D(
+			Basis(flat.x, flat.y, flat.z).rotated(flat.y, _rng.randf_range(0.0, TAU)).scaled(size),
+			_terrain_surface_at(z, lateral) - _origin - flat.y * 0.04
+		)
+		var push := _xform_road_push(xform, grass_tuft(), true)
+		if is_inf(push):
+			return
+		if push != 0.0:
+			lateral += push
+			_rng.state = rng_state
+			continue
+		_grass.append(xform)
+		_grass_cols.append(color)
+		return
+
+
 func _grass_verge() -> void:
 	## Blades along the first few metres of verge. This is the band that moves
 	## fastest past the rider, so it is where wind reads at all — thirty metres out
@@ -2844,20 +3123,16 @@ func _grass_verge() -> void:
 	for _i in 72:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var side: float = 1.0 if _rng.randf() < 0.5 else -1.0
-		# Packed against the curb, thinning outward.
-		var lx: float = side * (HALF_WIDTH + 1.15 + pow(_rng.randf(), 1.6) * 7.5)
-		if _on_tarmac(z, lx, 0.6) or ((_on_lake or _on_spur) and _viewpoint_reserves_sightline(z, lx)):
-			continue
+		# Packed against the curb, thinning outward — but never inside the
+		# corridor margin: a swaying blade over the shoulder still brushes the
+		# rider's sleeve.
+		var lx: float = side * (HALF_WIDTH + 2.2 + pow(_rng.randf(), 1.6) * 7.5)
 		var height := _rng.randf_range(0.55, 1.18)
-		var flat: Basis = _path.frame_flat_at(z)
-		var xform := Transform3D(
-			Basis(flat.x, flat.y, flat.z).rotated(flat.y, _rng.randf_range(0.0, TAU)).scaled(
-				Vector3(_rng.randf_range(0.65, 1.15), height, _rng.randf_range(0.65, 1.15))
-			),
-			_terrain_surface_at(z, lx) - _origin - flat.y * 0.04
+		var tuft := Vector3(_rng.randf_range(0.65, 1.15), height, _rng.randf_range(0.65, 1.15))
+		_grass_at(
+			z, lx, tuft,
+			(base as Color).lerp(_pal["prop_a"], _rng.randf() * 0.5).darkened(_rng.randf() * 0.25)
 		)
-		_grass.append(xform)
-		_grass_cols.append((base as Color).lerp(_pal["prop_a"], _rng.randf() * 0.5).darkened(_rng.randf() * 0.25))
 	set_meta("grass_done", true)
 
 
@@ -2874,7 +3149,7 @@ func _hedge_verge() -> void:
 	for side in [-1.0, 1.0]:
 		var hz := z0 + _rng.randf_range(0.0, 1.1)
 		while hz < z0 + LENGTH:
-			var lx: float = side * (HALF_WIDTH + 2.05 + _rng.randf_range(0.0, 2.6))
+			var lx: float = side * (HALF_WIDTH + 3.0 + _rng.randf_range(0.0, 2.6))
 			# Forced blobs skip `_footprint_is_clear`; without a tarmac test they grow
 			# on the slip road the moment spur chunks start dressing the verge again.
 			if ((_on_lake or _on_spur) and _viewpoint_reserves_sightline(hz, lx)) or _on_tarmac(hz, lx, 1.2):
@@ -3079,7 +3354,7 @@ func _verge_plant_bushes(count: int) -> void:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var side: float = 1.0 if _rng.randf() < 0.5 else -1.0
 		# Sparser the further out, so the near verge stays the dense, fast-moving band.
-		var lx: float = side * (HALF_WIDTH + 2.0 + pow(_rng.randf(), 1.35) * 16.0)
+		var lx: float = side * (HALF_WIDTH + 3.0 + pow(_rng.randf(), 1.35) * 16.0)
 		var s := _rng.randf_range(0.7, 2.15)
 		var col: Color = (base as Color).lerp(alt, _rng.randf() * 0.7).darkened(_rng.randf() * 0.22)
 		_blob(z, lx, Vector3(s * 1.6, s * _rng.randf_range(0.85, 1.45), s * 1.5), col, 0.0, true)
@@ -3098,7 +3373,7 @@ func _verge_plant_fringe(side_filter: float) -> void:
 			var s := _rng.randf_range(0.35, 0.7)
 			_blob(
 				gz,
-				side * (HALF_WIDTH + 1.9 + _rng.randf_range(0.0, 0.9)),
+				side * (HALF_WIDTH + 2.6 + _rng.randf_range(0.0, 0.9)),
 				Vector3(s * 2.2, s * 0.7, s * 1.4),
 				(_pal["verge"] as Color).darkened(_rng.randf() * 0.3),
 				0.0,
@@ -3511,17 +3786,12 @@ func _scenery_mountain() -> void:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var side: float = 1.0 if _rng.randf() < 0.5 else -1.0
 		var lx: float = side * (HALF_WIDTH + 6.0 + pow(_rng.randf(), 1.4) * 70.0)
-		if not _ground_scatter_allowed(z, lx):
-			continue
 		var height := _rng.randf_range(0.28, 0.58)
-		var xform := Transform3D(
-			Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(
-				Vector3(_rng.randf_range(0.5, 0.9), height, _rng.randf_range(0.5, 0.9))
-			),
-			_terrain_surface_at(z, lx) - _origin - Vector3(0, 0.04, 0)
+		var tuft := Vector3(_rng.randf_range(0.5, 0.9), height, _rng.randf_range(0.5, 0.9))
+		_grass_at(
+			z, lx, tuft,
+			(_pal["verge"] as Color).lerp(_pal["prop_a"], _rng.randf() * 0.5).darkened(_rng.randf() * 0.25)
 		)
-		_grass.append(xform)
-		_grass_cols.append((_pal["verge"] as Color).lerp(_pal["prop_a"], _rng.randf() * 0.5).darkened(_rng.randf() * 0.25))
 
 	# A vermilion gate every few chunks — the landmark that tells you where you are.
 	if chunk_index % 7 == 3:
@@ -3655,17 +3925,12 @@ func _scenery_country() -> void:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var side: float = 1.0 if _rng.randf() < 0.5 else -1.0
 		var lx: float = side * (HALF_WIDTH + 10.0 + pow(_rng.randf(), 1.4) * 80.0)
-		if not _ground_scatter_allowed(z, lx):
-			continue
 		var height := _rng.randf_range(0.3, 0.62)
-		var xform := Transform3D(
-			Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(
-				Vector3(_rng.randf_range(0.5, 0.9), height, _rng.randf_range(0.5, 0.9))
-			),
-			_terrain_surface_at(z, lx) - _origin - Vector3(0, 0.04, 0)
+		var tuft := Vector3(_rng.randf_range(0.5, 0.9), height, _rng.randf_range(0.5, 0.9))
+		_grass_at(
+			z, lx, tuft,
+			(_pal["verge"] as Color).lerp(_pal["prop_a"], _rng.randf() * 0.5).darkened(_rng.randf() * 0.25)
 		)
-		_grass.append(xform)
-		_grass_cols.append((_pal["verge"] as Color).lerp(_pal["prop_a"], _rng.randf() * 0.5).darkened(_rng.randf() * 0.25))
 
 	# Round hay bales dotted through the fields, in loose little clusters rather
 	# than an even scatter — the way a baler actually leaves them behind.
@@ -7822,14 +8087,58 @@ func _build_platform_trees() -> void:
 func _lookout_tree(packed: PackedScene, z: float, lateral: float, height: float, node_name: String) -> void:
 	## A kit tree grounded the way `_tree` grounds its own: footprint fitted to
 	## the slope, then scaled from the kit's ten metres to the height asked for.
+	## The sentinels stand beside the parking apron, so the planted canopy is
+	## measured off the scene's own bounds and shifted until it clears the
+	## corridor — same rule as the grown trees.
 	var foot: float = clampf(height * 0.1, 0.35, 1.1)
-	var base: Vector3 = _ground_base_for_footprint(z, lateral, foot, foot) - _origin
+	var scale := height / LOOKOUT_TREE_HEIGHT
 	var tree: Node3D = packed.instantiate()
-	tree.transform = Transform3D(
-		Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(Vector3.ONE * height / LOOKOUT_TREE_HEIGHT), base
-	)
-	tree.name = node_name
-	add_child(tree)
+	var bounds := _scene_bounds(tree)
+	var centre_local: Vector3 = bounds.get_center()
+	# Horizontal half-diagonal of the kit's bounds — the same corner measure the
+	# corridor check applies to the bucket meshes, so a canopy offset from the
+	# trunk axis is counted at its real reach.
+	var reach: float = Vector2(bounds.size.x, bounds.size.z).length() * 0.5 * scale
+	for _attempt in 3:
+		var rng_state: int = _rng.state
+		var base: Vector3 = _ground_base_for_footprint(z, lateral, foot, foot) - _origin
+		var centre: Vector3 = base + Vector3(centre_local.x, 0.0, centre_local.z) * scale + _origin
+		var bottom: float = base.y + _origin.y + bounds.position.y * scale
+		var push := _foliage_road_push(centre, reach, bottom)
+		if push == 0.0:
+			tree.transform = Transform3D(
+				Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(Vector3.ONE * scale), base
+			)
+			tree.name = node_name
+			add_child(tree)
+			return
+		if is_inf(push):
+			break
+		lateral += push
+		_rng.state = rng_state
+	tree.free()
+
+
+static func _scene_bounds(node: Node3D) -> AABB:
+	## Combined local bounds of every mesh under `node`, in node space.
+	var bounds := AABB()
+	var found := false
+	var meshes: Array[Node] = node.find_children("*", "MeshInstance3D", true, false)
+	if node is MeshInstance3D:
+		meshes.push_front(node)
+	for mesh_node: Node in meshes:
+		var mesh_instance := mesh_node as MeshInstance3D
+		if mesh_instance.mesh == null:
+			continue
+		var local_frame := Transform3D.IDENTITY
+		var ancestor: Node3D = mesh_instance
+		while ancestor != node:
+			local_frame = ancestor.transform * local_frame
+			ancestor = ancestor.get_parent() as Node3D
+		var a: AABB = local_frame * mesh_instance.get_aabb()
+		bounds = a if not found else bounds.merge(a)
+		found = true
+	return bounds
 
 
 func _platform_bloom() -> Color:
