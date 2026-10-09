@@ -33,15 +33,15 @@ uniform vec3 cool : source_color = vec3(0.78, 0.85, 1.00);
 // colour and no depth. Lifting the toe toward a cool lavender keeps the darkest
 // pixels as shadow rather than hole — the single thing a flat-shaded frame
 // needs most to look lit instead of cut out.
-uniform float toe_lift : hint_range(0.0, 0.1) = 0.052;
-uniform vec3 shadow_tint : source_color = vec3(0.48, 0.55, 0.82);
+uniform float toe_lift : hint_range(0.0, 0.1) = 0.042;
+uniform vec3 shadow_tint : source_color = vec3(0.52, 0.57, 0.76);
 // The pastel split: apricot in the lights, lavender-teal in the darks, blended
 // by luminance rather than screen position. It is what keeps a sunny frame
 // warm where the sun lands and cool where it does not, which is most of the
 // "dreamy" in a frame that would otherwise be one flat exposure.
 uniform float lum_split : hint_range(0.0, 0.3) = 0.12;
 uniform vec3 light_tint : source_color = vec3(1.06, 0.99, 0.88);
-uniform vec3 dark_tint : source_color = vec3(0.90, 0.92, 1.02);
+uniform vec3 dark_tint : source_color = vec3(0.93, 0.94, 1.00);
 // Lens softness at the frame edge — the tilt-shift feel. The centre of the
 // road stays optically sharp; only the last band of the frame drifts.
 // Off. The blur sat exactly where the rider glances to see the ranges beside

@@ -51,7 +51,7 @@ uniform float leaf_floor : hint_range(0.0, 0.1) = 0.072;
 // undersides to the light when the wind picks them up, which is the silvery
 // ripple that runs down a hedge or across a crown — visible far beyond the
 // distance the geometry's own movement resolves at.
-uniform float gust_sheen : hint_range(0.0, 0.5) = 0.16;
+uniform float gust_sheen : hint_range(0.0, 0.5) = 0.22;
 
 varying float crown_h;
 varying float drift;

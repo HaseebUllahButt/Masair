@@ -396,11 +396,11 @@ var _applied_rain: float = -1.0
 ## paler on the fell. Anything not listed falls back to the first colour —
 ## warm pollen, which is right almost everywhere the light reaches.
 const POLLEN_TINT := {
-	RoadChunkGD.Env.FOREST: Color(0.90, 1.35, 0.62, 0.30),
-	RoadChunkGD.Env.MOUNTAIN: Color(1.20, 1.22, 1.05, 0.26),
-	RoadChunkGD.Env.COUNTRY: Color(1.70, 1.28, 0.58, 0.32),
+	RoadChunkGD.Env.FOREST: Color(0.90, 1.35, 0.62, 0.36),
+	RoadChunkGD.Env.MOUNTAIN: Color(1.20, 1.22, 1.05, 0.32),
+	RoadChunkGD.Env.COUNTRY: Color(1.70, 1.28, 0.58, 0.38),
 }
-const POLLEN_DEFAULT := Color(1.55, 1.20, 0.60, 0.28)
+const POLLEN_DEFAULT := Color(1.55, 1.20, 0.60, 0.34)
 
 
 func _ready() -> void:
@@ -593,15 +593,18 @@ func _grade_lut() -> ImageTexture:
 			# single biggest reason the midtones had nowhere to go. The pastel
 			# grade wants the blacks gently lifted and cool again, but it keeps
 			# the floor near 1.7% so the darks still have somewhere to fall:
-			# lavender shadow, not navy wash.
-			Color(0.013, 0.017, 0.031),
+			# lavender shadow, not navy wash. Trimmed back from 0.031: at that
+			# strength the lift repainted the tarmac itself violet.
+			Color(0.013, 0.017, 0.025),
 			# Shadow anchor, and the value most of the landscape actually maps
 			# into. It was blue-biased, which meant the whole scene was being
 			# pulled toward one hue in exactly the range where the image has to
 			# be a value. The dreamy grade leans the same bias a little further —
 			# lavender-teal shade against apricot light — but stays dark enough
-			# to read as shadow rather than cast.
-			Color(0.118, 0.134, 0.196),
+			# to read as shadow rather than cast. Blue pulled from 0.196: this
+			# anchor is where the road's own value maps, and at the old number
+			# the carriageway came out aubergine instead of charcoal.
+			Color(0.118, 0.136, 0.174),
 			Color(0.605, 0.566, 0.515),
 			Color(1.000, 0.945, 0.845),
 		]

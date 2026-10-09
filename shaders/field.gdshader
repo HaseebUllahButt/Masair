@@ -16,12 +16,15 @@ shader_type spatial;
 
 // Brightness swing of the rolling bands at their strongest. Kept low enough
 // that a hillside under cloud-shadow reads as weather, not a zebra.
-uniform float band_strength : hint_range(0.0, 0.5) = 0.13;
+uniform float band_strength : hint_range(0.0, 0.5) = 0.18;
 // The bands' reach: full strength inside this fraction, gone by band_fade.
 uniform float band_fade = 260.0;
 // A second, broader drift of sun-and-shadow — cloud light rather than gust
 // front, so the ground breathes even between fronts.
-uniform float drift_strength : hint_range(0.0, 0.3) = 0.06;
+uniform float drift_strength : hint_range(0.0, 0.3) = 0.09;
+// The bright side of a band is sunlight arriving, not the field going pale —
+// so it warms as it brightens, the way a gust of sun does over corn.
+uniform vec3 band_warm : source_color = vec3(1.07, 1.03, 0.92);
 
 varying vec3 world_pos;
 varying float view_dist;
@@ -52,7 +55,8 @@ void fragment() {
 		// Broad cloud drift, out of phase with the front so the two patterns
 		// cross rather than doubling into one stronger stripe.
 		float drift = sin(dot(world_pos.xz, WIND_CROSS) * 0.017 - TIME * 0.26) * 0.5 + 0.5;
-		albedo *= 1.0 + (light * band_strength + drift * drift_strength - band_strength * 0.5 - drift_strength * 0.5) * fade;
+		float wave = (light * band_strength + drift * drift_strength - band_strength * 0.5 - drift_strength * 0.5) * fade;
+		albedo *= (1.0 + wave) * mix(vec3(1.0), band_warm, clamp(wave * 5.0, 0.0, 0.75));
 	}
 	ALBEDO = albedo;
 	ROUGHNESS = 1.0;
