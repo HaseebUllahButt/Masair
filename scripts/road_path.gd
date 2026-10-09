@@ -63,9 +63,11 @@ var _cached_terrain_drop: Dictionary = {}
 func _ready() -> void:
 	randomize_world()
 
-## RoadChunk.Env ids in rotation: FOREST, MOUNTAIN, COUNTRY. CITY and COAST
-## stay unused.
-const THEME_POOL: Array[int] = [1, 3, 4]
+## RoadChunk.Env ids in rotation: FOREST and COUNTRY. CITY, COAST and MOUNTAIN
+## stay unused: the mountain's scree ground and bare brown fells read as sand
+## dunes from the road, the same complaint that took the coast out. The ring of
+## distant ranges on the horizon is separate and stays in every biome.
+const THEME_POOL: Array[int] = [1, 4]
 ## ~12 km at riding speed: several minutes in one world before the next.
 const BIOME_LENGTH := 12000.0
 ## How far the *road* eases from one biome's shape into the next. Scenery can
@@ -80,7 +82,7 @@ const BIOME_BLEND := 2800.0
 const SHAPE_FOREST := Vector4(0.72, 1.55, 0.90, 0.85)
 const SHAPE_MOUNTAIN := Vector4(0.82, 1.82, 1.20, 1.12)
 const SHAPE_COUNTRY := Vector4(1.00, 1.00, 1.00, 1.00)
-var _biome_order: Array[int] = [1, 3, 4]
+var _biome_order: Array[int] = [1, 4]
 
 
 func theme_for_chunk(index: int) -> int:

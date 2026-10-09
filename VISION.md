@@ -29,7 +29,7 @@ The player should be able to launch the game and immediately enjoy riding. The g
 The road must not feel like one repeating strip. The endless route should combine modular sections with different:
 
 - Road shapes: straights, sweepers, hairpins, hills, dips, tunnels, bridges, and junctions.
-- Environments: forest, mountain, countryside, rain, and night.
+- Environments: forest, countryside, rain, and night, under a skyline of distant mountains.
 - No city, and no buildings beside the road — no houses, villages, forecourts or
   roadworks. The route is meant to read as empty country roads, and a skyline of
   shopfronts is the one thing it should never ride into. The city scenery code

@@ -221,7 +221,7 @@ func _run() -> void:
 	path.call("set_world_seed", 91827)
 
 	var hits := 0
-	for theme_id in [RoadChunkGD.Env.FOREST, RoadChunkGD.Env.MOUNTAIN, RoadChunkGD.Env.COUNTRY]:
+	for theme_id in [RoadChunkGD.Env.FOREST, RoadChunkGD.Env.COUNTRY]:
 		var mid := _biome_chunk(path, theme_id)
 		check(mid >= 0, "biome %d exists on the route" % theme_id)
 		if mid < 0:

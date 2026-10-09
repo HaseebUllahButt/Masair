@@ -51,7 +51,7 @@ uniform float weather_haze : hint_range(0.0, 1.0) = 0.0;
 // Mist lying in the valleys between ranges: the far layers rise out of it, and
 // that is what separates one ridgeline from the next without a single line.
 uniform vec3 mist_color : source_color = vec3(0.70, 0.76, 0.84);
-uniform float mist_strength : hint_range(0.0, 1.0) = 0.24;
+uniform float mist_strength : hint_range(0.0, 1.0) = 0.12;
 
 varying vec3 world_n;
 varying float snow_v;
@@ -137,7 +137,7 @@ void fragment() {
 	// side. Note this is the *internal* spread only — the whole frame's
 	// light-to-dark ratio also has to survive tonemapping and the grade LUT
 	// above it, and at dusk the air is what finally sets that.
-	float lum = mix(0.42, 1.0, lit);
+	float lum = mix(0.44, 0.80, lit);
 	lum += 0.16 * dome * dome;
 	lum *= mix(0.90, 1.08, grit_v);
 	lum *= mix(0.88 + 0.08 * light_soft, 1.08, relief);
@@ -154,7 +154,7 @@ void fragment() {
 	vec3 shade_tint = vec3(0.78, 0.84, 1.02);
 	// Cooled and pulled back: at 1.10 warm a lit face went over 1.0 and ACES
 	// returned it as cream — half the "sand dune" problem was the sun tint.
-	vec3 sun_tint = vec3(1.03, 0.97, 0.85);
+	vec3 sun_tint = vec3(1.02, 0.97, 0.90);
 	vec3 col = rock * lum * mix(shade_tint, sun_tint, lit);
 	// Ambient, on both sides of the terminator.
 	//
@@ -165,8 +165,11 @@ void fragment() {
 	// mountain overlook: one steep backlit peak, correctly shaped, reading as a
 	// hole cut in the picture. The shade side now collects skylight, weighted to
 	// how much sky it actually faces.
-	col += haze_color * (0.010 + 0.024 * dome) * mix(0.45, 1.0, lit);
-	col += sky_color * dome * dome * 0.13 * (1.0 - lit);
+	// Kept small. At 0.13 of a bright day sky this term alone laid a pale
+	// veil over every shaded face on the sun side — the "blurred grey"
+	// mountains beside the road — and the rock under it was fine.
+	col += haze_color * (0.006 + 0.012 * dome) * mix(0.45, 1.0, lit);
+	col += sky_color * dome * dome * 0.045 * (1.0 - lit);
 
 	// Treeline, ragged, by height alone. Gating it on the facet normal switched
 	// whole kilometre-wide quads on and off and left hard green rectangles in
@@ -193,8 +196,11 @@ void fragment() {
 	float cap = smoothstep(snow_edge - 0.03, snow_edge + 0.05, lift_v) * hold;
 	// Rock ribs cut through the snowfield down the couloirs.
 	cap *= smoothstep(0.22, 0.46, couloir + (lift_v - snow_edge) * 1.4);
-	float snow_amt = max(snow_v * hold, cap);
-	vec3 snow_lit = mix(snow_color, snow_color * haze_color * 1.3, 0.40);
+	float snow_amt = max(snow_v * hold, cap) * 0.85;
+	// Snow is lit by the same filmic curve as everything else: a near-white cap
+	// warmed by the sun went straight to cream and spread a beige wash over the
+	// sun side of every range. Held a step under white so it still reads as snow.
+	vec3 snow_lit = mix(snow_color, snow_color * haze_color * 1.3, 0.25) * 0.82;
 	vec3 snow_shade = snow_color * vec3(0.56, 0.66, 0.88) * 0.78 + sky_color * 0.08;
 	col = mix(col, mix(snow_shade, snow_lit, lit), snow_amt);
 
@@ -225,25 +231,25 @@ void fragment() {
 	// near the horizon colour's own lightness, so the heaviest haze band — the
 	// tallest, farthest range — arrived as a flat pale-grey sheet instead of a
 	// blue mountain.
-	vec3 air = mix(mix(mist_color, sky_color, 0.55), haze_color, 0.14) * vec3(0.84, 0.90, 0.98);
+	vec3 air = mix(mix(mist_color, sky_color, 0.55), haze_color, 0.06);
+	// Saturate and cool it: looking towards a low sun the sky is cream, and an
+	// air built from it greyed every far range into a beige wash. Distance on
+	// a clear day is a blue step, at any bearing.
+	float air_l = dot(air, vec3(0.2126, 0.7152, 0.0722));
+	air = mix(vec3(air_l), air, 1.5) * vec3(0.82, 0.92, 1.06);
 	// A linear haze weight is fine up to the third range, but at the fourth's
 	// 0.66 it erased almost half the mountain's own colour — which is where the
 	// biggest silhouette in the frame lived, and it arrived as a flat pale
 	// sheet. Compressing the top of the ladder keeps the far range a step
 	// bluer than the one in front without whitewashing it.
-	col = mix(col, air, clamp(haze_v * 0.84 * (1.0 - 0.32 * haze_v) + weather_haze * (0.45 + haze_v), 0.0, 0.82));
-	// Soften the ring into the air at the extreme edges of a wide lens, but
-	// keep the mountains when the rider looks aside.
-	vec3 cam = INV_VIEW_MATRIX[3].xyz;
-	vec3 fwd = -INV_VIEW_MATRIX[2].xyz;
-	vec3 radial = world_p - cam;
-	radial.y = 0.0;
-	fwd.y = 0.0;
-	float ahead = 0.0;
-	if (dot(radial, radial) > 1.0 && dot(fwd, fwd) > 1e-6) {
-		ahead = dot(normalize(radial), normalize(fwd));
-	}
-	float side = 1.0 - smoothstep(0.12, 0.78, ahead);
-	col = mix(col, air, side * 0.05);
+	col = mix(col, air, clamp(haze_v * 0.58 * (1.0 - 0.30 * haze_v) + weather_haze * (0.45 + haze_v), 0.0, 0.70));
+	// Hold the ranges' chroma. Sunlit faces sit high enough in value that the
+	// filmic curve and the warm grade above them bleach whatever colour they
+	// carry, and a pale sun-side range is what read as grey blur beside the
+	// road. A modest saturation lift keeps them blue-green rock, not beige.
+	float col_l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+	col = max(mix(vec3(col_l), col, 1.30), vec3(0.0));
+	// No extra haze towards the frame edge: a glance aside is exactly when the
+	// rider is looking at the ranges, and fading them there read as blur.
 	ALBEDO = col;
 }

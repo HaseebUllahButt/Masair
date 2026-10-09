@@ -216,7 +216,7 @@ class Capture:
 				print("catalog seed %s=%d" % [labels[theme_id], probe])
 			probe += 1
 		_catalog_jobs.clear()
-		for theme_id in [1, 3, 4]:
+		for theme_id in [1, 4]:
 			var label: String = labels[theme_id]
 			var seed: int = int(seeds.get(theme_id, 72117))
 			var road := {

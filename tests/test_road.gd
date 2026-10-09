@@ -76,12 +76,11 @@ func _initialize() -> void:
 	# kink the ribbon; a step in amplitude would shove the bike sideways.
 	check(p.BIOME_BLEND >= 2000.0 and p.BIOME_BLEND <= 4000.0, "the road eases between biomes over kilometres")
 	var forest_mid := _biome_mid(p, 1)
-	var mountain_mid := _biome_mid(p, 3)
 	var country_mid := _biome_mid(p, 4)
-	check(forest_mid >= 0.0 and mountain_mid >= 0.0 and country_mid >= 0.0, "all three biomes appear")
+	check(forest_mid >= 0.0 and country_mid >= 0.0, "both biomes appear")
 	check(_biome_mid(p, 2) < 0.0, "coast never appears on the route")
+	check(_biome_mid(p, 3) < 0.0, "mountain never appears on the route")
 	check(p.shape_at(forest_mid).is_equal_approx(p.SHAPE_FOREST), "forest settles to its own twist and hills")
-	check(p.shape_at(mountain_mid).is_equal_approx(p.SHAPE_MOUNTAIN), "mountain settles to tighter, hillier road")
 	check(p.shape_at(country_mid).is_equal_approx(p.SHAPE_COUNTRY), "country keeps the rolling baseline")
 	check(p.SHAPE_FOREST.y > p.SHAPE_COUNTRY.y, "forest is twistier than the country")
 	check(p.SHAPE_COUNTRY.x > p.SHAPE_FOREST.x, "country sweepers are longer than forest bends")
@@ -96,8 +95,8 @@ func _initialize() -> void:
 	var mixed: Vector4 = p.shape_at(across)
 	check(mixed.distance_to(from_a.lerp(from_b, 0.5)) < 0.04, "the boundary is half the old country, half the new")
 	check(
-		_mean_abs_curve(p, mountain_mid) > _mean_abs_curve(p, country_mid) * 1.15,
-		"a mountain stretch actually bends more than a country one"
+		_mean_abs_curve(p, forest_mid) > _mean_abs_curve(p, country_mid) * 1.15,
+		"a forest stretch actually bends more than a country one"
 	)
 
 	for i in 400:

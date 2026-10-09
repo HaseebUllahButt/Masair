@@ -44,7 +44,9 @@ uniform vec3 light_tint : source_color = vec3(1.06, 0.99, 0.88);
 uniform vec3 dark_tint : source_color = vec3(0.90, 0.92, 1.02);
 // Lens softness at the frame edge — the tilt-shift feel. The centre of the
 // road stays optically sharp; only the last band of the frame drifts.
-uniform float edge_softness : hint_range(0.0, 1.0) = 0.55;
+// Off. The blur sat exactly where the rider glances to see the ranges beside
+// the road, and a defocused mountain reads as fog, not as distance.
+uniform float edge_softness : hint_range(0.0, 1.0) = 0.0;
 
 float hash(vec2 p) {
 	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);

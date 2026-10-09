@@ -76,14 +76,14 @@ func _process(_delta: float) -> bool:
 		# One overlook per biome.
 		var themes := {}
 		var z := float(path.get("VIEWPOINT_FIRST"))
-		while themes.size() < 3 and z < 120000.0:
+		while themes.size() < 2 and z < 120000.0:
 			var c: float = float(path.call("viewpoint_centre_for", z))
 			var theme: int = int(path.call("theme_for_chunk", int(path.call("viewpoint_index_for", c))))
 			if not themes.has(theme):
 				themes[theme] = c
 				centres.append(c)
 			z += 700.0
-		check(centres.size() == 3, "found an overlook in each of the three biomes")
+		check(centres.size() == 2, "found an overlook in each biome")
 		_start_next()
 		return false
 	if chunk == null:

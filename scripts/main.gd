@@ -523,7 +523,7 @@ func _build_environment() -> void:
 	# low halos that put a soft aura round the sun and the lit horizon band —
 	# the dreamy part of the grade — while 3 still does the sharp sparkle.
 	for level in [1, 2, 3, 4, 5, 6, 7]:
-		_environment.set("glow_levels/%d" % level, [0.0, 0.35, 1.0, 0.55, 0.35, 0.20, 0.0][level - 1])
+		_environment.set("glow_levels/%d" % level, [0.0, 0.35, 1.0, 0.45, 0.16, 0.05, 0.0][level - 1])
 
 	_environment.fog_enabled = true
 	_environment.fog_mode = Environment.FOG_MODE_EXPONENTIAL

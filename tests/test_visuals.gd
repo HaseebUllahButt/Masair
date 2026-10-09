@@ -544,19 +544,17 @@ func _run() -> void:
 
 	var country_view := _first_overlook(path, RoadChunkGD.Env.COUNTRY)
 	var forest_view := _first_overlook(path, RoadChunkGD.Env.FOREST)
-	var mountain_view := _first_overlook(path, RoadChunkGD.Env.MOUNTAIN)
 	check(_first_overlook(path, RoadChunkGD.Env.COAST) < 0.0, "the coast owns no overlook")
-	check(country_view > 0.0 and forest_view > 0.0 and mountain_view > 0.0, "each biome owns an overlook")
+	check(_first_overlook(path, RoadChunkGD.Env.MOUNTAIN) < 0.0, "the mountain owns no overlook")
+	check(country_view > 0.0 and forest_view > 0.0, "each biome owns an overlook")
 	var country_far: float = float(path.call("viewpoint_far_shore", country_view, country_view))
 	var forest_far: float = float(path.call("viewpoint_far_shore", forest_view, forest_view))
-	var mountain_far: float = float(path.call("viewpoint_far_shore", mountain_view, mountain_view))
 	# Inland basins now include a narrow country bend. Measure open water,
 	# not distance from the highway, so changing that bend cannot redefine
 	# the forest gorge or mountain tarn. Their authored widths are roughly
 	# 180-200 m before coves and shoreline variation; 320 m keeps them compact.
 	for basin: Dictionary in [
 		{"name": "forest gorge", "centre": forest_view, "far": forest_far},
-		{"name": "mountain tarn", "centre": mountain_view, "far": mountain_far},
 		{"name": "country meadow bend", "centre": country_view, "far": country_far},
 	]:
 		var centre: float = basin["centre"]
@@ -566,13 +564,6 @@ func _run() -> void:
 		check(water_width >= 70.0 and water_width <= 320.0, "%s keeps a compact open waterway (%.0f m)" % [basin["name"], water_width])
 		check(near_shore > terrace_edge, "%s water clears the overlook terrace (%.0f vs %.0f m)" % [basin["name"], near_shore, terrace_edge])
 
-	var cairn_index := int(floor((mountain_view + 150.0) / RoadChunkGD.LENGTH))
-	var cairn: Node3D = RoadChunkGD.new()
-	cairn.name = "ViewpointCairnTest"
-	get_root().add_child(cairn)
-	cairn.call("setup", cairn_index, RoadChunkGD.Env.MOUNTAIN)
-	check(cairn.get_node_or_null("ViewpointCairn") != null, "the mountain view has a cairn on the far shore")
-	cairn.free()
 	var wall_index := int(floor((country_view + 160.0) / RoadChunkGD.LENGTH))
 	var wall: Node3D = RoadChunkGD.new()
 	wall.name = "ViewpointWallTest"
@@ -580,11 +571,11 @@ func _run() -> void:
 	wall.call("setup", wall_index, RoadChunkGD.Env.COUNTRY)
 	check(wall.get_node_or_null("ViewpointWall") != null, "the country view has a dry-stone wall on the far shore")
 	wall.free()
-	var peak_index := int(floor((mountain_view + float(RoadChunkGD.RANGE_LAYERS[0]["left"])) / RoadChunkGD.LENGTH))
+	var peak_index := int(floor((forest_view + float(RoadChunkGD.RANGE_LAYERS[0]["left"])) / RoadChunkGD.LENGTH))
 	var peak: Node3D = RoadChunkGD.new()
 	peak.name = "PeakRangeTest"
 	get_root().add_child(peak)
-	peak.call("setup", peak_index, RoadChunkGD.Env.MOUNTAIN)
+	peak.call("setup", peak_index, RoadChunkGD.Env.FOREST)
 	check(peak.get_node_or_null("ViewpointRange") != null, "the planted-summit chunk still builds its range")
 	check(peak.get_node_or_null("Clouds") == null, "planted summits wear no collar of cloud")
 	check(not peak.is_processing(), "a static vista chunk does not process")

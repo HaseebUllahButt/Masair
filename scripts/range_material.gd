@@ -95,7 +95,7 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	## to sand-coloured dunes against a pale sky. Darker and bluer at both
 	## ends keeps a range a mountain at any hour.
 	mat.set_shader_parameter("foot_color", fog.darkened(0.26).lerp(Color("3c5266"), 0.48))
-	var crest: Color = fog.darkened(0.04).lerp(Color("6a8aa8"), 0.52)
+	var crest: Color = fog.darkened(0.12).lerp(Color("5a7ea2"), 0.64)
 	mat.set_shader_parameter("crest_color", crest)
 	## What an up-facing plane collects from the dusk dome. This is the term
 	## that keeps the backlit face off zero without smearing sunset over it.

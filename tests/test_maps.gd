@@ -27,10 +27,11 @@ func _initialize() -> void:
 	check(not path.has_method("scenic_detour_at"), "detour overlay lookup is removed")
 	check(int(path.get("RIDEABLE_HALF_WIDTH")) == int(path.get("HALF_WIDTH")), "rideable width is exactly the road width")
 	var pool: Array = path.get("THEME_POOL")
-	check(pool.size() == 3, "the route has three rural biomes")
+	check(pool.size() == 2, "the route has two rural biomes")
 	check(not pool.has(RoadChunkGD.Env.CITY), "city is never in the biome pool")
 	check(not pool.has(RoadChunkGD.Env.COAST), "coast is never in the biome pool")
-	for env in [RoadChunkGD.Env.FOREST, RoadChunkGD.Env.MOUNTAIN, RoadChunkGD.Env.COUNTRY]:
+	check(not pool.has(RoadChunkGD.Env.MOUNTAIN), "mountain is never in the biome pool")
+	for env in [RoadChunkGD.Env.FOREST, RoadChunkGD.Env.COUNTRY]:
 		check(pool.has(env), "biome pool includes environment %d" % env)
 	var biome_length: float = float(path.get("BIOME_LENGTH"))
 	check(biome_length >= 10000.0 and biome_length <= 14000.0, "each biome lasts about 10–14 km")
@@ -317,7 +318,8 @@ func _initialize() -> void:
 		seen[theme] = true
 		check(theme != RoadChunkGD.Env.CITY, "city never appears on the route")
 		check(theme != RoadChunkGD.Env.COAST, "coast never appears on the route")
-	check(seen.size() == 3, "all three rural biomes appear over a full permutation")
+		check(theme != RoadChunkGD.Env.MOUNTAIN, "mountain never appears on the route")
+	check(seen.size() == 2, "both rural biomes appear over a full permutation")
 
 	var order_a: Array = path.call("biome_order")
 	path.call("set_world_seed", 72117)
