@@ -52,6 +52,10 @@ uniform float weather_haze : hint_range(0.0, 1.0) = 0.0;
 // that is what separates one ridgeline from the next without a single line.
 uniform vec3 mist_color : source_color = vec3(0.70, 0.76, 0.84);
 uniform float mist_strength : hint_range(0.0, 1.0) = 0.12;
+// The tint a sun-facing facet picks up. Warm under a warm key, but pushed
+// per-mood from range_material: under a blue night key the same warm cast
+// read as sand dunes sprinkled over the skyline.
+uniform vec3 key_tint : source_color = vec3(1.03, 0.97, 0.85);
 
 varying vec3 world_n;
 varying float snow_v;
@@ -160,7 +164,7 @@ void fragment() {
 	// over a kilometre arrives blue-shifted, so the lit tint walks toward cool
 	// sky with the layer's haze. A warm sun tint reaching the mid rings
 	// unspent is what the grade kept returning as cream card.
-	vec3 sun_tint = mix(vec3(1.03, 0.97, 0.85), vec3(0.80, 0.88, 1.06), haze_v * 0.75);
+	vec3 sun_tint = mix(key_tint, vec3(0.80, 0.88, 1.06), haze_v * 0.75);
 	vec3 col = rock * lum * mix(shade_tint, sun_tint, lit);
 	// Ambient, on both sides of the terminator.
 	//

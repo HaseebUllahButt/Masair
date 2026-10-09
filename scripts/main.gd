@@ -169,6 +169,15 @@ const MOODS := {
 		# key/exposure trade above supplying real separation, saturation goes to
 		# neutral and lets the sunset's own colours do the work.
 		"saturation": 1.08,
+		# The road's own counter-tint, pushed to tarmac_tint each mood change.
+		# Dusk lights the tarmac with a ff9e62 key and a violet shade at once —
+		# red plus purple is the maroon the road kept arriving in. The tint buys
+		# the red channel back down and spends it on blue, so the surface keeps
+		# the day's charcoal with only a sunset's worth of warmth left in it.
+		# Sheen is cut with it: at grazing angles the wet-look streak adds the
+		# same orange back, so half the win was losing it.
+		"road_tint": Color(0.74, 1.20, 1.26),
+		"road_sheen": 0.13,
 	},
 	LightingMode.DAY:
 	{
@@ -273,6 +282,10 @@ const MOODS := {
 		# what it was actually missing was separation between light and dark.
 		"contrast": 1.16,
 		"saturation": 1.14,
+		# Day is the reference: the shader default is the hand-tuned charcoal,
+		# and this row only restates it so every mood pushes the same keys.
+		"road_tint": Color(1.02, 1.02, 0.97),
+		"road_sheen": 0.16,
 	},
 	LightingMode.NIGHT:
 	{
@@ -361,7 +374,18 @@ const MOODS := {
 		"glow_bloom": 0.10,
 		"glow_strength": 1.15,
 		"contrast": 1.22,
-		"saturation": 1.16,
+		# Moonlight desaturates before it dims: at 1.16 the meadows and woods
+		# read at their daylight chroma under a navy sky, which is the
+		# cartoon-blue look. Near-neutral keeps the glow warm and the fields
+		# calm without going monochrome.
+		"saturation": 1.06,
+		# Moonlight arrives already blue (9ec8de over navy ambient), so the
+		# counter-tint leans the other way: warm the albedo a touch or the
+		# road outside the headlight pool is a navy stripe. Kept gentle —
+		# asphalt at night should stay darker and cooler than dusk's, just
+		# not read as painted blue.
+		"road_tint": Color(1.14, 1.02, 0.94),
+		"road_sheen": 0.16,
 	},
 }
 
@@ -712,6 +736,9 @@ static func _overcast(mood: Dictionary, r: float) -> Dictionary:
 	# Thicker air, not a wall: at 3.8x a lake view a kilometre deep was gone
 	# entirely, and a ride in the rain should still show the next hill.
 	out["fog_density"] = mood["fog_density"] * (1.0 + r * 1.5)
+	# A closed sky is grey: the tarmac counter-tint eases back toward the day
+	# neutral as the weather takes the colour out of the light.
+	out["road_tint"] = (mood["road_tint"] as Color).lerp(Color(1.02, 1.02, 0.97), r * 0.7)
 	out["fog_aerial"] = lerpf(mood["fog_aerial"], 0.26, r)
 	out["fog_sky"] = lerpf(mood["fog_sky"], 0.2, r)
 	out["fog_sun_scatter"] = mood["fog_sun_scatter"] * (1.0 - r)
@@ -1009,6 +1036,12 @@ func _apply_lighting() -> void:
 		(mood["horizon_color"] as Color) * sky_glow,
 		(mood["mid_color"] as Color) * sky_glow
 	)
+	# The tarmac's counter-tint lives on the mood row with everything else that
+	# changes with the hour: the same sunset that paints the sky was painting
+	# the road maroon, and the navy night road warms back toward asphalt.
+	var road_mat := LowPoly.road_material()
+	road_mat.set_shader_parameter("tarmac_tint", mood["road_tint"])
+	road_mat.set_shader_parameter("sheen_strength", mood["road_sheen"])
 	var horizon := get_node_or_null("HorizonMountains")
 	if horizon and horizon.has_method("apply_mood"):
 		horizon.call("apply_mood", mood)

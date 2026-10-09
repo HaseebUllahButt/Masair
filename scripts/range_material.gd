@@ -130,6 +130,16 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	mat.set_shader_parameter("forest_color", fog.darkened(0.15).lerp(woods, 0.85 * daylight))
 	mat.set_shader_parameter("mist_color", fog.lerp(haze, 0.25).lerp(Color("9fb4cc"), 0.45 * daylight))
 	mat.set_shader_parameter("sun_dir", toward_sun)
+	# The lit-face tint follows the key. Under a warm sun it keeps the authored
+	# warm cast; once the key goes blue (night's 9ec8de) the same warm cast
+	# lands as sand dunes under moonlight, so it cools toward the light's own
+	# hue instead. Day and dusk stay on the warm constant — blue in, cool out.
+	var key: Color = _mood.get("light_color", Color("ffd59a"))
+	var kl := maxf(key.get_luminance(), 0.001)
+	var key_norm := Color(key.r / kl, key.g / kl, key.b / kl)
+	var cool: Color = key_norm.lerp(Color(0.82, 0.90, 1.06), 0.45)
+	var cool_weight := clampf((key.b - key.r) * 3.0, 0.0, 1.0)
+	mat.set_shader_parameter("key_tint", Color(1.03, 0.97, 0.85).lerp(cool, cool_weight))
 	## Light, because the haze it lays on is the mist colour and the mist is
 	## pale: at 0.75 every range in the rain glowed off-white against a slate sky.
 	mat.set_shader_parameter("weather_haze", 0.35 * float(_mood.get("rain", 0.0)))
