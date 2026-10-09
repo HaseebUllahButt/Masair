@@ -702,7 +702,7 @@ func setup_ribbon_incremental(index: int, theme_id: int) -> void:
 	# metre or two of verts each, and four at a time still overran the slice
 	# to ~10 ms on the climb — a visible stutter arriving exactly where the
 	# rider turns to look at the water.
-	const BANDS_PER_FRAME := 2
+	const BANDS_PER_FRAME := 1
 	for first_step in range(0, STEPS, steps_per):
 		for first_band in range(0, band_count, BANDS_PER_FRAME):
 			_build_ribbon_rows(hard, road, soft_left, soft_right, z0, first_step, mini(first_step + steps_per, STEPS), first_band, mini(first_band + BANDS_PER_FRAME, band_count))
@@ -2129,7 +2129,7 @@ func _build_markings(b: LowPoly, z0: float, streamed: bool = false) -> void:
 		marks += 1
 		# ~80 dashes of path samples was the head of `_finish_ribbon` — the whole
 		# stripe pass in one slice. Streamed builds get a boundary mid-run.
-		if marks % 8 == 0 and streamed and _slice_spent() and not await _keep_streaming():
+		if marks % 4 == 0 and streamed and _slice_spent() and not await _keep_streaming():
 			return
 
 
@@ -3540,7 +3540,7 @@ func _grass_verge_incremental() -> void:
 			z, lx, tuft,
 			(base as Color).lerp(_pal["prop_a"], _rng.randf() * 0.5).darkened(_rng.randf() * 0.25)
 		)
-		if i % 2 == 1 and _slice_spent() and not await _keep_streaming():
+		if _slice_spent() and not await _keep_streaming():
 			return
 	set_meta("grass_done", true)
 
@@ -4269,7 +4269,7 @@ func _forest_stand(z0: float, side: float, mood: float, pace: Callable = Callabl
 		_tree(species, z, lx, tall * _rng.randf_range(0.7, 1.18), tint.darkened(_rng.randf() * 0.2))
 		# Each `_tree` sweeps the corridor for clearance; a whole stand in one
 		# slice was a ~20 ms block on forest chunks.
-		if pace.is_valid() and _i % 3 == 2 and _slice_spent() and not await pace.call():
+		if pace.is_valid() and _slice_spent() and not await pace.call():
 			return
 	# Undergrowth in the stand's lee — a wood is not trees on a lawn, and the
 	# shaded gap between trunks and ground is where the eye finds the lie.
@@ -4365,7 +4365,7 @@ func _forest_back_band(z0: float, side: float, mood: float, pace: Callable = Cal
 			0.0,
 			true
 		)
-		if pace.is_valid() and _i % 3 == 2 and _slice_spent() and not await pace.call():
+		if pace.is_valid() and _slice_spent() and not await pace.call():
 			return
 
 
@@ -4398,7 +4398,7 @@ func _forest_verge(z0: float, side: float, pace: Callable = Callable()) -> void:
 				_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
 		else:
 			_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
-		if pace.is_valid() and _i % 4 == 3 and _slice_spent() and not await pace.call():
+		if pace.is_valid() and _slice_spent() and not await pace.call():
 			return
 	# An outcrop every few chunks: a knuckle of bedrock breaking the wood edge
 	# is one of the things a planted verge never says.
