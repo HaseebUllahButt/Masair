@@ -1422,10 +1422,23 @@ func _face_mix(z: float, lateral: float) -> float:
 	var tail := 1.0 - smoothstep(
 		RoadPathGD.LAKE_SPAN, RoadPathGD.LAKE_SPAN * 1.45, absf(z - _vp_centre)
 	)
+	# A face is rock only while it is a face. Where the basin tails off toward
+	# the junction the same lateral band flattens into a drowned plain a metre
+	# above the water, and rock paint over it read as a pale concrete apron a
+	# hundred metres wide. Below a couple of metres of freeboard that ground is
+	# marsh, not cliff — hand it to the shore and grass colours.
+	var here: float = float(_path.height_at(z)) - float(_path.terrain_drop(lateral, z)) - _vp_water_y
+	var freeboard := smoothstep(1.0, 4.5, here)
 	# The rock paint belongs to the steep face, not to the level made ground the
 	# terrace stands on — the lip shelf shares the face's lateral range, and
 	# painted flat it reads as a pale concrete apron hanging off the parapet.
-	return band * (0.3 + 0.7 * grain) * (1.0 - float(_path.spur_deck_blend(z, lateral))) * tail
+	return (
+		band
+		* (0.3 + 0.7 * grain)
+		* (1.0 - float(_path.spur_deck_blend(z, lateral)))
+		* tail
+		* freeboard
+	)
 
 
 func _face_color(z: float = 0.0, lateral: float = 0.0) -> Color:
@@ -1546,7 +1559,16 @@ func _shore_mix(z: float, lateral: float) -> float:
 	var here: float = float(_path.height_at(z)) - float(_path.terrain_drop(lateral, z)) - _vp_water_y
 	if here > 1.7:
 		return 0.0
-	return 1.0 - smoothstep(0.1, 1.7, here)
+	# Hug the shorelines, not the altitude: the height test alone paints every
+	# drowned flat as shingle, and where the basin tails off toward the junction
+	# the flats run for hundreds of metres — a pale concrete apron in plan.
+	# Ground counts as a shore only while a real shoreline is a dozen metres
+	# away; past that it is marshy verge and takes the grass colours.
+	var out := absf(lateral)
+	var near: float = float(_path.viewpoint_near_shore(z))
+	var far: float = float(_path.viewpoint_far_shore(z, _vp_centre))
+	var gap: float = minf(absf(out - near), absf(out - far))
+	return (1.0 - smoothstep(6.0, 14.0, gap)) * (1.0 - smoothstep(0.1, 1.7, here))
 
 
 func _shore_color() -> Color:
@@ -1567,8 +1589,20 @@ func _wash_mix(z: float, lateral: float) -> float:
 	var here: float = float(_path.height_at(z)) - float(_path.terrain_drop(lateral, z)) - _vp_water_y
 	if here < 0.9 or here > 3.2:
 		return 0.0
+	# Same shoreline hug as `_shore_mix`, a few metres wider for the dry band.
+	var out := absf(lateral)
+	var near: float = float(_path.viewpoint_near_shore(z))
+	var far: float = float(_path.viewpoint_far_shore(z, _vp_centre))
+	var gap: float = minf(absf(out - near), absf(out - far))
+	if gap > 20.0:
+		return 0.0
 	var grain: float = 0.6 + 0.4 * sin(z * 0.09 + lateral * 0.05) * sin(z * 0.031 - lateral * 0.021)
-	return smoothstep(0.9, 1.5, here) * (1.0 - smoothstep(2.4, 3.2, here)) * grain
+	return (
+		(1.0 - smoothstep(12.0, 20.0, gap))
+		* smoothstep(0.9, 1.5, here)
+		* (1.0 - smoothstep(2.4, 3.2, here))
+		* grain
+	)
 
 
 func _wash_color() -> Color:
@@ -6186,8 +6220,16 @@ func _build_lake_water() -> void:
 	# Start well inside the near shore so the sheet's inner edge stays buried.
 	var inner: float = float(_path.viewpoint_near_shore(_vp_centre)) - 140.0
 	var outer: float = float(_path.viewpoint_far_shore(_vp_centre, _vp_centre)) + 520.0
-	var z0 := _vp_centre - RANGE_REACH * 2.0
-	var z_span: float = RANGE_REACH * 4.0
+	# The basin carving — and so the lake bed — ends LAKE_SPAN * 1.55 out along
+	# the route (`_viewpoint_terrain_drop`). Past it the land stands on its own
+	# and only stray hollows dip under the waterline; a sheet drawn the vista's
+	# full reach painted water over those hollows all the way to the junction
+	# ends of the spur, where it read as a pale concrete apron from the air.
+	# Holding the sheet to the carved reach keeps the waterline on the bed —
+	# and the shorter span gives a finer step for the shoreline to follow.
+	var z_half := RoadPathGD.LAKE_SPAN * 1.55
+	var z0 := _vp_centre - z_half
+	var z_span := z_half * 2.0
 	var surface := _water_color()
 	var b := LowPoly.new()
 	b.smooth = true
@@ -6197,6 +6239,8 @@ func _build_lake_water() -> void:
 		for j in ls:
 			var out_a: float = lerpf(inner, outer, float(j) / float(ls))
 			var out_b: float = lerpf(inner, outer, float(j + 1) / float(ls))
+			if _lake_quad_dry(za, zb, out_a, out_b):
+				continue
 			var col_aa := _water_shade(surface, out_a, za)
 			var col_ab := _water_shade(surface, out_b, za)
 			var col_ba := _water_shade(surface, out_a, zb)
@@ -6229,6 +6273,29 @@ func _build_lake_water() -> void:
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 
+func _lake_quad_dry(za: float, zb: float, out_a: float, out_b: float) -> bool:
+	## True when the ground under this stretch of the sheet stands entirely
+	## above the water.
+	##
+	## The sheet is one flat band run the length of the overlook, but the lake
+	## only exists where the basin was actually carved. Past the closing bay —
+	## out across the junction ends and over made ground under the spur — the
+	## land stands above the surface, and the band used to lay over it anyway
+	## as a dead-flat sheet mirroring the pale sky. From the air and on the
+	## approach it read as a concrete apron wedged against the junction. Skipping
+	## the dry quads keeps the waterline on the landform: open water where the
+	## bed sinks, grassed bank and made ground where it stands up out of it.
+	const SAMPLES := 3
+	for i in SAMPLES + 1:
+		var z: float = lerpf(za, zb, float(i) / float(SAMPLES))
+		for j in SAMPLES + 1:
+			var out: float = lerpf(out_a, out_b, float(j) / float(SAMPLES))
+			var surface: float = float(_path.height_at(z)) - float(_path.terrain_drop(_vp_side * out, z))
+			if surface <= _vp_water_y + 0.05:
+				return false
+	return true
+
+
 func _build_lake_water_incremental() -> void:
 	if not _owns_platform:
 		return
@@ -6238,8 +6305,9 @@ func _build_lake_water_incremental() -> void:
 	var ls: int = 12
 	var inner: float = float(_path.viewpoint_near_shore(_vp_centre)) - 140.0
 	var outer: float = float(_path.viewpoint_far_shore(_vp_centre, _vp_centre)) + 520.0
-	var z0 := _vp_centre - RANGE_REACH * 2.0
-	var z_span: float = RANGE_REACH * 4.0
+	var z_half := RoadPathGD.LAKE_SPAN * 1.55
+	var z0 := _vp_centre - z_half
+	var z_span := z_half * 2.0
 	var surface := _water_color()
 	var b := LowPoly.new()
 	b.smooth = true
@@ -6249,6 +6317,8 @@ func _build_lake_water_incremental() -> void:
 		for j in ls:
 			var out_a: float = lerpf(inner, outer, float(j) / float(ls))
 			var out_b: float = lerpf(inner, outer, float(j + 1) / float(ls))
+			if _lake_quad_dry(za, zb, out_a, out_b):
+				continue
 			var col_aa := _water_shade(surface, out_a, za)
 			var col_ab := _water_shade(surface, out_b, za)
 			var col_ba := _water_shade(surface, out_a, zb)
