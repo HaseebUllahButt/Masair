@@ -117,7 +117,7 @@ const FOLIAGE_SWAY := 0.12
 ## Bushes packed onto the first few metres of verge. Indexed by Env. Split across
 ## frames while streaming — planting all of them at once was a 35–90 ms hitch.
 const VERGE_BUSH_COUNT := [8, 34, 18, 26, 32]
-const VERGE_BUSH_BATCH := 4
+const VERGE_BUSH_BATCH := 2
 ## Hard cap on GLB instances per chunk. The Kenney kit is suburban, so it stocks
 ## the countryside and villages; the city builds its own frontage.
 const MAX_IMPORTED_ASSETS_PER_CHUNK := 4
@@ -626,6 +626,10 @@ var _corridor_flags: int = -1
 ## Wall-clock mark for the current streamed slice; `_keep_streaming` parks only
 ## once it is spent. Reset at each build entry so a queued job starts fresh.
 var _slice_started_usec: int = 0
+## Hitch tracing for tools/profile_scenic and friends: when set, every slice of
+## incremental work longer than ~12 ms prints its caller and cost. Off in play.
+static var hitch_trace: bool = false
+var _resumed_usec: int = 0
 
 
 func setup(index: int, theme_id: int, include_scenic: bool = true, include_highway: bool = true) -> void:
@@ -678,6 +682,7 @@ func setup_incremental(index: int, theme_id: int) -> void:
 func setup_ribbon_incremental(index: int, theme_id: int) -> void:
 	## Runtime streaming must not consume an entire render frame. The chunk is far
 	## beyond the camera when queued, so build its ribbon in small invisible slices.
+	_resumed_usec = Time.get_ticks_usec()
 	_configure(index, theme_id)
 	var builders := _new_ribbon_builders()
 	var hard: LowPoly = builders[0]
@@ -708,6 +713,7 @@ func setup_ribbon_incremental(index: int, theme_id: int) -> void:
 
 func setup_props_incremental() -> void:
 	_slice_started_usec = Time.get_ticks_usec()
+	_resumed_usec = _slice_started_usec
 	await _build_props_incremental()
 
 
@@ -732,13 +738,13 @@ func _dress_shoulder_incremental() -> void:
 	_build_reflectors()
 	if not await _keep_streaming():
 		return
-	_grass_verge()
+	await _grass_verge_incremental()
 	if not await _keep_streaming():
 		return
-	_hedge_verge()
+	await _hedge_verge_incremental()
 	if not await _keep_streaming():
 		return
-	_publish_shoulder(from_index)
+	await _publish_shoulder_incremental(from_index)
 
 
 func _publish_shoulder(from_index: int) -> void:
@@ -754,6 +760,34 @@ func _publish_shoulder(from_index: int) -> void:
 	_commit_mm(_leaves, _leaf_cols, unit_sphere(), LowPoly.foliage_material(), "Foliage", false)
 	_leaves.clear()
 	_leaf_cols.clear()
+	_shoulder_published(from_index)
+
+
+func _publish_shoulder_incremental(from_index: int) -> void:
+	## Four MultiMesh commits used to land in one frame — each uploads a batch to
+	## the renderer, so together they were a recurring ~40 ms spike while riding.
+	_commit_mm(_cubes, _cube_cols, unit_cube(), LowPoly.solid_material(), "Cubes", true)
+	_cubes.clear()
+	_cube_cols.clear()
+	if not await _keep_streaming():
+		return
+	_commit_mm(_lamps, _lamp_cols, unit_cube(), LowPoly.glow_material(), "Lamps", false)
+	_lamps.clear()
+	_lamp_cols.clear()
+	if not await _keep_streaming():
+		return
+	_commit_mm(_grass, _grass_cols, grass_tuft(), LowPoly.foliage_material(), "Grass", false)
+	_grass.clear()
+	_grass_cols.clear()
+	if not await _keep_streaming():
+		return
+	_commit_mm(_leaves, _leaf_cols, unit_sphere(), LowPoly.foliage_material(), "Foliage", false)
+	_leaves.clear()
+	_leaf_cols.clear()
+	_shoulder_published(from_index)
+
+
+func _shoulder_published(from_index: int) -> void:
 	set_meta("shoulder_done", true)
 	set_meta("reflectors_done", true)
 	set_meta("grass_done", true)
@@ -839,9 +873,12 @@ func _build_scenic_props_incremental() -> void:
 	if _owns_platform:
 		if not await _set_piece_platform_incremental():
 			return
-	_build_spur_woodland(first, count)
-	if not await _keep_streaming():
-		return
+	# One woodland station per slice — each plants rows of trees through the
+	# corridor clearance sweep, and all three at once was a ~20 ms lump.
+	for i in count:
+		_build_spur_woodland(first + i, 1)
+		if _slice_spent() and not await _keep_streaming():
+			return
 	if _on_lake and _owns_platform:
 		# The platform chunk owns the complete basin; nearby chunks only carry the spur. Dressing can stay near
 		# the bench; cutting the range off at 240 m left a blue water strip
@@ -862,10 +899,10 @@ func _build_scenic_props_incremental() -> void:
 				return
 			if not await _build_lake_edges_incremental():
 				return
-			_build_view_frame()
+			await _build_view_frame_incremental()
 			if not await _keep_streaming():
 				return
-			_dress_vista()
+			await _dress_vista_incremental()
 			if not await _keep_streaming():
 				return
 			_build_vista_landmarks()
@@ -892,9 +929,28 @@ func _keep_streaming() -> bool:
 		return false
 	if Time.get_ticks_usec() - _slice_started_usec < STREAM_SLICE_USEC:
 		return true
+	if hitch_trace:
+		var stack := get_stack()
+		var site := "?"
+		if stack.size() > 1:
+			site = "%s:%d" % [str(stack[1].get("function", "?")), int(stack[1].get("line", 0))]
+		set_meta("dbg_stage", site)
+		if _resumed_usec > 0:
+			var work := Time.get_ticks_usec() - _resumed_usec
+			if work >= 12000:
+				print("chunk %d slice %s: %.1f ms" % [chunk_index, site, float(work) / 1000.0])
 	await get_tree().process_frame
 	_slice_started_usec = Time.get_ticks_usec()
+	_resumed_usec = _slice_started_usec
 	return is_instance_valid(self) and is_inside_tree()
+
+
+func _slice_spent() -> bool:
+	## Whether this build slice has run long enough to be worth a frame. Loops
+	## that yield on a fixed count drain the stream queues slower than the work
+	## needs — the restart test's frame windows felt that before the bike did —
+	## so small batches yield only once the slice is already past its budget.
+	return Time.get_ticks_usec() - _resumed_usec > 4000
 
 
 func _configure(index: int, theme_id: int) -> void:
@@ -989,6 +1045,7 @@ func ensure_scenic_dress() -> void:
 	_slice_started_usec = Time.get_ticks_usec()
 	set_meta("scenic_requested", true)
 	set_meta("scenic_building", true)
+	_resumed_usec = Time.get_ticks_usec()
 	await _build_scenic_props_incremental()
 	if is_instance_valid(self):
 		set_meta("scenic_done", true)
@@ -1043,6 +1100,7 @@ func ensure_highway_dress() -> void:
 	_slice_started_usec = Time.get_ticks_usec()
 	set_meta("highway_requested", true)
 	set_meta("highway_building", true)
+	_resumed_usec = Time.get_ticks_usec()
 	await _build_highway_props_incremental()
 	if is_instance_valid(self):
 		set_meta("highway_done", true)
@@ -1120,7 +1178,7 @@ func _plant_inland_carriageway_incremental() -> void:
 		)
 		var height := _rng.randf_range(5.5, 11.5)
 		_tree(species, z, lx, height, tint)
-		if i % 8 == 7 and not await _keep_streaming():
+		if i % 8 == 7 and _slice_spent() and not await _keep_streaming():
 			return
 
 
@@ -1790,7 +1848,7 @@ func _finish_ribbon_incremental(
 		_build_gore_hatch(hard, z0)
 		if not await _keep_streaming():
 			return
-		_commit_spur_meshes(z0)
+		await _commit_spur_meshes_incremental(z0)
 		if not await _keep_streaming():
 			return
 	_commit_hard_ribbon(hard)
@@ -1832,6 +1890,39 @@ func _commit_spur_meshes(z0: float) -> void:
 	if details:
 		details.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		details.set_meta("ribbon", true)
+	var surface: MeshInstance3D = spur_road.commit_to(self, "SpurSurface")
+	if surface:
+		surface.material_override = _road_material()
+		surface.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		surface.set_meta("ribbon", true)
+	_tag_new_children(from_index, "scenic")
+
+
+func _commit_spur_meshes_incremental(z0: float) -> void:
+	## Same meshes as `_commit_spur_meshes`, spread so the climb does not pay the
+	## whole spur ribbon plus bays, barrier and two uploads in one frame. The
+	## ribbon takes step ranges and draws no rng, so the slices are identical.
+	if not _on_spur or get_node_or_null("SpurSurface") != null:
+		return
+	var spur_hard := LowPoly.new()
+	var spur_road := LowPoly.new()
+	for first in range(0, STEPS, 4):
+		_build_spur_ribbon(spur_hard, spur_road, z0, first, mini(4, STEPS - first), false)
+		if _slice_spent() and not await _keep_streaming():
+			return
+	_build_platform_bays(spur_hard, z0)
+	if not await _keep_streaming():
+		return
+	_build_spur_barrier(spur_hard, z0)
+	if not await _keep_streaming():
+		return
+	var from_index := get_child_count()
+	var details: MeshInstance3D = spur_hard.commit_to(self, "SpurDetails")
+	if details:
+		details.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		details.set_meta("ribbon", true)
+	if not await _keep_streaming():
+		return
 	var surface: MeshInstance3D = spur_road.commit_to(self, "SpurSurface")
 	if surface:
 		surface.material_override = _road_material()
@@ -3241,24 +3332,24 @@ func _build_furniture_incremental() -> void:
 		var n: int = mini(VERGE_BUSH_BATCH, bushes_left)
 		_verge_plant_bushes(n)
 		bushes_left -= n
-		if not await _keep_streaming():
+		if _slice_spent() and not await _keep_streaming():
 			return
 	# The clearance sweeps made each verge stage dearer, so they each get their
 	# own frame the way they already do in `_dress_shoulder_incremental`: grass,
 	# hedge and fringe back to back is a ~17 ms lump in the middle of a ride.
-	_grass_verge()
+	await _grass_verge_incremental()
 	if not await _keep_streaming():
 		return
-	_hedge_verge()
+	await _hedge_verge_incremental()
 	if not await _keep_streaming():
 		return
 	_verge_flowers()
 	if not await _keep_streaming():
 		return
-	_verge_plant_fringe(-1.0)
+	await _verge_plant_fringe_incremental(-1.0)
 	if not await _keep_streaming():
 		return
-	_verge_plant_fringe(1.0)
+	await _verge_plant_fringe_incremental(1.0)
 	if not await _keep_streaming():
 		return
 	if theme_carries_power_line(theme) and not _on_lake:
@@ -3322,7 +3413,7 @@ func _build_guardrail_incremental() -> void:
 		_terrain_beam(zz, zz + 2.8, side * (HALF_WIDTH + 1.15), 0.12, 0.14, _pal["rail"], 0.52)
 		zz += 2.8
 		n += 1
-		if n % 2 == 0 and not await _keep_streaming():
+		if n % 2 == 0 and _slice_spent() and not await _keep_streaming():
 			return
 
 
@@ -3377,6 +3468,28 @@ func _grass_verge() -> void:
 			z, lx, tuft,
 			(base as Color).lerp(_pal["prop_a"], _rng.randf() * 0.5).darkened(_rng.randf() * 0.25)
 		)
+	set_meta("grass_done", true)
+
+
+func _grass_verge_incremental() -> void:
+	## Same tufts in the same order — each `_grass_at` sweeps the corridor mesh
+	## for clearance, so all 72 in one frame was a ~15 ms block on the climb.
+	if bool(get_meta("grass_done", false)):
+		return
+	var z0: float = float(chunk_index) * LENGTH
+	var base: Color = _pal["verge"]
+	for i in 72:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var side: float = 1.0 if _rng.randf() < 0.5 else -1.0
+		var lx: float = _mow_lateral(z, side * (HALF_WIDTH + 2.2 + pow(_rng.randf(), 1.6) * 7.5))
+		var height := _rng.randf_range(0.55, 1.18)
+		var tuft := Vector3(_rng.randf_range(0.65, 1.15), height, _rng.randf_range(0.65, 1.15))
+		_grass_at(
+			z, lx, tuft,
+			(base as Color).lerp(_pal["prop_a"], _rng.randf() * 0.5).darkened(_rng.randf() * 0.25)
+		)
+		if i % 6 == 5 and _slice_spent() and not await _keep_streaming():
+			return
 	set_meta("grass_done", true)
 
 
@@ -3439,6 +3552,18 @@ func _field_gate(z: float, side: float) -> void:
 	_cube(z + 1.7, lat, Vector3(0.18, 1.2, 0.18), wood)
 	for r in 3:
 		_terrain_beam(z - 1.7, z + 1.7, lat, 0.07, 0.09, wood, 0.36 + float(r) * 0.32)
+
+
+func _hedge_verge_incremental() -> void:
+	## The hedgerow pass for streamed chunks. It runs the one hedge builder so a
+	## streamed verge grows the same runs, gaps and gates as a synchronous one;
+	## a frame boundary on either side keeps it out of its neighbours' slice.
+	if bool(get_meta("hedge_done", false)):
+		return
+	if not await _keep_streaming():
+		return
+	_hedge_verge()
+	set_meta("hedge_done", true)
 
 
 static func theme_carries_power_line(theme_id: int) -> bool:
@@ -3709,6 +3834,33 @@ func _verge_plant_fringe(side_filter: float) -> void:
 				true
 			)
 		gz += _rng.randf_range(2.0, 3.6)
+
+
+func _verge_plant_fringe_incremental(side_filter: float) -> void:
+	## Same blobs in the same order; one full pass is ~25 forced blobs and their
+	## corridor checks, a ~10 ms lump when a chunk's furniture lands mid-ride.
+	if theme == Env.CITY:
+		return
+	var z0: float = float(chunk_index) * LENGTH
+	var gz := z0 + _rng.randf_range(0.0, 2.0)
+	var n := 0
+	while gz < z0 + LENGTH:
+		for side in [-1.0, 1.0]:
+			if side_filter != 0.0 and not is_equal_approx(side, side_filter):
+				continue
+			var s := _rng.randf_range(0.35, 0.7)
+			_blob(
+				gz,
+				_mow_lateral(gz, side * (HALF_WIDTH + 2.6 + _rng.randf_range(0.0, 0.9))),
+				Vector3(s * 2.2, s * 0.7, s * 1.4),
+				(_pal["verge"] as Color).darkened(_rng.randf() * 0.3),
+				0.0,
+				true
+			)
+		gz += _rng.randf_range(2.0, 3.6)
+		n += 1
+		if n % 4 == 0 and _slice_spent() and not await _keep_streaming():
+			return
 
 
 # --------------------------------------------------------------------- themes
@@ -4105,6 +4257,10 @@ func _scenery_forest_incremental() -> void:
 				var z := stand_z + _rng.randf_range(-11.0, 11.0)
 				var lx: float = stand_x + _rng.randf_range(-11.0, 11.0)
 				_tree(species, z, lx, tall * _rng.randf_range(0.72, 1.15), tint.darkened(_rng.randf() * 0.2))
+				# Each `_tree` sweeps the corridor for clearance; a whole stand in
+				# one slice was a ~20 ms block on forest chunks.
+				if _i % 3 == 2 and _slice_spent() and not await _keep_streaming():
+					return
 			if not await _keep_streaming():
 				return
 		for _i in 4:
@@ -5476,8 +5632,43 @@ func _build_view_frame() -> void:
 	##
 	## One side only, chosen from the seed. A stand on both is a proscenium arch;
 	## the asymmetry is what stops the composition being a diagram.
+	##
+	## All ten specs, not the first four. The stand was cut to four on the
+	## reasoning that one side of a ninety-four-degree frame is plenty, and it is:
+	## the problem was never the angle spread but the *count*. Four trees at
+	## thirty-three to forty-three degrees leave the outer fifth of the picture
+	## bare, and a frame is a pair of verticals with something between them, not
+	## one vertical and a lot of sky. Ten at a spread of thirty-three to
+	## forty-seven degrees puts mass in both outer thirds and leaves the middle
+	## third of the axis clear, which is the composition: edges and a gate.
+	##
+	## Heights are graded outward, larger away from the axis, because that is the
+	## only arrangement in which the near elements read as near. A stand of equal
+	## heights at increasing angle is a hedge.
+	var layout := _view_frame_layout()
+	var ranked: Array = layout[4]
+	_build_view_frame_specs(layout, ranked, 0, ranked.size())
+	_build_view_frame_talus(layout)
+
+
+func _build_view_frame_incremental() -> void:
+	## Same stand in the same order, a few specs per slice — every tree goes
+	## through the corridor clearance sweep, so all ten in one frame was a ~50 ms
+	## lump while the rider was still climbing to the seat.
+	var layout := _view_frame_layout()
+	var ranked: Array = layout[4]
+	var first := 0
+	while first < ranked.size():
+		_build_view_frame_specs(layout, ranked, first, 3)
+		first += 3
+		if _slice_spent() and not await _keep_streaming():
+			return
+	_build_view_frame_talus(layout)
+
+
+func _view_frame_layout() -> Array:
 	var z0 := _vp_centre - 120.0
-	var view_span: float = 240.0
+	var view_span := 240.0
 	var hand: float = (
 		1.0
 		if posmod(hash(Vector2i(int(round(_vp_centre)), int(_path.world_seed) ^ 0x5f3a)), 2) == 0
@@ -5485,21 +5676,18 @@ func _build_view_frame() -> void:
 	)
 	# Where the eye actually is, so the angles below mean what they say.
 	var eye_out: float = float(_path.spur_offset(_vp_centre)) + RoadPathGD.PLATFORM_BENCH_OUT
-	# All ten specs, not the first four. The stand was cut to four on the
-	# reasoning that one side of a ninety-four-degree frame is plenty, and it is:
-	# the problem was never the angle spread but the *count*. Four trees at
-	# thirty-three to forty-three degrees leave the outer fifth of the picture
-	# bare, and a frame is a pair of verticals with something between them, not
-	# one vertical and a lot of sky. Ten at a spread of thirty-three to
-	# forty-seven degrees puts mass in both outer thirds and leaves the middle
-	# third of the axis clear, which is the composition: edges and a gate.
-	#
-	# Heights are graded outward, larger away from the axis, because that is the
-	# only arrangement in which the near elements read as near. A stand of equal
-	# heights at increasing angle is a hedge.
 	var ranked := FRAME_CLUMP.duplicate()
 	ranked.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) < float(b[0]))
-	for spec in ranked:
+	return [z0, view_span, hand, eye_out, ranked]
+
+
+func _build_view_frame_specs(layout: Array, ranked: Array, first: int, count: int) -> void:
+	var z0: float = layout[0]
+	var view_span: float = layout[1]
+	var hand: float = layout[2]
+	var eye_out: float = layout[3]
+	for i in range(first, mini(first + count, ranked.size())):
+		var spec: Array = ranked[i]
 		var angle: float = deg_to_rad(float(spec[0]))
 		var out: float = float(spec[1])
 		# Jittered off the overlook's own phase so the ten specs do not read as
@@ -5553,6 +5741,13 @@ func _build_view_frame() -> void:
 				true,
 				true
 			)
+
+
+func _build_view_frame_talus(layout: Array) -> void:
+	var z0: float = layout[0]
+	var view_span: float = layout[1]
+	var hand: float = layout[2]
+	var eye_out: float = layout[3]
 	# Talus at the foot of the stand, tying it to the slope. Without this the
 	# trees read as posts stuck into a smooth hillside.
 	if _vp_theme != Env.MOUNTAIN:
@@ -5605,6 +5800,65 @@ func _dress_vista() -> void:
 			_dress_vista_mountain()
 		_:
 			_dress_vista_country()
+
+
+func _dress_vista_incremental() -> void:
+	## Same passes in the same order, one stage per slice — the five loops in a
+	## row were a ~40 ms frame at the end of the basin build.
+	_build_far_bank_bands()
+	if not await _keep_streaming():
+		return
+	_build_far_bank_ground()
+	if not await _keep_streaming():
+		return
+	_build_vista_accent()
+	if not await _keep_streaming():
+		return
+	await _dress_nose_tip_incremental()
+	if not await _keep_streaming():
+		return
+	match _vp_theme:
+		Env.FOREST:
+			_dress_vista_forest()
+		Env.MOUNTAIN:
+			_dress_vista_mountain()
+		_:
+			_dress_vista_country()
+
+
+func _dress_nose_tip_incremental() -> void:
+	## Same pieces in the same order as `_dress_nose_tip`; each candidate runs
+	## the water and deck checks, so both sides at once was a mid-ride lump.
+	for side: float in [-1.0, 1.0]:
+		var n := 0
+		for _i in 10:
+			var z: float = _vp_centre + side * _rng.randf_range(
+				RoadPathGD.LAKE_SPAN * 0.7, RoadPathGD.LAKE_SPAN * 1.45
+			)
+			var out: float = float(_path.headland_crest(z)) - _rng.randf_range(-6.0, 30.0)
+			if _height_above_water(z, out) < 2.5 or not _face_above_water(z, out, 0.8):
+				continue
+			if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.1:
+				continue
+			if _rng.randf() < 0.35:
+				_tree(
+					Flora.BROADLEAF if _vp_theme == Env.COUNTRY else Flora.CONIFER,
+					z,
+					_vp_side * out,
+					_rng.randf_range(6.0, 13.0),
+					Color("2c4036").lightened(_rng.randf() * 0.12),
+					true,
+					_face_ground_lift(z, out)
+				)
+			else:
+				_vista_rock(
+					z, _vp_side * out, _rng.randf_range(2.0, 6.5), _rng.randf_range(-0.4, 0.4) + _face_ground_lift(z, out)
+				)
+			n += 1
+			if n % 5 == 0 and _slice_spent() and not await _keep_streaming():
+				return
+		if not await _keep_streaming():
+			return
 
 
 func _dress_nose_tip() -> void:
@@ -6345,7 +6599,7 @@ func _build_lake_water_incremental() -> void:
 				col_bb,
 				col_ba
 			)
-		if i % 2 == 1 and not await _keep_streaming():
+		if i % 2 == 1 and _slice_spent() and not await _keep_streaming():
 			return
 	var mesh: MeshInstance3D = b.commit_to(self, "ViewpointLake")
 	if mesh:
@@ -7931,7 +8185,7 @@ func _build_far_shore_incremental() -> void:
 			_rng.randf_range(7.0, 13.0) if _vp_theme == Env.MOUNTAIN else _rng.randf_range(10.0, 16.0)
 		)
 		_tree(species, z, _vp_side * out, tall, tint, true, _far_bank_lift(z, out))
-		if i % 8 == 7 and not await _keep_streaming():
+		if i % 8 == 7 and _slice_spent() and not await _keep_streaming():
 			return
 	if not await _keep_streaming():
 		return
@@ -8513,7 +8767,13 @@ func _set_piece_platform_incremental() -> bool:
 	_platform_step(rng, _build_belvedere)
 	if not await _keep_streaming():
 		return false
-	_platform_step(rng, _build_platform_furniture)
+	_platform_step(rng, _build_platform_seating)
+	if not await _keep_streaming():
+		return false
+	_platform_step(rng, _build_platform_gate)
+	if not await _keep_streaming():
+		return false
+	_platform_step(rng, _build_platform_walk)
 	if not await _keep_streaming():
 		return false
 	_platform_step(rng, _build_platform_trees)
@@ -8545,6 +8805,14 @@ func _platform_step(rng: RandomNumberGenerator, step: Callable) -> void:
 func _build_platform_furniture() -> void:
 	## The destination. Everything is placed from the overlook centre on ground
 	## the path has already levelled, so nothing here needs a fudge height.
+	## Split in three so the incremental pass can yield between the imported set
+	## pieces and the built pergola — all of it in one call was a ~50 ms frame.
+	_build_platform_seating()
+	_build_platform_gate()
+	_build_platform_walk()
+
+
+func _build_platform_seating() -> void:
 	var centre := _vp_centre
 	var side := _vp_side
 	# Out on the terrace, clear of anything the bike can reach.
@@ -8559,6 +8827,11 @@ func _build_platform_furniture() -> void:
 	# The kit's balcony carries its own coin viewer out over the drop.
 	if _lookout_scene(LOOKOUT_BALCONY) == null:
 		_viewpoint_telescope(centre - 0.2, side, edge - 1.4)
+
+
+func _build_platform_gate() -> void:
+	var centre := _vp_centre
+	var timber := Color("6d4f38")
 	# Painted bays and the brown board at the way in, when the kit has them.
 	var bays: PackedScene = _lookout_scene(LOOKOUT_BAYS)
 	if bays:
@@ -8577,6 +8850,9 @@ func _build_platform_furniture() -> void:
 	_deck_cube(bin_z, bin_lat, Vector3(0.62, 0.92, 0.62), timber.darkened(0.2), 0.0, -0.04)
 	_deck_cube(bin_z, bin_lat, Vector3(0.76, 0.1, 0.76), timber.lightened(0.15), 0.0, 0.88)
 
+
+func _build_platform_walk() -> void:
+	var centre := _vp_centre
 	# Promenade lanterns along the parking side of the walk: tall enough to read
 	# as street furniture from the road, behind the benches so the seated view
 	# never has a pole in it. Only the outer two own real lights (the per-chunk

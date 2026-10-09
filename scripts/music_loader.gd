@@ -2,7 +2,10 @@ extends RefCounted
 ## Worker-thread prep for MusicPlayer. Godot's WorkerThreadPool does not return
 ## task values from wait_for_task_completion() — only an Error — so jobs mutate
 ## this RefCounted object and the main thread reads it after the task finishes.
-## AudioStream decoding always happens on the main thread.
+## Decoding also lives here: a cached WAV is tens of MB and load_from_file()
+## used to freeze the game for ~1 s on the main thread whenever a track loaded.
+## The decode is pure file I/O plus a RefCounted create — safe off the main
+## thread; only assigning the stream to an AudioStreamPlayer needs the loop.
 
 const CACHE_DIR := "user://music_cache"
 const NATIVE_EXTS := ["mp3", "ogg", "oga", "wav"]
@@ -10,15 +13,27 @@ const TRANSCODE_EXTS := ["flac", "m4a", "aac"]
 
 var source_path: String = ""
 var playable_path: String = ""
-
-
-static func needs_transcode(path: String) -> bool:
-	return path.get_extension().to_lower() in TRANSCODE_EXTS
+var stream: AudioStream = null
 
 
 func prepare(source: String, ffmpeg: bool) -> void:
 	source_path = source
 	playable_path = resolve_playable(source, ffmpeg)
+	if not playable_path.is_empty():
+		stream = decode(playable_path)
+
+
+static func decode(playable: String) -> AudioStream:
+	if playable.is_empty() or not FileAccess.file_exists(playable):
+		return null
+	match playable.get_extension().to_lower():
+		"mp3":
+			return AudioStreamMP3.load_from_file(playable)
+		"ogg", "oga":
+			return AudioStreamOggVorbis.load_from_file(playable)
+		"wav":
+			return AudioStreamWAV.load_from_file(playable)
+	return null
 
 
 static func resolve_playable(path: String, ffmpeg: bool) -> String:

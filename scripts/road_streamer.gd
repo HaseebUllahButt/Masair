@@ -35,6 +35,13 @@ var _scenic_in_flight: bool = false
 var _highway_in_flight: bool = false
 var _corridor_key: int = -1
 var _idle_current: int = -1
+## Which streaming job is in flight, for tools/profile_scenic hitch lines.
+## `_building` is the chunk inside a coroutine job; `_dbg_last` is the last
+## synchronous job's label and wall cost, which is the shape a hitch takes when
+## the stall itself is over before the next frame can print it.
+var _dbg: String = ""
+var _building: Node3D = null
+var _dbg_last: String = ""
 ## Arriving at the bench shrinks keep from the whole spur to the lake. Freeing
 ## sixty woodland chunks in one `_process` is a hitch of its own; hide them
 ## immediately and destroy a couple per frame.
@@ -80,7 +87,7 @@ func bind_player(player: Node3D) -> void:
 	# chunks was the remaining restart hitch.
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
 	if not _chunks.has(current):
-		_spawn_ribbon_sync(current, _stream_generation)
+		_spawn_ribbon_sync(current, _stream_generation, true)
 	_arm_opening(current)
 	_defer_stream = true
 
@@ -113,7 +120,7 @@ func reset_world() -> void:
 	if _player == null:
 		return
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
-	_spawn_ribbon_sync(current, _stream_generation)
+	_spawn_ribbon_sync(current, _stream_generation, true)
 	_arm_opening(current)
 	_defer_stream = true
 
@@ -438,7 +445,10 @@ func _fill_opening(current: int, build_max: int) -> bool:
 		if i > build_max:
 			break
 		if not _chunks.has(i):
-			_spawn_ribbon_sync(i, _stream_generation)
+			# The first glance needs one planted chunk; the rest arrive as bare
+			# asphalt and finish through the ribbon queue — a full sync build
+			# per frame was the wall of ~30 ms hitches right after a restart.
+			_spawn_ribbon_sync(i, _stream_generation, i > current + 1)
 			return true
 	_open_until = -1
 	return false
@@ -595,18 +605,26 @@ func _spawn(index: int, incremental: bool) -> void:
 	_apply_corridor_to(chunk)
 
 
-func _spawn_ribbon_sync(index: int, generation: int) -> void:
-	## Immediate asphalt only; its pending terrain uses the same single pipeline.
+func _spawn_ribbon_sync(index: int, generation: int, bare := false) -> void:
+	## Immediate asphalt under the wheels; a `bare` spawn defers the terrain
+	## skirt and shoulder dress to the incremental completion queue instead of
+	## paying the full ~30 ms cold-seed build inside one frame. The emergency
+	## path still builds the whole ribbon — the rider is looking at it — but a
+	## restart or spawn rebuilds the world anyway, so its missing grass is lost
+	## in the noise of the ring refilling.
 	var chunk: Node3D = RoadChunkGD.new() as Node3D
 	chunk.name = "Chunk%d" % index
 	add_child(chunk)
 	_chunks[index] = chunk
 	var scenic_chunk: bool = bool(_path.call("spur_half_width", float(index) * CHUNK_LENGTH + CHUNK_LENGTH * 0.5))
-	chunk.call("setup_ribbon_fast" if scenic_chunk else "setup_ribbon", index, theme_for_chunk(index))
+	var use_fast := bare or scenic_chunk
+	var started := Time.get_ticks_usec()
+	chunk.call("setup_ribbon_fast" if use_fast else "setup_ribbon", index, theme_for_chunk(index))
+	_dbg_last = "sync_ribbon#%d %.1f ms" % [index, float(Time.get_ticks_usec() - started) / 1000.0]
 	_apply_corridor_to(chunk)
 	if generation != _stream_generation:
 		return
-	if scenic_chunk:
+	if use_fast:
 		_ribbon_queue.append(chunk)
 
 
@@ -624,6 +642,8 @@ func _emergency_surface(chunk: Node3D, index: int) -> void:
 
 func _complete_ribbon(chunk: Node3D, generation: int) -> void:
 	var index: int = int(chunk.get("chunk_index"))
+	_dbg = "ribbon#%d" % index
+	_building = chunk
 	await chunk.call("setup_ribbon_incremental", index, theme_for_chunk(index))
 	if generation != _stream_generation:
 		return
@@ -631,6 +651,8 @@ func _complete_ribbon(chunk: Node3D, generation: int) -> void:
 		chunk.set_meta("ribbon_ready", true)
 		_apply_corridor_to(chunk)
 	_build_in_flight = false
+	_building = null
+	_dbg = ""
 
 
 func _spawn_incremental(index: int, generation: int) -> void:
@@ -638,10 +660,14 @@ func _spawn_incremental(index: int, generation: int) -> void:
 	chunk.name = "Chunk%d" % index
 	add_child(chunk)
 	_chunks[index] = chunk
+	_dbg = "build#%d" % index
+	_building = chunk
 	await chunk.call("setup_ribbon_incremental", index, theme_for_chunk(index))
 	if generation != _stream_generation:
 		return
 	_build_in_flight = false
+	_building = null
+	_dbg = ""
 
 
 func _build_next_props(generation: int) -> void:
@@ -655,6 +681,8 @@ func _build_next_props(generation: int) -> void:
 		chunk.set_meta("highway_requested", _player_wants_highway() or not on_spur)
 		if _player_wants_scenic() and on_spur:
 			chunk.set_meta("scenic_requested", true)
+		_dbg = "props#%d" % int(chunk.get("chunk_index"))
+		_building = chunk
 		await chunk.call("setup_props_incremental")
 		if generation != _stream_generation:
 			return
@@ -665,6 +693,8 @@ func _build_next_props(generation: int) -> void:
 		break
 	if generation == _stream_generation:
 		_props_in_flight = false
+		_building = null
+		_dbg = ""
 
 
 func _take_nearest_props() -> Node3D:
@@ -706,6 +736,8 @@ func _build_next_scenic(generation: int) -> void:
 		if bool(chunk.get_meta("scenic_done", false)):
 			chunk.set_meta("scenic_queued", false)
 			continue
+		_dbg = "scenic#%d" % int(chunk.get("chunk_index"))
+		_building = chunk
 		await chunk.call("ensure_scenic_dress")
 		if generation != _stream_generation:
 			return
@@ -715,6 +747,8 @@ func _build_next_scenic(generation: int) -> void:
 		break
 	if generation == _stream_generation:
 		_scenic_in_flight = false
+		_building = null
+		_dbg = ""
 
 
 func _take_nearest_scenic() -> Node3D:
@@ -756,6 +790,8 @@ func _build_next_highway(generation: int) -> void:
 		if bool(chunk.get_meta("highway_done", false)):
 			chunk.set_meta("highway_queued", false)
 			continue
+		_dbg = "highway#%d" % int(chunk.get("chunk_index"))
+		_building = chunk
 		await chunk.call("ensure_highway_dress")
 		if generation != _stream_generation:
 			return
@@ -765,6 +801,8 @@ func _build_next_highway(generation: int) -> void:
 		break
 	if generation == _stream_generation:
 		_highway_in_flight = false
+		_building = null
+		_dbg = ""
 
 
 func _take_nearest_highway() -> Node3D:
@@ -794,6 +832,22 @@ func _take_nearest_highway() -> Node3D:
 	var chosen: Node3D = _highway_queue[best_i]
 	_highway_queue.remove_at(best_i)
 	return chosen
+
+
+func debug_state() -> String:
+	## One line of streamer internals for the hitch report in tools/profile_scenic:
+	## the chunk the bike is in, the job running, its stage label, and queue depth.
+	var cur := -1
+	if _player != null:
+		cur = int(floor(_player.track_z / CHUNK_LENGTH))
+	var stage := ""
+	if is_instance_valid(_building):
+		stage = str(_building.get_meta("dbg_stage", ""))
+	return "cur=%d job=%s stage=%s last=%s q(r/p/s/h/u)=%d/%d/%d/%d/%d live=%d dying=%d" % [
+		cur, _dbg, stage, _dbg_last,
+		_ribbon_queue.size(), _props_queue.size(), _scenic_queue.size(),
+		_highway_queue.size(), _unload_queue.size(), _chunks.size(), _dying.size(),
+	]
 
 
 func _apply_corridor() -> void:

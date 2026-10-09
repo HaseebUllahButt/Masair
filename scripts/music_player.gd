@@ -583,11 +583,10 @@ func _pump_tasks() -> void:
 	var path := _next_load_path()
 	if _task_id != -1 or path.is_empty() or _stream_cache.has(path):
 		return
-	if MusicLoader.needs_transcode(path):
-		_load_job = MusicLoader.new()
-		_task_id = WorkerThreadPool.add_task(_load_job.prepare.bind(path, has_ffmpeg))
-	else:
-		_load_native(path)
+	# Decode on the worker for every format: a 70 MB cached WAV decoded on the
+	# main thread stalled the bike for ~1 s whenever a track loaded.
+	_load_job = MusicLoader.new()
+	_task_id = WorkerThreadPool.add_task(_load_job.prepare.bind(path, has_ffmpeg))
 
 
 func _next_load_path() -> String:
@@ -611,14 +610,7 @@ func _next_load_path() -> String:
 
 
 func _finish_load_job(job: MusicLoader) -> void:
-	var path := job.source_path
-	var playable := job.playable_path
-	var stream: AudioStream = _load_playable_file(playable) if not playable.is_empty() else null
-	_handle_loaded(path, stream)
-
-
-func _load_native(path: String) -> void:
-	_handle_loaded(path, _load_playable_file(path))
+	_handle_loaded(job.source_path, job.stream)
 
 
 func _handle_loaded(path: String, stream: AudioStream) -> void:
@@ -683,21 +675,6 @@ func _trim_cache() -> void:
 		_stream_cache.erase(key)
 		if _stream_cache.size() <= CACHE_KEEP:
 			break
-
-
-func _load_playable_file(playable: String) -> AudioStream:
-	if playable.is_empty() or not FileAccess.file_exists(playable):
-		return null
-	var ext := playable.get_extension().to_lower()
-	match ext:
-		"mp3":
-			return AudioStreamMP3.load_from_file(playable)
-		"ogg", "oga":
-			return AudioStreamOggVorbis.load_from_file(playable)
-		"wav":
-			return AudioStreamWAV.load_from_file(playable)
-		_:
-			return null
 
 
 func _stop_all() -> void:

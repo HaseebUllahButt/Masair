@@ -50,6 +50,21 @@ func _initialize() -> void:
 	for argument: String in OS.get_cmdline_user_args():
 		if argument.begins_with("--seed="):
 			runner.world_seed = int(argument.trim_prefix("--seed="))
+		elif argument.begins_with("--hitchms="):
+			runner.hitch_ms = float(argument.trim_prefix("--hitchms="))
+		elif argument == "--trace":
+			# Per-slice stage prints from the incremental chunk builder.
+			preload("res://scripts/road_chunk.gd").hitch_trace = true
+		elif argument == "--notraffic":
+			runner.no_traffic = true
+		elif argument == "--nostream":
+			runner.no_stream = true
+		elif argument == "--nolife":
+			runner.no_life = true
+		elif argument == "--nowarm":
+			runner.no_warm = true
+		elif argument == "--nomusic":
+			runner.no_music = true
 	runner.tree_ref = self
 	root.add_child(runner)
 
@@ -64,6 +79,17 @@ class Runner:
 	var frame_index: int = 0
 	var last_frame_usec: int = 0
 	var wall_elapsed := 0.0
+	## Wall-clock cost that counts as a hitch for the live log; --hitchms lowers
+	## it so the slices under the usual 80 ms line show what a stall was made of.
+	var hitch_ms: float = HITCH_MS
+	var _pre_draw_usec: int = 0
+	var draw_ms: float = 0.0
+	## Ablation switches for blaming a subsystem with a whole stall at once.
+	var no_traffic := false
+	var no_stream := false
+	var no_life := false
+	var no_warm := false
+	var no_music := false
 	## True while the current frame belongs in the ride statistics. The cold
 	## frames are recorded as boot cost instead, so a shader compile cannot be
 	## reported as a hitch on the road.
@@ -91,6 +117,14 @@ class Runner:
 		streamer = get_tree().root.find_child("RoadStreamer", true, false)
 		player = get_tree().root.find_child("Player", true, false)
 		var hud := get_tree().root.find_child("HUD", true, false)
+		# A real player watches the menu while the shader warm-up draws; driving
+		# immediately drops its overlook pass into the first riding frames and
+		# misreports it as a road hitch. Wait it out before starting.
+		var warmup := get_tree().root.find_child("ScenicWarmup", true, false)
+		var waited := 0
+		while warmup and is_instance_valid(warmup) and waited < 600:
+			waited += 1
+			await get_tree().process_frame
 		if hud and hud.has_method("_start_ride"):
 			hud.call("_start_ride")
 		# Starting the ride randomizes the world; pin the benchmark afterward.
@@ -107,6 +141,37 @@ class Runner:
 		player.call("_place")
 		player.reset_physics_interpolation()
 		streamer.call("reset_world")
+		if no_traffic:
+			var traffic := get_tree().root.find_child("TrafficManager", true, false)
+			if traffic:
+				traffic.set("max_active", 0)
+		if no_life:
+			var life := get_tree().root.find_child("LookoutLife", true, false)
+			if life:
+				life.queue_free()
+		if no_music:
+			var music := get_tree().root.get_node_or_null("MusicPlayer")
+			if music:
+				music.set("music_folder", "")
+				music.set("_want_playing", false)
+		if no_warm:
+			var warm := get_tree().root.find_child("ScenicMaterialPreview", true, false)
+			var warm_node := get_tree().root.find_child("ScenicWarmup", true, false)
+			if warm:
+				warm.queue_free()
+			if warm_node:
+				# Its _ready is parked on frame_post_draw; freeing skips the
+				# lookout pass, which is the ablation being measured.
+				warm_node.queue_free()
+		if no_stream:
+			# Freeze the pipeline where reset left it: the approach still rides
+			# on the fast ribbons, and any surviving stall is not the streamer's.
+			streamer.set_process(false)
+		# Draw window per frame: between pre_draw and post_draw sits the whole
+		# render+driver side of the iteration, which is where a lazy program
+		# compile lands. Nothing above process frames could see it directly.
+		RenderingServer.frame_pre_draw.connect(_on_pre_draw)
+		RenderingServer.frame_post_draw.connect(_on_post_draw)
 		# Frame 0 is the cold frame, so the clock starts at the end of setup:
 		# everything from here to the first _process is what that frame costs.
 		last_frame_usec = Time.get_ticks_usec()
@@ -130,8 +195,14 @@ class Runner:
 			# t is wall clock too, so it lines up with the ms beside it. Cold
 			# frames are not here: they are a launch wait, and a hitch line
 			# that quotes one teaches the wrong lesson about the road.
-			if frame_ms > HITCH_MS:
-				print("scenic hitch: t=%.2f z=%.1f %.1f ms ribbon=%s scenic=%s props=%s" % [wall_elapsed, float(player.track_z), frame_ms, str(streamer.get("_build_in_flight")), str(streamer.get("_scenic_in_flight")), str(streamer.get("_props_in_flight"))])
+			if frame_ms > hitch_ms:
+				# TIME_PROCESS covers the script/physics slice of the frame that
+				# just ended; the rest of the wall clock went to the renderer and
+				# the driver. Splitting them tells a chunk stall from a shader
+				# compile without a profiler.
+				var proc_ms := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
+				var phys_ms := Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
+				print("scenic hitch: t=%.2f z=%.1f %.1f ms (proc %.1f phys %.1f draw %.1f) ribbon=%s scenic=%s props=%s %s" % [wall_elapsed, float(player.track_z), frame_ms, proc_ms, phys_ms, draw_ms, str(streamer.get("_build_in_flight")), str(streamer.get("_scenic_in_flight")), str(streamer.get("_props_in_flight")), str(streamer.call("debug_state"))])
 		else:
 			boot_frames.append(frame_seconds)
 		frame_index += 1
@@ -201,6 +272,13 @@ class Runner:
 			var complete: bool = settled and ready and scenery_valid and missing_road_frames == 0
 			print("scenic readiness: %s seed_requested=%d seed_actual=%d biome=%d seated=%s seat_blend=%.3f idle=%s active_road=%s stable_wall_s=%.2f parked_wall_s=%.2f settled_samples=%d timeout=%s" % ["COMPLETE" if complete else "INCOMPLETE", world_seed, int(path.get("world_seed")), int(path.call("theme_at", viewpoint)), str(player.get("seated")), float(player.get("_seat_blend")), str(_streamer_idle()), str(_active_road_visible()), stable_wall_seconds, parked_wall_seconds, settled_frames.size(), str(timed_out)])
 			tree_ref.quit(0 if complete else 2)
+
+	func _on_pre_draw() -> void:
+		_pre_draw_usec = Time.get_ticks_usec()
+
+	func _on_post_draw() -> void:
+		if _pre_draw_usec > 0:
+			draw_ms = float(Time.get_ticks_usec() - _pre_draw_usec) / 1000.0
 
 	func _active_road_visible() -> bool:
 		var current_index: int = floori(float(player.track_z) / 40.0)
