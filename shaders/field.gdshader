@@ -25,9 +25,32 @@ uniform float drift_strength : hint_range(0.0, 0.3) = 0.09;
 // The bright side of a band is sunlight arriving, not the field going pale —
 // so it warms as it brightens, the way a gust of sun does over corn.
 uniform vec3 band_warm : source_color = vec3(1.07, 1.03, 0.92);
+// Pasture is never one colour: dry patches, late grass, stands of thistle all
+// sit a few percent off the field's mean at the tens-of-metres scale. This is
+// that mottle — slow noise, mostly luminance with a small lean toward hay —
+// so a hundred-metre meadow does not arrive as a sheet of paint. Distinct
+// from the gust bands: those move, this stays put like the land it is.
+uniform float mottle_strength : hint_range(0.0, 0.3) = 0.10;
 
 varying vec3 world_pos;
 varying float view_dist;
+
+float fhash(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+float fnoise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(
+		mix(fhash(i), fhash(i + vec2(1.0, 0.0)), u.x),
+		mix(fhash(i + vec2(0.0, 1.0)), fhash(i + vec2(1.0, 1.0)), u.x),
+		u.y
+	);
+}
 
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -58,6 +81,16 @@ void fragment() {
 		float wave = (light * band_strength + drift * drift_strength - band_strength * 0.5 - drift_strength * 0.5) * fade;
 		albedo *= (1.0 + wave) * mix(vec3(1.0), band_warm, clamp(wave * 5.0, 0.0, 0.75));
 	}
+	// Two patches scales: field parcels at ~60–90 m and the dry-spot grain
+	// inside them at ~20 m. Static world-space noise, so no shimmer — the eye
+	// only meets new patches as it rides into them.
+	float parcels = fnoise(world_pos.xz * vec2(0.011, 0.016));
+	float dryspots = fnoise(world_pos.xz * vec2(0.043, 0.037) + 7.3);
+	float mottle = parcels * 0.65 + dryspots * 0.35;
+	albedo *= 1.0 + (mottle - 0.5) * 2.0 * mottle_strength;
+	// Where the noise runs high the grass dries toward hay — hue, not just
+	// value, so the patches read as different ground and not as a shadow map.
+	albedo *= mix(vec3(1.0), vec3(1.10, 1.02, 0.80), smoothstep(0.60, 0.92, mottle) * mottle_strength * 3.2);
 	ALBEDO = albedo;
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
