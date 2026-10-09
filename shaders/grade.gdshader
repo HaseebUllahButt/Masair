@@ -79,10 +79,20 @@ void fragment() {
 	float toe = 1.0 - smoothstep(0.0, 0.22, lum);
 	c += shadow_tint * toe * toe * toe_lift;
 
-	// Luminance split-tone: dusk-pastel shadows, warm-cream highlights.
-	c *= mix(dark_tint, light_tint, smoothstep(0.06, 0.62, lum)) * (1.0 + lum_split) - lum_split;
+	// Blue lead protection. Both split-tones below buy their warmth by taking
+	// the blue channel down against green — on sky and water, which arrive
+	// already blue-dominant, that trade turns a clear blue into mint. Where
+	// blue leads, apply each tint as a luminance-only multiplier so the frame
+	// keeps its exposure shaping while the hue stays put. Warm pixels (clouds,
+	// fields, the sunset itself) are unaffected: they get the full tints.
+	float blue_lead = clamp((c.b - max(c.r, c.g)) * 6.0, 0.0, 1.0);
 
-	c *= mix(warm, cool, edge * 0.55) * (1.0 + split_tone) - split_tone;
+	// Luminance split-tone: dusk-pastel shadows, warm-cream highlights.
+	vec3 lum_tint = mix(dark_tint, light_tint, smoothstep(0.06, 0.62, lum)) * (1.0 + lum_split) - lum_split;
+	c *= mix(lum_tint, vec3(dot(lum_tint, vec3(0.2126, 0.7152, 0.0722))), blue_lead);
+
+	vec3 pos_tint = mix(warm, cool, edge * 0.55) * (1.0 + split_tone) - split_tone;
+	c *= mix(pos_tint, vec3(dot(pos_tint, vec3(0.2126, 0.7152, 0.0722))), blue_lead);
 	c *= 1.0 - edge * vignette;
 
 	c += (hash(SCREEN_UV * vec2(1279.0, 721.0) + seed) - 0.5) * grain;

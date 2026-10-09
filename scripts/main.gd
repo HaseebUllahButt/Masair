@@ -286,7 +286,10 @@ const MOODS := {
 		# Aerial perspective drags the fog colour toward the sky's pale horizon
 		# band. At 0.22 it read as a second, brighter fog layered over the first.
 		"fog_aerial": 0.12,
-		"fog_sky": 0.07,
+		# Fog on the sky is a flat mix toward sage + sun-scatter, and 7% of it
+		# was enough to lay a mint veil over the whole blue. A whisper keeps the
+		# horizon band joined to the land's air without tinting the dome.
+		"fog_sky": 0.02,
 		"fog_height": 6.0,
 		# Halved: over the lake basin the sightline runs hundreds of metres
 		# through the low band and the water drowned in it.
@@ -658,10 +661,11 @@ func _grade_lut() -> ImageTexture:
 			Color(0.118, 0.136, 0.174),
 			# Mid anchor. Its blue channel used to sit below green, so any
 			# pale blue input — mid sky, cloud undersides, haze — had its
-			# channels reordered into sage. Lifting blue to parity with green
-			# keeps pale blues blue while warm midtones are unaffected (their
-			# red lead still decides the hue).
-			Color(0.605, 0.566, 0.560),
+			# channels reordered into sage. Blue now sits a touch above
+			# green: parity was not enough, since ACES and the warm split
+			# tone keep chipping at the lead. Warm midtones are unaffected —
+			# their red lead still decides the hue.
+			Color(0.605, 0.566, 0.590),
 			Color(1.000, 0.945, 0.845),
 		]
 	)

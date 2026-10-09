@@ -22,6 +22,7 @@ class Runner:
 	var _env: Environment
 	var _sky_mat: Material
 	var _player: Node
+	var _grade: CanvasItem
 	var _t := 0.0
 	var _step := 0
 	var _sample_x := [160, 420, 640, 860, 1120]
@@ -45,6 +46,7 @@ class Runner:
 		var world_env := get_tree().root.find_child("WorldEnvironment", true, false) as WorldEnvironment
 		_env = world_env.environment
 		_sky_mat = _env.sky.sky_material
+		_grade = get_tree().root.find_child("GradeRect", true, false)
 
 	func _process(delta: float) -> void:
 		_t += delta
@@ -73,12 +75,21 @@ class Runner:
 				_sky_mat.set("shader_parameter/bank_opacity", 0.0)
 				_sample("clouds OFF")
 			5:
+				# Restore everything, kill only the grade overlay pass.
+				_env.glow_enabled = true
+				_sky_mat.set("shader_parameter/cloud_opacity", 0.90)
+				_sky_mat.set("shader_parameter/bank_opacity", 0.90)
+				_grade = get_tree().root.find_child("GradeRect", true, false)
+				if is_instance_valid(_grade):
+					_grade.visible = false
+				_sample("grade overlay OFF")
+			6:
 				_env.adjustment_enabled = false
 				_env.glow_enabled = false
 				_env.fog_sky_affect = 0.0
 				_env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
 				_sample("ALL OFF (raw shader)")
-			6:
+			7:
 				tree_ref.quit(0)
 				return
 		_step += 1
@@ -90,7 +101,7 @@ class Runner:
 
 	func _sample(label: String) -> void:
 		var img := get_viewport().get_texture().get_image()
-		img.save_png("/home/haseeb/dev/me/hehe/misc/.masair-wt/shots/qa-detail/probe_%s.png" % label.replace(" ", "_").replace("(", "").replace(")", ""))
+		img.save_png("/home/ubuntu/masair-shots/sky3/probe/probe_%s.png" % label.replace(" ", "_").replace("(", "").replace(")", ""))
 		print("── %s" % label)
 		for y in _sample_y:
 			var row := "  y=%3d  " % y

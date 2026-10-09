@@ -5314,7 +5314,7 @@ func _build_spur_ribbon(
 			var lb: float = span_b.x if edge < 0.0 else span_b.y
 			var oa: float = la + edge * RoadPathGD.SPUR_SHOULDER
 			var ob: float = lb + edge * RoadPathGD.SPUR_SHOULDER
-			var gravel: Color = Color("ff00ff") if edge < 0.0 else _deck_color((za + zb) * 0.5, (la + lb) * 0.5 + edge * RoadPathGD.SPUR_SHOULDER * 0.5)
+			var gravel: Color = _deck_color((za + zb) * 0.5, (la + lb) * 0.5 + edge * RoadPathGD.SPUR_SHOULDER * 0.5)
 			if edge < 0.0:
 				hard.add_quad(_p(za, oa, 0.0), _p(za, la, -PROUD), _p(zb, lb, -PROUD), _p(zb, ob, 0.0), gravel)
 			else:
@@ -5596,7 +5596,7 @@ func _build_spur_barrier(hard: LowPoly, z0: float) -> void:
 	const HEAD := 0.86  # waist height: a drystone wall, not a crash barrier
 	const VIEW_HEAD := 0.22
 	const THICK := 0.17  # half section, taken across the line — a third of a metre
-	var stone: Color = Color("00ffff")
+	var stone: Color = _pal["rail"].lerp(_face_color(), 0.45)
 	var step := LENGTH / float(STEPS)
 	for i in STEPS:
 		var za := z0 + float(i) * step
@@ -5622,9 +5622,9 @@ func _build_spur_barrier(hard: LowPoly, z0: float) -> void:
 		var a_foot := _p(za, la, -foot_a)
 		var b_foot := _p(zb, lb, -foot_b)
 		var out: Vector3 = (_p(za, la + 1.0, -head_a) - a_top).normalized() * THICK
-		hard.add_quad(a_foot - out, b_foot - out, b_top - out, a_top - out, Color("ff0000"))
-		hard.add_quad(b_foot + out, a_foot + out, a_top + out, b_top + out, Color("00ff00"))
-		hard.add_quad(a_top - out, b_top - out, b_top + out, a_top + out, Color("00ffff"))
+		hard.add_quad(a_foot - out, b_foot - out, b_top - out, a_top - out, segment_stone.lightened(0.1))
+		hard.add_quad(b_foot + out, a_foot + out, a_top + out, b_top + out, segment_stone.darkened(0.14))
+		hard.add_quad(a_top - out, b_top - out, b_top + out, a_top + out, segment_stone)
 
 
 func _spur_span(z: float) -> Vector2:
