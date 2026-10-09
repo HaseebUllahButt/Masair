@@ -830,16 +830,12 @@ func _build_highway_props_incremental() -> void:
 		_build_highway_spur_screen()
 		if not await _keep_streaming():
 			return
-	if _on_lake:
-		await _plant_inland_carriageway_incremental()
-	else:
-		await _build_ordinary_theme_scenery_incremental()
+	await _build_ordinary_theme_scenery_incremental()
 	if not await _keep_streaming():
 		return
-	if not _on_lake:
-		await _build_distant_scenery_incremental()
-		if not await _keep_streaming():
-			return
+	await _build_distant_scenery_incremental()
+	if not await _keep_streaming():
+		return
 	if not _on_spur:
 		_build_set_piece()
 		if not await _keep_streaming():
@@ -987,7 +983,9 @@ func _resolve_viewpoint() -> void:
 	_vp_phase = (
 		float(posmod(hash(Vector2i(int(round(_vp_centre)), int(_path.world_seed))), 1000)) * 0.00628
 	)
-	if _on_lake:
+	if _on_spur:
+		# The drowned tail of the basin sinks past the lake span onto spur-only
+		# chunks — the waterline test needs the level wherever shoreline can go.
 		_vp_water_y = float(_path.viewpoint_water_y(_vp_centre))
 
 
@@ -1000,12 +998,11 @@ func _build_props() -> void:
 func _build_highway_props() -> void:
 	var highway_from := get_child_count()
 	_build_furniture()
-	if _on_lake:
-		_plant_inland_carriageway()
-	else:
-		_build_ordinary_theme_scenery()
-	if not _on_lake:
-		_build_distant_scenery()
+	# Lake chunks dress like the rest of the biome too — the sightline reserve
+	# keeps the seat's view open; skipping the theme pass outright was what left
+	# a kilometre of roadside beside every basin reading as a mown green plain.
+	_build_ordinary_theme_scenery()
+	_build_distant_scenery()
 	_build_approach_signs()
 	if _on_spur:
 		_build_junction()
@@ -1113,10 +1110,7 @@ func _build_theme_scenery() -> void:
 	# as separate passes so the unused path can be hidden.
 	if _on_spur:
 		_build_spur_woodland()
-	if _on_lake:
-		_plant_inland_carriageway()
-	else:
-		_build_ordinary_theme_scenery()
+	_build_ordinary_theme_scenery()
 
 
 func _build_ordinary_theme_scenery() -> void:
@@ -1145,41 +1139,6 @@ func _build_ordinary_theme_scenery_incremental() -> void:
 			_scenery_country()
 	if theme != Env.FOREST and theme != Env.MOUNTAIN and not await _keep_streaming():
 		return
-
-
-func _plant_inland_carriageway() -> void:
-	## Lake chunks skip the full biome so the bench stays a picture. The inland
-	## verge of the main road still wants a stand of trees so it does not go bare
-	## for the length of the basin if the rider stays on the highway.
-	var z0: float = float(chunk_index) * LENGTH
-	var inland: float = -_vp_side if _vp_side != 0.0 else -1.0
-	var tint: Color = (_pal["prop_a"] as Color).darkened(_rng.randf() * 0.2)
-	for _i in 22:
-		var z := z0 + _rng.randf_range(0.0, LENGTH)
-		var lx: float = inland * (HALF_WIDTH + 3.5 + _rng.randf_range(0.0, 22.0))
-		var species: int = (
-			Flora.CONIFER if theme == Env.FOREST or theme == Env.MOUNTAIN else Flora.BROADLEAF
-		)
-		var height := _rng.randf_range(5.5, 11.5)
-		_tree(species, z, lx, height, tint)
-
-
-func _plant_inland_carriageway_incremental() -> void:
-	## Same stand as `_plant_inland_carriageway`, eight trees then a frame so a
-	## lake-highway chunk does not plant twenty-two trunks in one hitch.
-	var z0: float = float(chunk_index) * LENGTH
-	var inland: float = -_vp_side if _vp_side != 0.0 else -1.0
-	var tint: Color = (_pal["prop_a"] as Color).darkened(_rng.randf() * 0.2)
-	for i in 22:
-		var z := z0 + _rng.randf_range(0.0, LENGTH)
-		var lx: float = inland * (HALF_WIDTH + 3.5 + _rng.randf_range(0.0, 22.0))
-		var species: int = (
-			Flora.CONIFER if theme == Env.FOREST or theme == Env.MOUNTAIN else Flora.BROADLEAF
-		)
-		var height := _rng.randf_range(5.5, 11.5)
-		_tree(species, z, lx, height, tint)
-		if i % 8 == 7 and _slice_spent() and not await _keep_streaming():
-			return
 
 
 func _build_spur_woodland(first_station: int = 0, station_count: int = 5) -> void:
@@ -2167,14 +2126,19 @@ func _viewpoint_reserves_sightline(z: float, lateral: float) -> bool:
 	## pass.
 	if not (_on_lake or _on_spur):
 		return false
+	# The basin only exists on the view side — inland scatter skips the
+	# waterline query and answers `viewpoint_reserves` directly below anyway.
+	if lateral * _vp_side <= 0.0:
+		return false
 	# Below the waterline nothing random is allowed at all. `viewpoint_reserves`
 	# covers the lake *bed* the set piece digs, but the water sheet reaches far
 	# past it — out to the ranges — and the ordinary verge scatter was happily
 	# planting bushes over the whole of it. That went unnoticed only while every
 	# biome palette was the same low-chroma beige as the lake it was strewn
 	# across; the moment the palettes got their hues back it read as confetti
-	# floating on the water.
-	if _on_lake and _path.height_at(z) - _path.terrain_drop(lateral, z) < _vp_water_y + 0.6:
+	# floating on the water. The drowned tail past the lake's end asks the same
+	# question on spur chunks: its sinking ground dips under the sheet too.
+	if _path.height_at(z) - _path.terrain_drop(lateral, z) < _vp_water_y + 0.6:
 		return true
 	return bool(_path.viewpoint_reserves(z, lateral))
 
@@ -2666,7 +2630,7 @@ func _blob(
 		# checks run on the ribbon's chord — a leafy clump that slips between the
 		# two lands in the lake, standing in open water like litter. Rocks are
 		# allowed to sit in the shallows; foliage is not.
-		if leafy and _on_lake and xform.origin.y + _origin.y < _vp_water_y - 0.4:
+		if leafy and _on_spur and xform.origin.y + _origin.y < _vp_water_y - 0.4:
 			return
 		if leafy:
 			# The corridor rule is about leaves, not stone: a hedge or bush keeps
@@ -3608,6 +3572,19 @@ func _junction_occupies(z: float, lateral: float) -> bool:
 	return absf(lateral) <= maxf(outer + 3.0, HALF_WIDTH + 9.0)
 
 
+func _boundary_under_lane(z_a: float, z_b: float) -> bool:
+	## Whether the verge's fence line stands inside the slip lane across this
+	## segment. While the spur is still a lane bolted to the carriageway edge a
+	## rail or wall at the verge lands in the deceleration lane; once the gore
+	## opens, the verge is open ground and the boundary is wanted back.
+	if not _on_spur:
+		return false
+	for z in [z_a, z_b]:
+		if float(_path.spur_half_width(z)) > 0.0 and float(_path.spur_gap(z)) < 6.0:
+			return true
+	return false
+
+
 func _pole_exists_at(z: float) -> bool:
 	## Whether the chunk owning route distance `z` builds power poles at all. Own
 	## theme first: a chunk built with an explicit theme (the self-checks do this)
@@ -4426,22 +4403,26 @@ func _scenery_country() -> void:
 	# stretches of dry-stone wall and the odd open pasture where the field grass
 	# runs right up to the verge. One repeating fence is a wallpaper stripe; a
 	# boundary that changes its mind every field is what reads as worked land.
-	# The scenic-side verge is the exit, so it keeps no boundary at all.
+	# The scenic-side verge keeps its boundary too, broken where the junction's
+	# lane stands on the fence line and picking up past the gore — the way a
+	# real field boundary crosses a junction mouth.
 	for side in [-1.0, 1.0]:
-		if _on_spur and is_equal_approx(side, _vp_side):
-			continue
 		var blx: float = side * (HALF_WIDTH + 4.0)
 		var bz := z0
 		while bz < z0 + LENGTH - 0.01:
 			var seg_end := minf(bz + _rng.randf_range(20.0, 55.0), z0 + LENGTH)
 			var kind := _rng.randf()
-			if kind < 0.55:
-				_boundary_rail(bz, seg_end, blx)
-			elif kind < 0.85:
-				_boundary_stone(bz, seg_end, blx)
+			var lane_on_verge := (
+				is_equal_approx(side, _vp_side) and _boundary_under_lane(bz, seg_end)
+			)
+			if not lane_on_verge:
+				if kind < 0.55:
+					_boundary_rail(bz, seg_end, blx)
+				elif kind < 0.85:
+					_boundary_stone(bz, seg_end, blx)
 			# The open stretches and the segment joints are where a gate belongs:
 			# one entrance every few hundred metres, not one per field.
-			if seg_end < z0 + LENGTH - 6.0 and _rng.randf() < 0.14:
+			if not lane_on_verge and seg_end < z0 + LENGTH - 6.0 and _rng.randf() < 0.14:
 				_field_gate(seg_end + 2.1, side)
 				seg_end += 4.2
 			bz = seg_end
@@ -4627,17 +4608,11 @@ func _build_distant_scenery() -> void:
 	## Wide and low rather than tall and narrow — an English-downland skyline of
 	## rolling hills, not an alpine wall. Every theme shares the same proportions
 	## now; Mountain only goes a little higher, never back to a sharp peak.
-	if _on_lake:
-		# The overlook authors its own range, far shore and headland. Extra ridge
-		# blobs here only fight that composition and cost streaming frames.
-		return
 	for side in [-1.0, 1.0]:
 		_build_distant_scenery_side(side)
 
 
 func _build_distant_scenery_incremental() -> void:
-	if _on_lake:
-		return
 	for side in [-1.0, 1.0]:
 		_build_distant_scenery_side(side)
 		if not await _keep_streaming():
@@ -4651,14 +4626,17 @@ func _build_distant_scenery_side(side: float) -> void:
 	]
 	var z0 := float(chunk_index) * LENGTH
 	var haze := Color("899aa2")
-	if _on_lake and side == _vp_side:
-		return
 	for band in BANDS:
 		var count: int = band["count"]
 		for i in count:
 			var z := z0 + (float(i) + 0.5) * LENGTH / float(count) + _rng.randf_range(-6.0, 6.0)
 			var lateral_range: Array = band["lateral"]
 			var lx: float = side * _rng.randf_range(lateral_range[0], lateral_range[1])
+			# The overlook authors its own range, far shore and headland on the
+			# view side — a backdrop cone parked in the basin fights that
+			# composition and stands in the water.
+			if _viewpoint_reserves_sightline(z, lx):
+				continue
 			var width_range: Array = band["width"]
 			var height_range: Array = band["height"]
 			var width: float = _rng.randf_range(width_range[0], width_range[1])
