@@ -251,8 +251,12 @@ const MOODS := {
 		# on a near-white grey — the bleached far hills and the milky basin were
 		# the same number. Enough stays to soften the streamed edge and the
 		# valleys between ridges.
-		"fog_density": 0.00032,
-		"fog_sun_scatter": 0.12,
+		# 0.00032 still laid a third of a grey-green veil over an overlook's
+		# 1-2 km view, worst at the country seat, which faces the sun. Halved,
+		# with less sun scatter, so the vista reads clear and the ranges carry
+		# depth on their own aerial ladder (the ring is fog-free).
+		"fog_density": 0.00016,
+		"fog_sun_scatter": 0.05,
 		# Aerial perspective drags the fog colour toward the sky's pale horizon
 		# band. At 0.22 it read as a second, brighter fog layered over the first.
 		"fog_aerial": 0.12,

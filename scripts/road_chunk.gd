@@ -1679,6 +1679,7 @@ func _finish_ribbon_incremental(
 		return
 	if _on_spur:
 		_build_decel_lane(hard, z0)
+		_build_gore_paving(road, z0)
 		_build_gore_hatch(hard, z0)
 		if not await _keep_streaming():
 			return
@@ -1704,6 +1705,7 @@ func _prepare_ribbon(hard: LowPoly, road: LowPoly, z0: float) -> void:
 		# Junction paint stays on the highway ribbon so the exit is still readable
 		# after the unused climb is culled.
 		_build_decel_lane(hard, z0)
+		_build_gore_paving(road, z0)
 		_build_gore_hatch(hard, z0)
 
 
@@ -3163,7 +3165,7 @@ func _grass_verge() -> void:
 		# Packed against the curb, thinning outward — but never inside the
 		# corridor margin: a swaying blade over the shoulder still brushes the
 		# rider's sleeve.
-		var lx: float = side * (HALF_WIDTH + 2.2 + pow(_rng.randf(), 1.6) * 7.5)
+		var lx: float = _mow_lateral(z, side * (HALF_WIDTH + 2.2 + pow(_rng.randf(), 1.6) * 7.5))
 		var height := _rng.randf_range(0.55, 1.18)
 		var tuft := Vector3(_rng.randf_range(0.65, 1.15), height, _rng.randf_range(0.65, 1.15))
 		_grass_at(
@@ -3186,7 +3188,7 @@ func _hedge_verge() -> void:
 	for side in [-1.0, 1.0]:
 		var hz := z0 + _rng.randf_range(0.0, 1.1)
 		while hz < z0 + LENGTH:
-			var lx: float = side * (HALF_WIDTH + 3.0 + _rng.randf_range(0.0, 2.6))
+			var lx: float = _mow_lateral(hz, side * (HALF_WIDTH + 3.0 + _rng.randf_range(0.0, 2.6)))
 			# Forced blobs skip `_footprint_is_clear`; without a tarmac test they grow
 			# on the slip road the moment spur chunks start dressing the verge again.
 			if ((_on_lake or _on_spur) and _viewpoint_reserves_sightline(hz, lx)) or _on_tarmac(hz, lx, 1.2):
@@ -3202,7 +3204,7 @@ func _hedge_verge() -> void:
 				var s := _rng.randf_range(0.4, 0.9)
 				_cube(
 					hz + 0.35,
-					side * (HALF_WIDTH + 1.65 + _rng.randf() * 1.5),
+					_mow_lateral(hz, side * (HALF_WIDTH + 1.65 + _rng.randf() * 1.5)),
 					Vector3(s * 1.35, s * 0.72, s * 1.1),
 					(_pal["prop_c"] as Color).darkened(_rng.randf() * 0.22)
 				)
@@ -3372,6 +3374,32 @@ func _local_cable_segment(a: Vector3, b: Vector3, color: Color) -> void:
 
 
 
+func _junction_mow(z: float) -> float:
+	## The unsigned lateral a junction's mown margin reaches. While the slip
+	## road still shares the carriageway's formation the verge beside it is
+	## kept short — a real exit lane is read against gravel and paint, not out
+	## of a hedge. Zero away from a junction, where the verge belongs to the
+	## trees again.
+	if not _on_spur:
+		return 0.0
+	if float(_path.spur_divergence(z)) >= 0.55:
+		return 0.0
+	var spur: Vector2 = _path.spur_interval(z)
+	if spur == Vector2.ZERO:
+		return 0.0
+	return maxf(absf(spur.x), absf(spur.y)) + RoadPathGD.SPUR_SHOULDER + 3.8
+
+
+func _mow_lateral(z: float, lateral: float) -> float:
+	## Keep verge planting outside the mown margin on the spur's side — the
+	## bushes that used to crowd the exit lane's edge slid out to the verge
+	## the mow leaves, keeping the same density a clean strip further out.
+	var bound := _junction_mow(z)
+	if bound <= 0.0 or lateral * _vp_side <= 0.0:
+		return lateral
+	return signf(lateral) * maxf(absf(lateral), bound)
+
+
 func _verge_planting() -> void:
 	## Rounded growth packed along the first few metres of verge, every theme.
 	## This is the band the rider actually looks at, and it used to be a bare
@@ -3391,7 +3419,7 @@ func _verge_plant_bushes(count: int) -> void:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var side: float = 1.0 if _rng.randf() < 0.5 else -1.0
 		# Sparser the further out, so the near verge stays the dense, fast-moving band.
-		var lx: float = side * (HALF_WIDTH + 3.0 + pow(_rng.randf(), 1.35) * 16.0)
+		var lx: float = _mow_lateral(z, side * (HALF_WIDTH + 3.0 + pow(_rng.randf(), 1.35) * 16.0))
 		var s := _rng.randf_range(0.7, 2.15)
 		var col: Color = (base as Color).lerp(alt, _rng.randf() * 0.7).darkened(_rng.randf() * 0.22)
 		_blob(z, lx, Vector3(s * 1.6, s * _rng.randf_range(0.85, 1.45), s * 1.5), col, 0.0, true)
@@ -3410,7 +3438,7 @@ func _verge_plant_fringe(side_filter: float) -> void:
 			var s := _rng.randf_range(0.35, 0.7)
 			_blob(
 				gz,
-				side * (HALF_WIDTH + 2.6 + _rng.randf_range(0.0, 0.9)),
+				_mow_lateral(gz, side * (HALF_WIDTH + 2.6 + _rng.randf_range(0.0, 0.9))),
 				Vector3(s * 2.2, s * 0.7, s * 1.4),
 				(_pal["verge"] as Color).darkened(_rng.randf() * 0.3),
 				0.0,
@@ -4382,7 +4410,6 @@ func _build_spur_ribbon(
 	## the two roads share until the spur pulls away.
 	const GORE_OPEN := 1.6
 	var step := LENGTH / float(STEPS)
-	var shoulder: Color = _pal["shoulder"]
 	var stripe: Color = _pal["stripe"]
 	var inner_edge := 0 if _vp_side > 0.0 else 1  # which end of the span faces the road
 	for i in range(first_step, mini(first_step + step_count, STEPS)):
@@ -4426,6 +4453,8 @@ func _build_spur_ribbon(
 		# one facing the road waits for the gore to open: laid before that it runs
 		# up the carriageway's edge line as a two-metre band of gravel, which is
 		# most of what made the junction look like a repair rather than a road.
+		# The gravel is the made ground's own dark tone — the palette shoulder in
+		# mountain read as poured concrete and in country as a strip of sand.
 		for edge in [-1.0, 1.0]:
 			var facing_road: bool = (edge < 0.0) == (inner_edge == 0)
 			if facing_road and minf(gore_a, gore_b) < RoadPathGD.SPUR_SHOULDER + GORE_OPEN:
@@ -4434,10 +4463,11 @@ func _build_spur_ribbon(
 			var lb: float = span_b.x if edge < 0.0 else span_b.y
 			var oa: float = la + edge * RoadPathGD.SPUR_SHOULDER
 			var ob: float = lb + edge * RoadPathGD.SPUR_SHOULDER
+			var gravel: Color = _deck_color((za + zb) * 0.5, (la + lb) * 0.5 + edge * RoadPathGD.SPUR_SHOULDER * 0.5)
 			if edge < 0.0:
-				hard.add_quad(_p(za, oa, 0.0), _p(za, la, -PROUD), _p(zb, lb, -PROUD), _p(zb, ob, 0.0), shoulder)
+				hard.add_quad(_p(za, oa, 0.0), _p(za, la, -PROUD), _p(zb, lb, -PROUD), _p(zb, ob, 0.0), gravel)
 			else:
-				hard.add_quad(_p(za, la, -PROUD), _p(za, oa, 0.0), _p(zb, ob, 0.0), _p(zb, lb, -PROUD), shoulder)
+				hard.add_quad(_p(za, la, -PROUD), _p(za, oa, 0.0), _p(zb, ob, 0.0), _p(zb, lb, -PROUD), gravel)
 		var width_a := span_a.y - span_a.x
 		var width_b := span_b.y - span_b.x
 		if maxf(width_a, width_b) < 0.3:
@@ -4603,6 +4633,64 @@ func _build_gore_hatch(hard: LowPoly, z0: float) -> void:
 			],
 			-PROUD,
 			stripe
+		)
+
+
+func _build_gore_paving(road: LowPoly, z0: float) -> void:
+	## The gore is tarmac, not verge: a paved wedge filling the mouth between
+	## the carriageway's edge and the slip lane's, hatched over by the paint.
+	## Without it the junction read as a lane bolted onto pale dirt — the
+	## "sandy" strip every mouth used to grow — where the roads should still
+	## be one surface. It ends where the roads truly part; past that the
+	## separation is grass and the made ground steps back with it. Drawn on the
+	## road ribbon itself so it carries the same tarmac material, not the
+	## flatter paint surface the markings use.
+	const PROUD := 0.05
+	var surface: Color = _pal["road"]
+	var step := LENGTH / float(STEPS)
+	for i in STEPS:
+		var za := z0 + float(i) * step
+		var zb := za + step
+		var span_a := _spur_span(za)
+		var span_b := _spur_span(zb)
+		if span_a == Vector2.ZERO or span_b == Vector2.ZERO:
+			continue  # no lane yet — nothing to pave against
+		var gap_a: float = float(_path.spur_gap(za))
+		var gap_b: float = float(_path.spur_gap(zb))
+		if minf(gap_a, gap_b) < 0.12 or maxf(gap_a, gap_b) >= RoadPathGD.GORE_GRASSED:
+			continue
+		# Stop short of the lane's own surfaced shoulder where one is drawn:
+		# two skins at near the same height is a shimmer, not a seam.
+		var margin := 0.0
+		if minf(gap_a, gap_b) >= RoadPathGD.SPUR_SHOULDER + 1.6:
+			margin = RoadPathGD.SPUR_SHOULDER
+		var ia: float = _gore_outer(za) + 0.35 - margin
+		var ib: float = _gore_outer(zb) + 0.35 - margin
+		var edge := _gore_inner() - 0.45
+		# Wound the way the road ribbon winds: outward on the right, back inward
+		# on the left, so the quad faces up whichever side the overlook is on.
+		var l0 := _vp_side * edge
+		var l1 := _vp_side * ia
+		var l2 := _vp_side * edge
+		var l3 := _vp_side * ib
+		if _vp_side < 0.0:
+			l0 = _vp_side * ia
+			l1 = _vp_side * edge
+			l2 = _vp_side * ib
+			l3 = _vp_side * edge
+		road.add_quad_uv(
+			_p(za, l0, -PROUD),
+			_p(za, l1, -PROUD),
+			_p(zb, l3, -PROUD),
+			_p(zb, l2, -PROUD),
+			surface,
+			# Same road-space UV the carriageway uses: past the edge line the
+			# shader lays plain tarmac, so the wedge reads as the road's own
+			# surface rather than a lane of its own.
+			Vector2(l0, za),
+			Vector2(l1, za),
+			Vector2(l3, zb),
+			Vector2(l2, zb)
 		)
 
 
@@ -4836,6 +4924,16 @@ func _build_junction() -> void:
 		_deck_cube(nose, lateral, Vector3(0.18, 1.7, 0.18), Color("626a70"), yaw, 0.0)
 		_deck_cube(nose, lateral, Vector3(2.3, 1.05, 0.16), Color("f0b33b"), yaw, 1.7)
 		_deck_cube(nose, lateral, Vector3(2.3, 0.14, 0.18), Color("2b2f36"), yaw, 2.2)
+	# The same marker at the merge. The gore is symmetric, so the closing nose
+	# is the entry nose mirrored through the overlook — without a board there
+	# the rejoin read as the slip road quietly running out of road.
+	var merge := _vp_centre + (_vp_centre - nose)
+	if merge >= z0 and merge < z0 + LENGTH:
+		var lateral: float = _vp_side * (float(_path.spur_offset(merge)) - float(_path.spur_half_width(merge)) - 1.8)
+		var yaw := _spur_yaw(merge) * 0.5
+		_deck_cube(merge, lateral, Vector3(0.18, 1.7, 0.18), Color("626a70"), yaw, 0.0)
+		_deck_cube(merge, lateral, Vector3(2.3, 1.05, 0.16), Color("f0b33b"), yaw, 1.7)
+		_deck_cube(merge, lateral, Vector3(2.3, 0.14, 0.18), Color("2b2f36"), yaw, 2.2)
 
 
 func _spur_nose() -> float:
@@ -8819,8 +8917,11 @@ static func palette(t: int) -> Dictionary:
 				"shoulder": Color("8a7d63"),
 				"curb": Color("857a66"),
 				"verge": Color("7d8a3c"),
-				"ground": Color("b39a4a"),  # standing corn
-				"ground_alt": Color("5c6b34"),  # grazed pasture
+				# Two meadow greens, not corn against pasture. Golden standing corn
+				# under the warm grade covered whole valleys in what read as sand
+				# dunes, and the user wants English farmland, not a desert.
+				"ground": Color("6b8a3e"),  # hay meadow
+				"ground_alt": Color("4c6834"),  # grazed pasture
 				"rail": Color("b9ac8e"),
 				"prop_a": Color("425e32"),
 				"prop_b": Color("a74e32"),  # brick and rust

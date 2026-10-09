@@ -243,7 +243,7 @@ void fragment() {
 	// cream card no matter its value. A far range therefore has to arrive
 	// saturated — violet-blue deep enough that its red channel never reaches
 	// the warm part of the curve. The multiplier carries that hue.
-	vec3 air = mix(mix(mist_color, sky_color, 0.55), haze_color, 0.10) * vec3(0.60, 0.74, 1.08);
+	vec3 air = mix(mix(mist_color, sky_color, 0.55), haze_color, 0.10) * vec3(0.50, 0.66, 1.07);
 	// A linear haze weight is fine up to the third range, but at the fourth's
 	// 0.66 it erased almost half the mountain's own colour — which is where the
 	// biggest silhouette in the frame lived, and it arrived as a flat pale
@@ -256,8 +256,8 @@ void fragment() {
 	// returns as one tan mountain standing among blue ones. Even the closest
 	// range sits inside a kilometre and a half of air.
 	float haze_w = clamp(
-		0.10 + (1.0 - (1.0 - haze_v) * (1.0 - haze_v)) * 0.92 + weather_haze * (0.45 + haze_v),
-		0.0, 0.80
+		0.04 + (1.0 - (1.0 - haze_v) * (1.0 - haze_v)) * 0.62 + weather_haze * (0.45 + haze_v),
+		0.0, 0.62
 	);
 	// Air dims as well as veils: a kilometre of path eats the key light before
 	// it scatters it back, so a range never ends up brighter than its own foot.

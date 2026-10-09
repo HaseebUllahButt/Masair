@@ -35,7 +35,7 @@ const OVERLOOK := {
 	# Country: green feet under pale open brows — chalk downland goes bare over
 	# the treeline, and a firmer terminator keeps a rolling face from shading as
 	# one soft balloon.
-	4: {"treeline": 46.0, "woods": Color("5c7436"), "snow_bias": 1.0, "light_soft": 0.5, "slope_rock": 0.7},
+	4: {"treeline": 460.0, "woods": Color("5c7436"), "snow_bias": 1.0, "light_soft": 0.5, "slope_rock": 0.4},
 }
 
 static var _ring: ShaderMaterial

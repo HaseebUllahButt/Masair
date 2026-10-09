@@ -283,6 +283,12 @@ const SPUR_LANE_TAPER := 42.0
 const SPUR_WIDEN := 5.5
 const SPUR_MOUTH := 160.0  # fallback nose position when the gore never qualifies
 const SPUR_SHOULDER := 0.85  # surfaced shoulder beyond the rideable edge
+## A junction's gore is paved, not grassed: while the gap between the
+## carriageway and the slip lane is this narrow the made ground runs flat to
+## the carriageway's edge, so the hatched wedge between them lies on level
+## fill. Past it the separation between the roads turns to ordinary verge.
+const GORE_PAVED := 7.0
+const GORE_GRASSED := 12.0
 ## The parking platform at the top. The rideable apron is what the bike can
 ## reach; the terrace beyond it is made ground the bike cannot enter, which is
 ## where the wall, the benches and the viewer stand. Without that separation
@@ -648,6 +654,14 @@ func _uncached_spur_deck_blend(z: float, lateral: float) -> float:
 	var outward := out > 0.0
 	if outward:
 		edge += PLATFORM_TERRACE * platform_blend(z)
+	else:
+		# Inward is the gore, and a junction's gore is paved: while the mouth is
+		# still one piece of made ground the flat deck reaches the carriageway's
+		# edge, so the hatched wedge lies on level fill instead of sinking into
+		# the verge profile. As the roads really part the cover steps back and
+		# the separation becomes ordinary ground again.
+		var gap := spur_gap(z)
+		edge += gap * (1.0 - smoothstep(GORE_PAVED, GORE_GRASSED, gap))
 	out = absf(out)
 	if out <= edge:
 		return inside
