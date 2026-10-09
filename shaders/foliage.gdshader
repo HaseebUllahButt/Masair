@@ -30,7 +30,12 @@ uniform float leaf_glow_strength : hint_range(0.0, 2.0) = 0.80;
 uniform float crown_depth : hint_range(0.0, 1.0) = 0.42;
 // Per-tree value drift. A thousand instances of one hex colour is the mark of a
 // procedural forest; a few percent either way makes it a wood.
-uniform float instance_drift : hint_range(0.0, 0.3) = 0.09;
+uniform float instance_drift : hint_range(0.0, 0.3) = 0.12;
+// Per-tree hue walk, independent of the value drift: a wood is not one green
+// at different brightnesses — spruce goes blue-green, new leaf goes yellow,
+// and dry tips go warm. This is most of what keeps a planted stand from
+// reading as one plant pasted a hundred times.
+uniform float instance_hue : hint_range(0.0, 1.0) = 0.55;
 // Cool tint for sheltered canopy facets. The Environment supplies skylight,
 // so these surfaces follow day and night instead of emitting their own light.
 uniform vec3 canopy_sky : source_color = vec3(0.50, 0.62, 0.70);
@@ -55,6 +60,7 @@ uniform float gust_sheen : hint_range(0.0, 0.5) = 0.22;
 
 varying float crown_h;
 varying float drift;
+varying float drift_hue;
 varying float gust_now;
 
 void vertex() {
@@ -67,6 +73,9 @@ void vertex() {
 	float lever = max(VERTEX.y, 0.0);
 	crown_h = smoothstep(-0.35, 0.9, VERTEX.y);
 	drift = fract(sin(dot(floor(origin.xz * 0.5), vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+	// Second hash, different lattice: hue must not track value or the brighter
+	// trees would always be the warmer ones.
+	drift_hue = fract(sin(dot(floor(origin.xz * 0.5) + 19.19, vec2(26.651, 91.17))) * 24634.6345) - 0.5;
 
 	// Three motions. A slow per-plant rock, still phased from the origin so
 	// neighbours disagree; a lean downwind with the gust, which is what makes a
@@ -104,6 +113,15 @@ void fragment() {
 	// Drift warms as it brightens, the way sun-bleached leaves do.
 	albedo *= depth * (1.0 + drift * instance_drift * 2.0);
 	albedo *= mix(vec3(1.0), vec3(1.05, 1.02, 0.9), max(drift, 0.0) * 2.0 * instance_drift * 4.0);
+	// The value gradient alone shades a crown; this paints its temperature too —
+	// cool, shadowed skirts under a warm sunlit top. It is the same warm/cool
+	// split the key and fill put on everything else, pre-baked because foliage
+	// has no shadow map to find it in.
+	albedo *= mix(vec3(0.90, 0.97, 1.09), vec3(1.09, 1.05, 0.86), smoothstep(0.08, 0.85, crown_h));
+	// Same tree, different green. Cool spruce-blue one way, warm new-leaf the
+	// other — kept narrow enough that every tint still reads as foliage.
+	vec3 hue_walk = mix(vec3(0.94, 1.00, 1.10), vec3(1.12, 1.01, 0.83), drift_hue + 0.5);
+	albedo *= mix(vec3(1.0), hue_walk, instance_hue);
 	// The gust's silvering: a flash of paler leaf on the windward pass, keyed to
 	// the same field that is bending the plant. Weighted toward the crown top,
 	// where the leaves actually turn over.
