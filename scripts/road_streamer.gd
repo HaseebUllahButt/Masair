@@ -67,6 +67,9 @@ const PLATFORM_BUILD_HALF_SPAN: float = 160.0
 ## Keep this many strips of tarmac in the pipeline even while trees plant.
 ## Tighter than this and top speed watches the road appear.
 const RIBBON_PRIORITY_AHEAD := 10
+## Chunks this close to the bike also get instant tarmac when their sliced
+## build starts, so the emergency surface in `_sync` rarely has to fire.
+const SURFACE_FIRST_AHEAD := 3
 ## Spur divergence at which the unused path is culled. Below this, both the
 ## exit and the highway stay drawn so the junction remains readable.
 const CORRIDOR_COMMIT := RoadPathGD.CORRIDOR_COMMIT
@@ -660,11 +663,27 @@ func _spawn_incremental(index: int, generation: int) -> void:
 	chunk.name = "Chunk%d" % index
 	add_child(chunk)
 	_chunks[index] = chunk
+	# Chunks the bike can reach inside the build window get tarmac and paint
+	# now, not when the sliced build lands. `_configure` re-seeds the rng, so
+	# the incremental pass re-commits identical meshes over them — this turns
+	# the emergency patch in `_sync` into a last resort instead of the normal
+	# way the road appears while a catch-up build is mid-flight.
+	var current := int(floor(_player.track_z / CHUNK_LENGTH))
+	if index >= current and index <= current + SURFACE_FIRST_AHEAD:
+		var started := Time.get_ticks_usec()
+		chunk.call("setup_ribbon_fast", index, theme_for_chunk(index))
+		_apply_corridor_to(chunk)
+		_dbg_last = "surface#%d %.1f ms" % [index, float(Time.get_ticks_usec() - started) / 1000.0]
 	_dbg = "build#%d" % index
 	_building = chunk
 	await chunk.call("setup_ribbon_incremental", index, theme_for_chunk(index))
 	if generation != _stream_generation:
 		return
+	if is_instance_valid(chunk) and chunk.is_inside_tree():
+		# The fast pre-pass flags ribbon_ready=false; only the finished ribbon
+		# lets the dress queues start on the chunk.
+		chunk.set_meta("ribbon_ready", true)
+		_apply_corridor_to(chunk)
 	_build_in_flight = false
 	_building = null
 	_dbg = ""
