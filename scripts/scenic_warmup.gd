@@ -109,12 +109,12 @@ func _build_world(preview: SubViewport) -> void:
 	environment.tonemap_mode = Environment.TONE_MAPPER_ACES
 	environment.glow_enabled = true
 	environment.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
-	environment.glow_hdr_threshold = 1.25
+	environment.glow_hdr_threshold = 1.20
 	environment.glow_hdr_scale = 2.0
 	environment.glow_intensity = 0.55
 	environment.glow_strength = 1.0
 	for level in [1, 2, 3, 4, 5, 6, 7]:
-		environment.set("glow_levels/%d" % level, [0.0, 0.4, 1.0, 0.5, 0.15, 0.0, 0.0][level - 1])
+		environment.set("glow_levels/%d" % level, [0.0, 0.35, 1.0, 0.45, 0.16, 0.05, 0.0][level - 1])
 	environment.fog_enabled = true
 	environment.fog_mode = Environment.FOG_MODE_EXPONENTIAL
 	# The grade LUT itself is a texture uniform and costs no program, but the

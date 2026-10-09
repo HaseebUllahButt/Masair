@@ -2027,7 +2027,8 @@ var _corridor_frames: Dictionary = {}
 
 
 func _corridor_frame(z: float) -> Array:
-	## [centre, right, bands] for one station, cached on a 1 m grid. Every
+	## [centre, right, bands, edge heights] for one station, cached on a
+	## 1 m grid. Every
 	## pushed plant sweeps the same stretch of route, so the path queries —
 	## the expensive part of the corridor check — are paid once per station,
 	## not once per plant part per station.
@@ -2036,7 +2037,10 @@ func _corridor_frame(z: float) -> Array:
 	if cached != null:
 		return cached
 	var flat: Basis = _path.frame_flat_at(key)
-	var frame := [_path.center_at(key), flat.x, _road_bands(key)]
+	# The fourth slot lazily maps a band-edge lateral to that edge's road
+	# height. Every part near a station clamps to the same two edge lats, so
+	# the height query is paid once per edge rather than once per part.
+	var frame := [_path.center_at(key), flat.x, _road_bands(key), {}]
 	_corridor_frames[key] = frame
 	return frame
 
@@ -2083,7 +2087,9 @@ func _foliage_road_push(world_pos: Vector3, reach: float, bottom_y: float, sways
 	# The part is checked against the road across its own z-span plus the
 	# corridor's wander: on the climb the spur sweeps several metres sideways
 	# per station, so a part can reach the band well past its own footprint.
-	var span: float = need_max + 8.0
+	# need_max already contains the part's extent; the constant only has to
+	# cover how far a band edge can slide inside the sampled window.
+	var span: float = need_max + 4.0
 	# Cheap far-field exit: this is sampled per plant part, so most calls are a
 	# hundred metres from the nearest band and should cost two path queries. The
 	# slop covers the centreline's worst-case wander across the span
@@ -2103,6 +2109,11 @@ func _foliage_road_push(world_pos: Vector3, reach: float, bottom_y: float, sways
 	# reach the tarmac twenty metres along. Each station votes for the nearer
 	# escape; a part caught between the carriageway and the spur at a junction
 	# wants both at once, and there is no slide that fixes that — it is refused.
+	# Stations every four metres across the part's span, halving the old sweep:
+	# a part's lateral read in the station frame is smooth along z (a few
+	# centimetres of curve sag between samples at the sharpest bend), and the
+	# band edges slide at well under half a metre per station even at the gore.
+	# What a coarser grid can miss is priced into the wider push slack below.
 	var push_right := 0.0
 	var push_left := 0.0
 	var sz: float = world_pos.z - span
@@ -2113,25 +2124,36 @@ func _foliage_road_push(world_pos: Vector3, reach: float, bottom_y: float, sways
 			# A station that is clear under the largest possible margin stays
 			# clear under the real one — do not pay for a road-height sample
 			# until the lateral test says the part is actually near the edge.
-			if slat + need_max <= band.x or slat - need_max >= band.y:
+			# The edge can move between two stations four metres apart, so a part
+			# only counts as clear with that drift in hand.
+			if slat + need_max + 0.8 <= band.x or slat - need_max - 0.8 >= band.y:
 				continue
 			var edge_lat: float = clampf(slat, band.x, band.y)
-			var road_y: float = (_path.point_at(sz, edge_lat) as Vector3).y
+			var road_y: float
+			var edge_heights: Dictionary = station[3]
+			if edge_lat == band.x or edge_lat == band.y:
+				var cached_y: Variant = edge_heights.get(edge_lat)
+				if cached_y == null:
+					cached_y = (_path.point_at(sz, edge_lat) as Vector3).y
+					edge_heights[edge_lat] = cached_y
+				road_y = cached_y
+			else:
+				road_y = (_path.point_at(sz, edge_lat) as Vector3).y
 			if bottom_y >= road_y + FOLIAGE_OVERHANG_HEIGHT:
 				continue
 			var margin := FOLIAGE_LOW_CLEARANCE if bottom_y < road_y + FOLIAGE_LOW_HEIGHT else 0.0
 			var need: float = reach + sway + margin
-			if slat + need <= band.x or slat - need >= band.y:
+			if slat + need + 0.8 <= band.x or slat - need - 0.8 >= band.y:
 				continue
 			# Escape through the nearer edge of the band, with enough slack that
 			# the curve between two sampled stations cannot reopen the overlap —
 			# on the sweeping spur the band itself slides a metre per station,
 			# so the slack is wider than a sampling step can be wrong by.
 			if slat >= (band.x + band.y) * 0.5:
-				push_right = maxf(push_right, band.y + need + 0.9 - slat)
+				push_right = maxf(push_right, band.y + need + 2.0 - slat)
 			else:
-				push_left = minf(push_left, band.x - need - 0.9 - slat)
-		sz += 2.0
+				push_left = minf(push_left, band.x - need - 2.0 - slat)
+		sz += 4.0
 	if push_right > 0.0 and push_left < 0.0:
 		return INF
 	var push: float = push_right if push_right > 0.0 else push_left
@@ -2502,6 +2524,13 @@ func _tree(
 	## sampled on, which is how anything gets planted on an island: the terrain
 	## under one is the lake bed, several metres down. Forced still has to clear
 	## the corridor — the spur woodland is authored planting right beside tarmac.
+	##
+	## Placement is settled by a single cylinder bound first, and only when the
+	## corridor might still reach the tree does the exact path run: grown
+	## speculatively, every limb and crown measured against the corridor (bends
+	## included), the whole tree slid sideways until its foliage clears the
+	## road — or given up on. A bough over the tarmac puts leaves in the rider's
+	## face, which is the one thing a roadside tree may never do.
 	var foot: float = clampf(height * 0.1, 0.35, 1.1)
 	# A tree rooted well clear of every corridor band cannot swing a crown onto
 	# the road from there; the deep-scenery majority skips the grow-measure-shift
@@ -2516,6 +2545,26 @@ func _tree(
 		# measured, not roll a new shape whose crown lands somewhere unexpected.
 		var rng_state: int = _rng.state
 		var base: Vector3 = _ground_base_for_footprint(z, lateral, foot, foot) - _origin + Vector3(0.0, lift, 0.0)
+		var measure := true
+		if corridor_near:
+			# One sweep for the whole tree before one per part: a cylinder at the
+			# root, as wide as the widest crown this height can throw (the grow
+			# functions keep every limb tip and crown edge inside ~0.7·height of
+			# the trunk axis) and reaching below the ground line for the crown
+			# that dips under its own fork. Where the bound clears, no real part
+			# can reach the corridor; where it slides, the wider need carries the
+			# whole tree out past anything a part could ask for — either way the
+			# grow-measure-shift dance below is skipped. Only a bound caught
+			# between two bands (INF) falls through to the per-part verdict: a
+			# slimmer real tree can still fit where the cylinder cannot.
+			var bound := _foliage_road_push(
+				base + _origin, height * 0.75, base.y + _origin.y - height * 0.2, true
+			)
+			measure = is_inf(bound)
+			if bound != 0.0 and not is_inf(bound):
+				lateral += bound
+				_rng.state = rng_state
+				continue
 		var frame := Transform3D(Basis(Vector3.UP, _rng.randf_range(0.0, TAU)), base)
 		var marks := {
 			"trunks": _trunks.size(), "crowns": _crowns.size(), "conifers": _conifers.size()
@@ -2529,7 +2578,7 @@ func _tree(
 				_grow_pine(frame, height, color)
 			_:
 				_grow_broadleaf(frame, height, color)
-		if not corridor_near:
+		if not corridor_near or not measure:
 			return
 		var push := _planted_parts_road_push(marks)
 		if push == 0.0:
@@ -3084,8 +3133,15 @@ func _build_furniture_incremental() -> void:
 		bushes_left -= n
 		if not await _keep_streaming():
 			return
+	# The clearance sweeps made each verge stage dearer, so they each get their
+	# own frame the way they already do in `_dress_shoulder_incremental`: grass,
+	# hedge and fringe back to back is a ~17 ms lump in the middle of a ride.
 	_grass_verge()
+	if not await _keep_streaming():
+		return
 	_hedge_verge()
+	if not await _keep_streaming():
+		return
 	_verge_plant_fringe(-1.0)
 	if not await _keep_streaming():
 		return
@@ -5505,6 +5561,9 @@ const SCARP_ROWS := 12
 const SCARP_STEP := 2.0
 
 
+var _face_prof_cache: Dictionary = {}
+
+
 func _face_profile(z: float) -> Dictionary:
 	## Chord samples down the headland face, from just over the brow to a
 	## couple of metres under the waterline, with cumulative arc length. The
@@ -5512,6 +5571,14 @@ func _face_profile(z: float) -> Dictionary:
 	## near-vertical drop lateral spacing puts nine rows of ten on the drowned
 	## foot and leaves the whole cliff to a single quad, which is exactly the
 	## smooth slab this replaces.
+	##
+	## Cached per metre of z: the skin walks the nose in strips that share an
+	## edge, so every profile below used to be computed twice, and the turf
+	## dressing asks for the same brow line again.
+	var key := snappedf(z, 1.0)
+	var cached: Variant = _face_prof_cache.get(key)
+	if cached != null:
+		return cached
 	var crest := float(_path.headland_crest(z))
 	var limit: float = minf(float(_path.viewpoint_near_shore(z)) + 30.0, VIEW_REFINE_OUTER - 4.0)
 	var top_y := _face_chord_point(z, crest - 5.0).y
@@ -5535,8 +5602,11 @@ func _face_profile(z: float) -> Dictionary:
 			break
 		out += SCARP_STEP
 	if pts.size() < 4 or acc[acc.size() - 1] < 8.0:
+		_face_prof_cache[key] = {}
 		return {}
-	return {"pts": pts, "outs": outs, "acc": acc, "total": acc[acc.size() - 1], "brow": brow}
+	var prof := {"pts": pts, "outs": outs, "acc": acc, "total": acc[acc.size() - 1], "brow": brow}
+	_face_prof_cache[key] = prof
+	return prof
 
 
 func _profile_arc(prof: Dictionary, f: float) -> int:
