@@ -94,8 +94,8 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	## distance read as white-out instead of as depth — sunlit faces blew out
 	## to sand-coloured dunes against a pale sky. Darker and bluer at both
 	## ends keeps a range a mountain at any hour.
-	mat.set_shader_parameter("foot_color", fog.darkened(0.40).lerp(Color("2a3a52"), 0.56))
-	var crest: Color = fog.darkened(0.16).lerp(Color("4a6488"), 0.60)
+	mat.set_shader_parameter("foot_color", fog.darkened(0.26).lerp(Color("3c5266"), 0.48))
+	var crest: Color = fog.darkened(0.04).lerp(Color("6a8aa8"), 0.52)
 	mat.set_shader_parameter("crest_color", crest)
 	## What an up-facing plane collects from the dusk dome. This is the term
 	## that keeps the backlit face off zero without smearing sunset over it.

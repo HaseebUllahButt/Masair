@@ -225,13 +225,13 @@ void fragment() {
 	// near the horizon colour's own lightness, so the heaviest haze band — the
 	// tallest, farthest range — arrived as a flat pale-grey sheet instead of a
 	// blue mountain.
-	vec3 air = mix(mix(mist_color, sky_color, 0.62), haze_color, 0.12) * vec3(0.58, 0.66, 0.78);
+	vec3 air = mix(mix(mist_color, sky_color, 0.55), haze_color, 0.14) * vec3(0.84, 0.90, 0.98);
 	// A linear haze weight is fine up to the third range, but at the fourth's
 	// 0.66 it erased almost half the mountain's own colour — which is where the
 	// biggest silhouette in the frame lived, and it arrived as a flat pale
 	// sheet. Compressing the top of the ladder keeps the far range a step
 	// bluer than the one in front without whitewashing it.
-	col = mix(col, air, clamp(haze_v * 0.68 * (1.0 - 0.40 * haze_v) + weather_haze * (0.45 + haze_v), 0.0, 0.80));
+	col = mix(col, air, clamp(haze_v * 0.84 * (1.0 - 0.32 * haze_v) + weather_haze * (0.45 + haze_v), 0.0, 0.82));
 	// Soften the ring into the air at the extreme edges of a wide lens, but
 	// keep the mountains when the rider looks aside.
 	vec3 cam = INV_VIEW_MATRIX[3].xyz;
