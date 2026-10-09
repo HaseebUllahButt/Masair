@@ -102,13 +102,16 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	## and only the air between eye and ridge making far ranges paler and
 	## bluer. Night walks both toward the fog so the skyline stays moonlit.
 	var daylight_r := clampf(fog.get_luminance() * 2.2, 0.15, 1.0)
-	mat.set_shader_parameter("foot_color", Color("5c6a50").lerp(fog.darkened(0.2), 0.6 * (1.0 - daylight_r)))
+	## Facing a low sun, a6a49d crest bleached to cream under the warm grade;
+	## one step further went navy. Slate crest over green-grey scrub sits
+	## between, each a hair darker than the air in front of it.
+	mat.set_shader_parameter("foot_color", Color("4a5a48").lerp(fog.darkened(0.2), 0.5 * (1.0 - daylight_r)))
 	## The crest is what a tall face is mostly made of, so this is effectively
 	## the mid and far ranges' surface colour. Pale enough to light up cream
 	## under the grade's warm highlights once, it now sits a shade deeper and
 	## bluer — still clearly above the foot, but a slate the sun can put a lit
 	## side on without bleaching.
-	var crest: Color = Color("a6a49d").lerp(fog.darkened(0.1), 0.6 * (1.0 - daylight_r))
+	var crest: Color = Color("6b7683").lerp(fog.darkened(0.1), 0.5 * (1.0 - daylight_r))
 	mat.set_shader_parameter("crest_color", crest)
 	## What an up-facing plane collects from the dusk dome. This is the term
 	## that keeps the backlit face off zero without smearing sunset over it.

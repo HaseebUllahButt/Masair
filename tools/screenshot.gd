@@ -488,8 +488,10 @@ class Capture:
 	func _shoot() -> void:
 		if hide != "":
 			for node_name in hide.split(","):
-				var node := get_tree().root.find_child(node_name.strip_edges(), true, false)
-				if node is Node3D:
+				# Chunk meshes repeat the same node name once per chunk —
+				# find_child hides one copy and leaves the rest, which reads as
+				# "not the culprit". Hide every match.
+				for node in get_tree().root.find_children(node_name.strip_edges(), "Node3D", true, false):
 					(node as Node3D).visible = false
 		# Two frames: the one where the new seat yaw lands in _update_seat, and
 		# the one that is actually drawn. A single post_draw can race the rig.
