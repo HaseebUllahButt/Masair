@@ -1196,12 +1196,17 @@ func _spur_tree(species: int, z: float, lateral: float, height: float, color: Co
 	## Woodland row planting with a hole-fill retry. `_tree` refuses a site that
 	## cannot be slid clear of the corridor — on the spur that used to leave a
 	## bare station every time a plant landed near a band edge. `escape` is the
-	## signed direction that walks the retry away from the corridor: +1 of the
-	## row's own side on the open flank, 0 between the gore's two bands, where
-	## no sideways step can rescue a straddle and the open ground should stay
-	## open anyway.
+	## signed direction that walks the retry away from the corridor, in the row's
+	## own lateral direction wherever open ground continues that way; 0 only where
+	## the gore between the two bands is genuinely tight, so a straddle can never
+	## be walked onto either carriageway.
 	var try_lateral := lateral
 	for _retry in 3:
+		# Walking outward must not walk into the lake: the view-side face is a
+		# fall to the water, and a crown planted below the waterline stands in
+		# the lake like litter.
+		if _on_lake and _path.height_at(z) - _path.terrain_drop(try_lateral, z) < _vp_water_y + 0.8:
+			return
 		var before: int = _trunks.size() + _crowns.size() + _conifers.size()
 		_tree(species, z, try_lateral, height, color, true)
 		if _trunks.size() + _crowns.size() + _conifers.size() > before:
@@ -1235,31 +1240,37 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5, phase:
 		# clear wherever the two roads still run cheek by jowl.
 		if half < 1.6:
 			continue
-		var reveal: float = smoothstep(
-			RoadPathGD.PLATFORM_HALF_LENGTH + 90.0,
-			RoadPathGD.PLATFORM_HALF_LENGTH + 260.0,
-			distance
-		)
 		var towards_summit: float = 1.0 - clampf((distance - 80.0) / 1100.0, 0.0, 1.0)
+		# Once the gore is wide, an inner-side reject has a whole hillside to
+		# step into; near the mouth it does not, and the wedge stays open.
+		var wide_gore: bool = float(_path.spur_gap(z)) > 28.0
 		for road_side in [-1.0, 1.0]:
-			# The reveal suppresses only the view side — the trees that would
-			# stand between the arriving rider and the first sight of the lake.
-			# The inland row faces away from the terrace and keeps the lane
-			# lined all the way to the parking apron.
 			var view_side: bool = road_side == _vp_side
-			if view_side and reveal < 0.08:
-				continue
-			var side_reveal := reveal if view_side else 1.0
-			# The gore between the two bands must stay open — a rejected inner
-			# planting has nowhere to step but onto a carriageway. The outer
-			# flank always has somewhere further out to try.
-			var escape: float = road_side if view_side else 0.0
+			# The one gap the lane keeps is the seated corridor itself: a hard
+			# window around the terrace easing into occasional framed openings,
+			# then the full row resumes well before the mouth of the climb. The
+			# old reveal suppressed the view side for a quarter kilometre — the
+			# bare upper climb — and the hillside between the roads is no
+			# sightline at all.
+			var corridor := 0.0
+			if view_side and _vp_side != 0.0:
+				corridor = 1.0 - smoothstep(
+					RoadPathGD.PLATFORM_HALF_LENGTH + RoadPathGD.PLATFORM_TERRACE + 8.0,
+					RoadPathGD.PLATFORM_HALF_LENGTH + RoadPathGD.PLATFORM_TERRACE + 92.0,
+					distance
+				)
+			var crown_scale := lerpf(1.0, 0.60, corridor)
+			# A rejected plant steps further out in the row's own direction —
+			# away from the lane — wherever the ground continues that way.
+			var escape: float = road_side if (view_side or wide_gore) else 0.0
 			# Near row on every station, the back row on most. The outer row
 			# carries more of the stand now that crowns may not lean over the
 			# spur — a tree slid back to clear the corridor still wants company
 			# beside it, not a gap.
 			for row in range(1 if phase == 2 else 0, 2):
 				if row == 1 and _rng.randf() > 0.6:
+					continue
+				if view_side and corridor > 0.0 and _rng.randf() < corridor:
 					continue
 				var jitter_z: float = z + _rng.randf_range(-2.0, 2.0)
 				# Sample the spur at the plant point, not the station. The apron
@@ -1273,7 +1284,7 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5, phase:
 					continue
 				match _vp_theme:
 					Env.MOUNTAIN:
-						var height: float = _rng.randf_range(8.0, 14.0) * lerpf(0.70, 1.0, side_reveal)
+						var height: float = _rng.randf_range(8.0, 14.0) * crown_scale
 						var species: int = Flora.CONIFER if _rng.randf() < 0.78 + towards_summit * 0.15 else Flora.PINE
 						_spur_tree(species, jitter_z, lateral, height, Color("243830").lerp(Color("4a5640"), _rng.randf() * 0.35), escape)
 						if _rng.randf() < 0.4:
@@ -1288,7 +1299,7 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5, phase:
 								true
 							)
 					_:
-						var height: float = _rng.randf_range(11.0, 17.5) * lerpf(0.70, 1.0, side_reveal)
+						var height: float = _rng.randf_range(12.0, 19.0) * crown_scale
 						if _vp_theme == Env.FOREST:
 							height *= 1.08
 						var tint: Color = Color("2a4634").lerp(Color("4a6840"), _rng.randf() * 0.42)
@@ -1303,8 +1314,54 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5, phase:
 							# broadleaf shape the farmland verges grow.
 							species = Flora.BROADLEAF if _rng.randf() < 0.78 else Flora.BIRCH
 						_spur_tree(species, jitter_z, lateral, height, tint.darkened(float(row) * 0.14), escape)
-			if phase == 1:
-				continue
+				# A companion beside the near row keeps the wall continuous —
+				# the sweep walks every fourth or fifth tree out of line and
+				# single spacing made each walked tree a visible hole.
+				if row == 0 and corridor < 0.5 and _rng.randf() < 0.5:
+					var pair_z: float = jitter_z + _rng.randf_range(2.2, 3.6)
+					var pair_half: float = float(_path.spur_half_width(pair_z))
+					var pair_centre: float = _vp_side * float(_path.spur_offset(pair_z))
+					var pair_lateral: float = pair_centre + road_side * (
+						pair_half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(2.2, 4.4)
+					)
+					if not _on_tarmac(pair_z, pair_lateral, 1.4):
+						var pair_height: float = _rng.randf_range(9.0, 15.0) * crown_scale
+						var pair_species: int = Flora.BROADLEAF
+						if _vp_theme == Env.MOUNTAIN:
+							pair_species = Flora.CONIFER
+						elif _vp_theme == Env.FOREST:
+							pair_species = Flora.CONIFER if _rng.randf() < 0.5 else Flora.BIRCH
+						elif _rng.randf() < 0.6:
+							pair_species = Flora.BIRCH
+						_spur_tree(
+							pair_species, pair_z, pair_lateral, pair_height,
+							Color("2e4c36").lerp(Color("52704a"), _rng.randf() * 0.4),
+							escape
+						)
+			# Turf and tussock right at the lane edge, every side and every
+			# phase — the narrow green verge the painted embankment used to
+			# leave as a bare apron. It stays low and out of the foliage sweep,
+			# so it survives where crowns may not lean, and inside the seated
+			# corridor it only ever laps the terrace lip.
+			for _t in 2:
+				var turf_z: float = z + _rng.randf_range(-3.2, 3.2)
+				var turf_half: float = float(_path.spur_half_width(turf_z))
+				var turf_centre: float = _vp_side * float(_path.spur_offset(turf_z))
+				var turf_lateral: float = turf_centre + road_side * (
+					turf_half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(1.4, 3.8)
+				)
+				if _on_tarmac(turf_z, turf_lateral, 1.0):
+					continue
+				var turf_s := _rng.randf_range(0.9, 1.7)
+				_blob(
+					turf_z,
+					turf_lateral,
+					Vector3(turf_s * 1.9, turf_s * _rng.randf_range(0.45, 0.7), turf_s * 1.5),
+					(_pal["verge"] as Color).lerp(_pal["prop_a"] as Color, _rng.randf() * 0.5).darkened(_rng.randf() * 0.2),
+					0.0,
+					false,
+					true
+				)
 			if _vp_theme == Env.COUNTRY:
 				# The country climb is a hedged lane, not a plantation: a low
 				# hawthorn-dark run right at the verge carries the hedgerow the
@@ -1327,7 +1384,34 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5, phase:
 							true,
 							true
 						)
-			if _rng.randf() > 0.72:
+			if phase == 1:
+				continue
+			# The hillside between the carriageway and the spur is deliberately
+			# unreserved ground — trees on it are what the climb is ridden
+			# through, and the inward glance should meet a wood, not a meadow.
+			if not view_side and wide_gore and _rng.randf() < 0.6:
+				var mid_z: float = z + _rng.randf_range(-3.0, 3.0)
+				var mid_centre: float = _vp_side * float(_path.spur_offset(mid_z))
+				var mid_half: float = float(_path.spur_half_width(mid_z))
+				var gap: float = float(_path.spur_gap(mid_z))
+				var mid_reach: float = _rng.randf_range(15.0, maxf(minf(48.0, gap - 14.0), 15.5))
+				var mid_lateral: float = mid_centre + road_side * (mid_half + mid_reach)
+				var mid_species: int = Flora.BROADLEAF
+				if _vp_theme == Env.MOUNTAIN:
+					mid_species = Flora.CONIFER
+				elif _vp_theme == Env.FOREST and _rng.randf() < 0.6:
+					mid_species = Flora.CONIFER if _rng.randf() < 0.55 else Flora.BIRCH
+				elif _rng.randf() < 0.22:
+					mid_species = Flora.BIRCH
+				_spur_tree(
+					mid_species,
+					mid_z,
+					mid_lateral,
+					_rng.randf_range(12.0, 19.0),
+					Color("2a4634").lerp(Color("4a6840"), _rng.randf() * 0.42).darkened(0.06),
+					escape
+				)
+			if _rng.randf() > 0.5:
 				continue
 			var under_z: float = z + _rng.randf_range(-2.6, 2.6)
 			var under_half: float = float(_path.spur_half_width(under_z))
@@ -1342,7 +1426,7 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5, phase:
 				under_species,
 				under_z,
 				under_lateral,
-				_rng.randf_range(4.6, 7.4) * side_reveal,
+				_rng.randf_range(4.6, 7.4) * crown_scale,
 				Color("4e6844").darkened(_rng.randf() * 0.2),
 				escape
 			)
@@ -1362,6 +1446,26 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5, phase:
 					true,
 					true
 				)
+			if _vp_theme == Env.FOREST and _rng.randf() < 0.55:
+				# Ferns and moss-bright clumps at the dripline — the undergrowth
+				# layer a pine lane is missing without them.
+				var fern_z: float = z + _rng.randf_range(-3.0, 3.0)
+				var fern_half: float = float(_path.spur_half_width(fern_z))
+				var fern_centre: float = _vp_side * float(_path.spur_offset(fern_z))
+				var fern_lateral: float = fern_centre + road_side * (
+					fern_half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(1.8, 3.8)
+				)
+				if not _on_tarmac(fern_z, fern_lateral, 1.0):
+					var fern_s := _rng.randf_range(0.5, 1.0)
+					_blob(
+						fern_z,
+						fern_lateral,
+						Vector3(fern_s * 1.6, fern_s * 0.8, fern_s * 1.4),
+						(_pal["prop_a"] as Color).lerp(_pal["verge"], 0.25 + _rng.randf() * 0.4),
+						0.0,
+						true,
+						true
+					)
 			if _rng.randf() < 0.45:
 				var rock_z: float = z + _rng.randf_range(-2.0, 2.0)
 				var rock_half: float = float(_path.spur_half_width(rock_z))
@@ -1501,10 +1605,12 @@ func _embankment_mix(lateral: float, z: float) -> float:
 	var centre: float = _vp_side * float(_path.spur_offset(z))
 	var half: float = float(_path.spur_half_width(z))
 	var out: float = absf(lateral) - absf(centre) - half
-	if out < 1.0 or out > 28.0:
+	if out < 1.0 or out > 18.0:
 		return 0.0
-	# Strongest on the steep outer face, fading into ordinary ground.
-	var band: float = smoothstep(1.2, 4.0, out) * (1.0 - smoothstep(16.0, 28.0, out))
+	# Strongest on the steep outer face, fading into ordinary ground — and kept
+	# narrow: the climb is a grassed lane with a cut lip, not a twenty-metre
+	# apron of bare bank.
+	var band: float = smoothstep(1.0, 3.2, out) * (1.0 - smoothstep(9.0, 18.0, out))
 	var grain: float = 0.45 + 0.55 * sin(z * 0.07 + out * 0.11) * sin(z * 0.023 - out * 0.05)
 	return band * grain
 
@@ -1517,9 +1623,12 @@ func _embankment_color(lateral: float, z: float) -> Color:
 		Env.MOUNTAIN:
 			return Color("6e6860").lerp(Color("4a5248"), grain * 0.5)
 		Env.FOREST:
-			return Color("5a5848").lerp(Color("3e4a38"), grain * 0.4)
+			# Mossed-over cut, not bare loam — the climb's bank was the wide tan
+			# apron the lane was supposed to be lush instead of.
+			return Color("4b5738").lerp(Color("33402c"), grain * 0.45)
 		Env.COUNTRY:
-			return Color("9a7e4c").lerp(Color("6a6840"), grain * 0.45)
+			# Turf over the clay lip — farmland embankments green over.
+			return Color("5d693a").lerp(Color("414d2c"), grain * 0.45)
 	return (_pal["shoulder"] as Color).darkened(0.1 + grain * 0.08)
 
 
