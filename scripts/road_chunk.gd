@@ -1530,7 +1530,9 @@ func _face_color(z: float = 0.0, lateral: float = 0.0) -> Color:
 	# samples — but it can draw a jump between two adjacent quads, and a row of
 	# jumps is what reads as a stratum. The foot cools as it darkens: bed shade
 	# is skylight, not less sun, and only a hue shift survives the warm key.
-	var shade := base.darkened(0.52).lerp(Color("454b52"), 0.35)
+	# 0.52 crushed the bed feet to the same black the scarp used to render in
+	# shade — a hard 0.40 keeps the value step without losing the surface.
+	var shade := base.darkened(0.40).lerp(Color("454b52"), 0.35)
 	var col := base.darkened(0.05).lerp(shade, frac)
 	col = col.lerp(base.darkened(0.28), weather * 0.4)
 	return col.lightened(0.08 * (1.0 - t))
@@ -5703,7 +5705,11 @@ func _build_view_frame_specs(layout: Array, ranked: Array, first: int, count: in
 		# and past the near shore it would be standing in the lake. The check
 		# runs on the rendered chord — near the toe it sits metres off the
 		# analytic surface, which is where the drowned saplings came from.
-		if _height_above_water(z, absf(lateral)) < 3.0 or not _face_above_water(z, absf(lateral), 1.5):
+		if (
+			_height_above_water(z, absf(lateral)) < 3.0
+			or not _face_above_water(z, absf(lateral), 1.5)
+			or not _face_dressing_ok(z)
+		):
 			continue
 		# Taller toward the edge of the lens. Two trees at the same height on
 		# opposite sides of a wide frame are a pair of fence posts; graded, they
@@ -5836,7 +5842,11 @@ func _dress_nose_tip_incremental() -> void:
 				RoadPathGD.LAKE_SPAN * 0.7, RoadPathGD.LAKE_SPAN * 1.45
 			)
 			var out: float = float(_path.headland_crest(z)) - _rng.randf_range(-6.0, 30.0)
-			if _height_above_water(z, out) < 2.5 or not _face_above_water(z, out, 0.8):
+			if (
+				_height_above_water(z, out) < 2.5
+				or not _face_above_water(z, out, 0.8)
+				or not _face_dressing_ok(z)
+			):
 				continue
 			if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.1:
 				continue
@@ -5873,7 +5883,11 @@ func _dress_nose_tip() -> void:
 				RoadPathGD.LAKE_SPAN * 0.7, RoadPathGD.LAKE_SPAN * 1.45
 			)
 			var out: float = float(_path.headland_crest(z)) - _rng.randf_range(-6.0, 30.0)
-			if _height_above_water(z, out) < 2.5 or not _face_above_water(z, out, 0.8):
+			if (
+				_height_above_water(z, out) < 2.5
+				or not _face_above_water(z, out, 0.8)
+				or not _face_dressing_ok(z)
+			):
 				continue
 			if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.1:
 				continue
@@ -5917,7 +5931,11 @@ func _dress_vista_forest() -> void:
 	for _i in 12:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.headland_crest(z)) + 8.0 + _rng.randf_range(0.0, 40.0)
-		if _height_above_water(z, out) < 10.0 or not _face_above_water(z, out, 2.0):
+		if (
+			_height_above_water(z, out) < 10.0
+			or not _face_above_water(z, out, 2.0)
+			or not _face_dressing_ok(z)
+		):
 			continue
 		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.1:
 			continue
@@ -5936,7 +5954,7 @@ func _dress_vista_forest() -> void:
 		# Margin -0.5, not the old -1.5: a rock whose base sits a metre and a
 		# half under the waterline floats brown in the shallows — the dark eggs
 		# offshore in the day frames were these.
-		if not _face_above_water(z, out, -0.5):
+		if not _face_above_water(z, out, -0.5) or not _face_dressing_ok(z):
 			continue
 		_vista_rock(
 			z, _vp_side * out, _rng.randf_range(2.4, 5.5),
@@ -5969,7 +5987,11 @@ func _dress_vista_mountain() -> void:
 		var out: float = float(_path.headland_crest(z)) + 4.0 + _rng.randf_range(0.0, 80.0)
 		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.12:
 			continue
-		if _height_above_water(z, out) < 3.0 or not _face_above_water(z, out, 1.2):
+		if (
+			_height_above_water(z, out) < 3.0
+			or not _face_above_water(z, out, 1.2)
+			or not _face_dressing_ok(z)
+		):
 			continue
 		_vista_rock(
 			z, _vp_side * out, _rng.randf_range(2.4, 8.5),
@@ -5978,7 +6000,11 @@ func _dress_vista_mountain() -> void:
 	for _i in 14:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.headland_crest(z)) + 8.0 + _rng.randf_range(0.0, 64.0)
-		if _height_above_water(z, out) < 4.0 or not _face_above_water(z, out, 1.5):
+		if (
+			_height_above_water(z, out) < 4.0
+			or not _face_above_water(z, out, 1.5)
+			or not _face_dressing_ok(z)
+		):
 			continue
 		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.1:
 			continue
@@ -5995,7 +6021,11 @@ func _dress_vista_mountain() -> void:
 	for _i in 8:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.headland_crest(z)) + 6.0 + _rng.randf_range(0.0, 40.0)
-		if _height_above_water(z, out) < 8.0 or not _face_above_water(z, out, 2.5):
+		if (
+			_height_above_water(z, out) < 8.0
+			or not _face_above_water(z, out, 2.5)
+			or not _face_dressing_ok(z)
+		):
 			continue
 		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.1:
 			continue
@@ -6037,7 +6067,11 @@ func _dress_vista_country() -> void:
 		var out: float = float(_path.headland_crest(z)) + 5.0 + _rng.randf_range(0.0, 55.0)
 		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.12:
 			continue
-		if _height_above_water(z, out) < 3.0 or not _face_above_water(z, out, 1.5):
+		if (
+			_height_above_water(z, out) < 3.0
+			or not _face_above_water(z, out, 1.5)
+			or not _face_dressing_ok(z)
+		):
 			continue
 		_vista_rock(
 			z, _vp_side * out, _rng.randf_range(2.2, 5.8),
@@ -6046,7 +6080,11 @@ func _dress_vista_country() -> void:
 	for _i in 18:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.headland_crest(z)) + 10.0 + _rng.randf_range(0.0, 48.0)
-		if _height_above_water(z, out) < 8.0 or not _face_above_water(z, out, 2.0):
+		if (
+			_height_above_water(z, out) < 8.0
+			or not _face_above_water(z, out, 2.0)
+			or not _face_dressing_ok(z)
+		):
 			continue
 		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.1:
 			continue
@@ -6153,19 +6191,19 @@ func _face_scarp_palette() -> Dictionary:
 		Env.MOUNTAIN:
 			return {
 				"lip": Color("5a6448"), "soil": Color("554f44"),
-				"rock_hi": Color("a4acb4"), "rock_lo": Color("4e565e"),
-				"seam": Color("363d44"), "scree": Color("6e6a5e"),
+				"rock_hi": Color("a4acb4"), "rock_lo": Color("5c646c"),
+				"seam": Color("454c54"), "scree": Color("6e6a5e"),
 			}
 		Env.FOREST:
 			return {
 				"lip": Color("45543e"), "soil": Color("57503f"),
-				"rock_hi": Color("96938a"), "rock_lo": Color("524f49"),
-				"seam": Color("3a3833"), "scree": Color("6e685c"),
+				"rock_hi": Color("96938a"), "rock_lo": Color("5e5a52"),
+				"seam": Color("4a4640"), "scree": Color("6e685c"),
 			}
 	return {
 		"lip": Color("6b754f"), "soil": Color("6f6350"),
-		"rock_hi": Color("c9c2ae"), "rock_lo": Color("756e5e"),
-		"seam": Color("4e4a42"), "scree": Color("8e8672"),
+		"rock_hi": Color("c9c2ae"), "rock_lo": Color("8a8171"),
+		"seam": Color("5f594e"), "scree": Color("8e8672"),
 	}
 
 
@@ -6221,6 +6259,41 @@ func _face_profile(z: float) -> Dictionary:
 	return prof
 
 
+func _face_live_arc(prof: Dictionary) -> float:
+	## How far down the profile the ground is still genuinely falling.
+	##
+	## A face is worth its skin and its ledges only while it drops. Out on the
+	## drowned tail the brow can stand a couple of metres proud while the chord
+	## under it runs nearly flat for tens of metres, and the skin laid over
+	## that plain is the floating slate sheet the waterline shots kept finding.
+	## "Still falling" is a *local* test — a shallow apron that loses ten
+	## metres over a hundred and fifty still has metres of fall below almost
+	## everywhere on it, so measuring what is left to drop ends the arc at the
+	## waterline and keeps the sheet. The live end is the last step that falls
+	## like a face; everything after it is apron, whatever the brow said.
+	var pts: PackedVector3Array = prof["pts"]
+	var acc: PackedFloat32Array = prof["acc"]
+	for k in range(pts.size() - 1, 0, -1):
+		var seg: float = maxf(acc[k] - acc[k - 1], 0.01)
+		if (pts[k - 1].y - pts[k].y) / seg >= 0.28:
+			return acc[k]
+	return 0.0
+
+
+func _face_is_face(prof: Dictionary) -> bool:
+	## The strip test for face dressing: several metres of live fall, or what
+	## the profile describes is marsh apron with a proud brow, not a cliff.
+	return _face_live_arc(prof) >= 5.0
+
+
+func _face_dressing_ok(z: float) -> bool:
+	## Whether face dressing — ledges, scree, talus, the framing stand — is
+	## wanted at this z. Past the fall line the ribbon chord bridges metres
+	## over drowned apron and everything lifted onto it stands on air.
+	var prof := _face_profile(z)
+	return not prof.is_empty() and _face_is_face(prof)
+
+
 func _profile_arc(prof: Dictionary, f: float) -> int:
 	## Index of the profile segment holding arc fraction f.
 	var acc: PackedFloat32Array = prof["acc"]
@@ -6241,6 +6314,19 @@ func _profile_out(prof: Dictionary, f: float) -> float:
 	return lerpf(outs[k - 1], outs[k], clampf((f * float(prof["total"]) - acc[k - 1]) / seg, 0.0, 1.0))
 
 
+func _face_slope_at(prof: Dictionary, f: float) -> float:
+	## Local chord slope at arc fraction f — drop per metre of arc. This is the
+	## test that actually separates face from apron: the drowned tail can carry
+	## a hundred and fifty metres of chord that still technically *falls*, just
+	## a hand's breadth over the water, and both the live arc and the waterline
+	## guards wave it through. A slope under ~0.2 is a shoal, not a scarp.
+	var pts: PackedVector3Array = prof["pts"]
+	var acc: PackedFloat32Array = prof["acc"]
+	var k := _profile_arc(prof, clampf(f, 0.0, 1.0))
+	var seg: float = maxf(acc[k] - acc[k - 1], 0.01)
+	return (pts[k - 1].y - pts[k].y) / seg
+
+
 func _scarp_relief(z: float, i: int, f: float) -> float:
 	## How far the skin stands off the ribbon chord at this vertex. Stepped per
 	## bed — two rows share a stratum, the next stratum juts or sinks — which is
@@ -6257,9 +6343,11 @@ func _scarp_relief(z: float, i: int, f: float) -> float:
 	return (0.22 + edge * (bed * 1.35 + under + jit)) * crag
 
 
-func _scarp_point(prof: Dictionary, z: float, i: int) -> Vector3:
+func _scarp_point(prof: Dictionary, z: float, i: int) -> Vector4:
 	## One skin vertex: the chord point i/ROWS of the way down the face profile,
-	## pushed out along the local face normal by the stratum step.
+	## pushed out along the local face normal by the stratum step. The w
+	## component is the chord's own world height — the quad pass needs to know
+	## where the *ground* sits, not where the skin stands off it.
 	var f := float(i) / float(SCARP_ROWS)
 	var pts: PackedVector3Array = prof["pts"]
 	var acc: PackedFloat32Array = prof["acc"]
@@ -6276,7 +6364,17 @@ func _scarp_point(prof: Dictionary, z: float, i: int) -> Vector3:
 		n = n.normalized()
 	if n.dot(flat.x * _vp_side) < 0.0:
 		n = -n
-	return p + n * _scarp_relief(z, i, f)
+	# The stand-off only means something where the chord is actually falling.
+	# On a drowned flat the profile normal points at the sky and the same
+	# metre of relief lifts the skin off the ground as a floating wafer — the
+	# slate sheets on the lake. Scaled by the local slope it fades out on the
+	# flats and the skin beds into the apron instead of hovering over it.
+	var slope := (pts[k - 1].y - pts[k].y) / seg
+	# A small floor keeps the skin off the ribbon it is welded to — a quad
+	# drawn in the exact chord plane z-fights it — while still reading flat.
+	var relief := maxf(_scarp_relief(z, i, f) * smoothstep(0.30, 0.62, slope), 0.08)
+	var q := p + n * relief
+	return Vector4(q.x, q.y, q.z, p.y + _origin.y)
 
 
 func _scarp_color(pal: Dictionary, z: float, i: int, f: float) -> Color:
@@ -6292,7 +6390,11 @@ func _scarp_color(pal: Dictionary, z: float, i: int, f: float) -> Color:
 	# the sky, not the sun. Same-hue darkening alone compresses to nothing under
 	# the warm key, which is why the beds used to read as one gold slope.
 	var seam_cool: Color = (pal["seam"] as Color).lerp(Color("3c4148"), 0.4)
-	rock = rock.lerp(seam_cool, 0.68 * float(i & 1))
+	# Under the warm key the far side of the nose gets only sky and fill, and
+	# at the old strength the seam rows multiplied down to the same black as
+	# the beds between them — one flat plane. Half keeps the bedding without
+	# giving back the slab.
+	rock = rock.lerp(seam_cool, 0.45 * float(i & 1))
 	var col: Color = (pal["lip"] as Color).lerp(pal["soil"], smoothstep(0.0, 0.06, f)).lerp(
 		rock, smoothstep(0.04, 0.16, f)
 	)
@@ -6326,25 +6428,120 @@ func _add_face_scarp(b: LowPoly, za: float, zb: float, pal: Dictionary) -> bool:
 	# draws a wafer at the waterline, which is exactly the sliver being removed.
 	if minf(brow_a_y, brow_b_y) < _vp_water_y + 1.5:
 		return false
-	var rowa: Array[Vector3] = []
-	var rowb: Array[Vector3] = []
+	# And it still has to *be* a face. Out on the drowned tail the brow stands
+	# proud while the chord under it runs nearly flat for tens of metres — the
+	# skin then lies on a plain a hand's breadth over the water, which is the
+	# floating slate sheet the waterline shots kept finding. The live arc is
+	# how far each end still falls; a strip emits only while one end does.
+	var live_a := _face_live_arc(prof_a)
+	var live_b := _face_live_arc(prof_b)
+	if maxf(live_a, live_b) < 5.0:
+		return false
+	var rowa: Array[Vector4] = []
+	var rowb: Array[Vector4] = []
 	var cols_a: Array[Color] = []
 	var cols_b: Array[Color] = []
+	var slope_a := PackedFloat32Array()
+	var slope_b := PackedFloat32Array()
 	for i in range(SCARP_ROWS + 1):
 		var f := float(i) / float(SCARP_ROWS)
 		rowa.append(_scarp_point(prof_a, za, i))
 		rowb.append(_scarp_point(prof_b, zb, i))
 		cols_a.append(_scarp_color(pal, za, i, f))
 		cols_b.append(_scarp_color(pal, zb, i, f))
+		slope_a.append(_face_slope_at(prof_a, f))
+		slope_b.append(_face_slope_at(prof_b, f))
+	# Sky fill, measured off each quad's real tilt rather than painted flat: a
+	# bed top that faces up at the sky is lit by it, so it carries a paler,
+	# cooler value than the riser under it. Without it every vertex on the
+	# shaded side shares one small albedo and the whole face reads as the black
+	# slab the overviews kept flagging.
+	var sky_fill := (pal["rock_hi"] as Color).lerp(Color("8d9aa6"), 0.55)
+	var out_x: Vector3 = _path.frame_flat_at(za).x * _vp_side
 	for i in range(SCARP_ROWS):
+		var va := Vector3(rowa[i].x, rowa[i].y, rowa[i].z)
+		var vb := Vector3(rowb[i].x, rowb[i].y, rowb[i].z)
+		var va1 := Vector3(rowa[i + 1].x, rowa[i + 1].y, rowa[i + 1].z)
+		var vb1 := Vector3(rowb[i + 1].x, rowb[i + 1].y, rowb[i + 1].z)
+		var qn := (va1 - va).cross(vb - va)
+		if qn.length_squared() < 1e-8:
+			continue
+		if qn.dot(out_x) < 0.0:
+			qn = -qn
+		var up := qn.normalized().y
+		var chord_hi := maxf(maxf(rowa[i].w, rowa[i + 1].w), maxf(rowb[i].w, rowb[i + 1].w))
+		var chord_lo := minf(minf(rowa[i].w, rowa[i + 1].w), minf(rowb[i].w, rowb[i + 1].w))
+		# Past the live arc on both sides the strip has stopped falling — the
+		# quad would be skin over apron, and apron is marsh's job.
+		var f_arc := float(i) / float(SCARP_ROWS)
+		if f_arc * float(prof_a["total"]) >= live_a and f_arc * float(prof_b["total"]) >= live_b:
+			continue
+		# Four flat corners is a shoal, whatever the brow did upstream: out on
+		# the drowned tails the chord still *falls*, just a quarter metre to the
+		# metre, and the skin lying on it reads as a pale sheet standing off the
+		# lake — the slate raft the across shot kept catching. The same 0.30 the
+		# relief ramp starts at: below it the skin adds a pale film and no beds,
+		# so the bare ribbon — which is marsh's job — can simply take over.
+		if maxf(maxf(slope_a[i], slope_a[i + 1]), maxf(slope_b[i], slope_b[i + 1])) < 0.30:
+			continue
+		# The direct version of every waterline guard above: ask the ground
+		# under the quad's middle whether it is still land. On the face the
+		# chord is a carving of the headland itself, metres over the analytic
+		# surface and both high and dry; on the drowned tails the same chord
+		# bridges the marsh the lake swallowed, and the skin over it hangs in
+		# the air as the slate sheet. A quad over drowned ground does not emit.
+		var f_mid := (float(i) + 0.5) / float(SCARP_ROWS)
+		var out_mid := (
+			_profile_out(prof_a, f_mid) + _profile_out(prof_b, f_mid)
+		) * 0.5
+		var ground_y: float = _terrain_surface_at(
+			(za + zb) * 0.5, _vp_side * out_mid
+		).y
+		# Flat only: a steep quad over drowned ground is a cliff toe running
+		# into the lake and is wanted; a *level* one standing proud of marsh or
+		# shoal is a plate. The far bank floor runs a couple of metres proud of
+		# the waterline, so the ground test has to reach that far above it.
+		if up > 0.35 and ground_y < _vp_water_y + 3.0 and chord_lo > ground_y + 0.8:
+			continue
+		# Rows lying on drowned ground need no skin — the opaque water hides
+		# them anyway. And a row whose *low* corner reaches the waterline while
+		# lying anywhere near flat is apron — the skin stands its relief off a
+		# chord the lake has already swallowed, which is the slate sheet the
+		# waterline shots kept finding. The test runs off the low corner, not
+		# the high one: a quad draped from a live brow down onto drowned ground
+		# still earns a pale plate. A steep row that ends low is a cliff toe
+		# running under the water and keeps its quad.
+		if chord_hi < _vp_water_y + 0.2 or (up > 0.35 and chord_lo < _vp_water_y + 1.2):
+			continue
+		var fill := clampf(up, 0.0, 1.0) * 0.38
+		# Sky fill is a bed-top effect: a shelf catches the sky because the
+		# cliff under it throws it into clear air. On the drowned apron the
+		# same flat quad catches nothing — it is the pale cap on a dark bank,
+		# the slate plate in every across frame. The fill therefore needs a
+		# face under it as well as height over the water: off the live slope
+		# and within the last metres of the drop it fades away entirely.
+		var steepest := maxf(maxf(slope_a[i], slope_a[i + 1]), maxf(slope_b[i], slope_b[i + 1]))
+		fill *= smoothstep(0.30, 0.55, steepest) * smoothstep(
+			_vp_water_y + 1.0, _vp_water_y + 7.0, chord_lo
+		)
+		# And wet the toe: a flat quad lying on the low bank carries the same
+		# dark value the marsh under it does, or the sheet reads as a pale
+		# plate floating on shadowed water. Steep quads stay dry — a rising
+		# face is not the wet line.
+		var wet := (
+			(1.0 - smoothstep(_vp_water_y + 1.0, _vp_water_y + 9.0, chord_lo))
+			* smoothstep(0.4, 0.75, up)
+			* 0.7
+		)
+		var wet_tone := (pal["seam"] as Color).lerp(Color("232a2c"), 0.6)
+		var ca0 := cols_a[i].lerp(sky_fill, fill).lerp(wet_tone, wet)
+		var ca1 := cols_a[i + 1].lerp(sky_fill, fill).lerp(wet_tone, wet)
+		var cb0 := cols_b[i].lerp(sky_fill, fill).lerp(wet_tone, wet)
+		var cb1 := cols_b[i + 1].lerp(sky_fill, fill).lerp(wet_tone, wet)
 		if _vp_side > 0.0:
-			b.add_quad_shaded(
-				rowa[i], rowa[i + 1], rowb[i + 1], rowb[i], cols_a[i], cols_a[i + 1], cols_b[i + 1], cols_b[i]
-			)
+			b.add_quad_shaded(va, va1, vb1, vb, ca0, ca1, cb1, cb0)
 		else:
-			b.add_quad_shaded(
-				rowa[i + 1], rowa[i], rowb[i], rowb[i + 1], cols_a[i + 1], cols_a[i], cols_b[i], cols_b[i + 1]
-			)
+			b.add_quad_shaded(va1, va, vb, vb1, ca1, ca0, cb0, cb1)
 	# Turf tufts overhanging the brow, hashed into place — the grass lip is
 	# what sells the top of a cliff, and a bare edge reads as a cut cake.
 	for k in 4:
@@ -7338,6 +7535,12 @@ func _build_shore_strip() -> void:
 		if _rng.randf() > 0.82:
 			z += step
 			continue
+		# The shore line is an estimate — where the bank behind it has gone
+		# under, the "beach" is a slab on open water: the thin pale dashes the
+		# across shot drew off the drowned reach. No bank, no beach.
+		if _far_bank_rise(z, line + 6.0) < 0.6:
+			z += step
+			continue
 		var len: float = _rng.randf_range(14.0, 30.0)
 		var wide: float = _rng.randf_range(4.0, 8.0)
 		var inset: float = _rng.randf_range(-2.5, 1.0)
@@ -7678,8 +7881,21 @@ func _build_face_scree_fan(z0: float, face_run: float) -> void:
 		var out: float = head_out + run * (face_run - (head_out - float(_path.headland_crest(head_z))))
 		var z: float = head_z + _rng.randf_range(-1.0, 1.0) * spread * (0.35 + run)
 		var above := _height_above_water(z, out)
-		if above < 1.0 or not _face_above_water(z, out, 0.6) or float(_path.spur_deck_blend(z, _vp_side * out)) > 0.15:
+		var prof := _face_profile(z)
+		# Off the face the chord floats over drowned apron — a scree stone
+		# planted on it is a rock hovering over marsh, not talus.
+		var on_face := not prof.is_empty() and _face_is_face(prof)
+		if (
+			above < 1.0
+			or not on_face
+			or not _face_above_water(z, out, 0.6)
+			or float(_path.spur_deck_blend(z, _vp_side * out)) > 0.15
+		):
 			continue
+		# And only as far down as the face itself falls — past the live arc the
+		# profile is a flat apron and a stone at its foot is still on the chord,
+		# which is to say still in the air.
+		out = minf(out, _profile_out(prof, _face_live_arc(prof) / maxf(float(prof["total"]), 1.0)))
 		# Graded: fines at the head of the fan, blocks at the foot. Kept low and
 		# bedded in — a tall round stone on the open apron reads as an egg.
 		var s: float = lerpf(0.55, 2.3, run * run) * _rng.randf_range(0.82, 1.24)
@@ -7788,10 +8004,24 @@ func _build_face_ledges() -> void:
 		var z := z0 + _rng.randf_range(0.0, 6.0)
 		while z < z0 + LENGTH - 4.0:
 			var prof := _face_profile(z)
-			if prof.is_empty():
+			# Not a face, no ledges: past the fall line the chord the slabs sit
+			# on bridges over drowned apron, and a slab there is litter on the
+			# water — the bright dashes the across shot kept catching.
+			if prof.is_empty() or not _face_is_face(prof):
 				z += _rng.randf_range(6.0, 10.0)
 				continue
-			var out: float = _profile_out(prof, run + _rng.randf_range(-0.05, 0.05))
+			# A run is a fraction of the *falling* arc, not of the whole chord —
+			# past the live end the profile lies flat over the drowned apron,
+			# and a slab there is the pale dash floating on the water.
+			var frac_cap: float = _face_live_arc(prof) / maxf(float(prof["total"]), 1.0)
+			var frac := minf(run, frac_cap - 0.03) + _rng.randf_range(-0.05, 0.05)
+			# And only where the profile is still steep enough to carry a bed:
+			# a shelf slab needs a face under it, not the drowned tail's apron —
+			# lying flat on a low bench it is litter, not strata.
+			if _face_slope_at(prof, frac) < 0.35:
+				z += _rng.randf_range(4.0, 8.0)
+				continue
+			var out: float = _profile_out(prof, frac)
 			var above := _height_above_water(z, out)
 			if above < 4.0 or not _face_above_water(z, out, 2.5) or float(_path.spur_deck_blend(z, _vp_side * out)) > 0.15:
 				z += _rng.randf_range(4.0, 8.0)
@@ -9220,6 +9450,8 @@ func _build_belvedere() -> void:
 			_belvedere_pave(b, z, next, limestone.lerp(shadow, 0.34))
 		_belvedere_wall(b, z, next, limestone, mortar, shadow)
 		z = next
+	if authored:
+		_belvedere_deck_pave(b)
 	_belvedere_ends(b, limestone, shadow)
 	var mesh: MeshInstance3D = b.commit_to(self, "PlatformKerbs")
 	if mesh:
@@ -9390,6 +9622,56 @@ func _belvedere_pave(b: LowPoly, za: float, zb: float, color: Color) -> void:
 	b.add_quad(
 		_p(zb - 0.10, minf(e0, e1), -0.028), _p(zb - 0.10, maxf(e0, e1), -0.028), _p(zb, maxf(e0, e1), -0.028), _p(zb, minf(e0, e1), -0.028), course.darkened(0.24)
 	)
+
+
+func _belvedere_deck_pave(b: LowPoly) -> void:
+	## Flags over the kit deck's top sheet. The authored slab is one flat tone
+	## and at bench height it read as a poured apron — a blank pale plane under
+	## the pergola. What goes down instead is a mortar bed a finger under the
+	## stones, three courses across with a running bond, a little tonal drift
+	## per flag, and a darker soldier course against the parapet. All of it
+	## sits a few centimetres proud of the deck top, so nothing shares a plane
+	## with the sheet it covers.
+	var inner := RoadPathGD.PLATFORM_HALF_WIDTH + 0.30
+	var outer := RoadPathGD.PLATFORM_HALF_WIDTH + TERRACE_RAIL_OUT - 0.10
+	var z0 := _vp_centre - RoadPathGD.PLATFORM_HALF_LENGTH + 0.45
+	var z1 := _vp_centre + RoadPathGD.PLATFORM_HALF_LENGTH - 0.45
+	var mortar := Color("48423a")
+	var stone := Color("7e786a")
+	var m_i0 := _platform_lateral(inner, z0)
+	var m_o0 := _platform_lateral(outer, z0)
+	var m_i1 := _platform_lateral(inner, z1)
+	var m_o1 := _platform_lateral(outer, z1)
+	b.add_quad(
+		_p(z0, minf(m_i0, m_o0), -0.135), _p(z0, maxf(m_i0, m_o0), -0.135),
+		_p(z1, maxf(m_i1, m_o1), -0.135), _p(z1, minf(m_i1, m_o1), -0.135),
+		mortar
+	)
+	# Three courses, the outer one a darker border against the rail foot. The
+	# middle course runs half a flag off so the joints stagger like laid work.
+	const FLAG := 1.34
+	const JOINT := 0.12
+	for ci in 3:
+		var c_in := inner + float(ci) * 2.02
+		var c_out := inner + 1.92 + float(ci) * 2.02 if ci < 2 else outer
+		var border: bool = ci == 2
+		var fz := z0 + (FLAG + JOINT) * 0.5 * float(ci == 1)
+		while fz < z1 - 0.3:
+			var fe: float = minf(fz + FLAG, z1)
+			var a0: float = _platform_lateral(c_in, fz)
+			var a1: float = _platform_lateral(c_out, fz)
+			var b0: float = _platform_lateral(c_out, fe)
+			var b1: float = _platform_lateral(c_in, fe)
+			var jit := float(posmod(hash(Vector2i(int(round(fz * 2.0)), ci * 61 + 7)), 997)) / 997.0
+			var col := stone.lightened(jit * 0.09 - 0.03)
+			if border:
+				col = col.darkened(0.09)
+			b.add_quad(
+				_p(fz, minf(a0, a1), -0.15), _p(fz, maxf(a0, a1), -0.15),
+				_p(fe, maxf(b0, b1), -0.15), _p(fe, minf(b0, b1), -0.15),
+				col
+			)
+			fz += FLAG + JOINT
 
 
 func _belvedere_wall(b: LowPoly, za: float, zb: float, limestone: Color, mortar: Color, shadow: Color) -> void:
