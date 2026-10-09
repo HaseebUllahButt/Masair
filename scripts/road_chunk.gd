@@ -3093,7 +3093,10 @@ func apply_corridor(on_scenic: bool, committed: bool, drop_unused: bool = false)
 	## occupying RAM and draw lists.
 	if not _on_spur:
 		return
-	var show_highway := not on_scenic or not committed
+	# The main road's roadside stays: its trees and hedges stand in plain view
+	# of the side road a hundred-odd metres away, and culling them made the
+	# woods beside the climb blink out the moment the rider took the exit.
+	var show_highway := true
 	var show_scenic := on_scenic or not committed
 	var flags := (1 if show_highway else 0) | (2 if show_scenic else 0)
 	if flags == _corridor_flags:
