@@ -79,6 +79,13 @@ enum Env { CITY, FOREST, COAST, MOUNTAIN, COUNTRY }
 const LENGTH := 40.0
 const STEPS := 10  # 4 m cross-sections stay smooth on broad grades with fewer CPU-side samples
 const RIBBON_STEPS_PER_FRAME := 1
+## Per-frame CPU budget for streamed builds. Stage boundaries used to park for a
+## whole frame each, so a dressed chunk cost ~40 frames regardless of how cheap
+## the stages were — at a loaded 60 fps that is a full second per chunk and the
+## props queue falls behind the bike, leaving bare roadside. Yielding only once
+## the frame's slice is spent keeps the same per-frame ceiling while finishing a
+## chunk in as many frames as its real cost needs.
+const STREAM_SLICE_USEC := 4000
 const HALF_WIDTH := 8.0
 ## Asphalt is one continuous road, even when the surrounding biome changes.
 ## Keeping this outside the palettes prevents visible colour seams at run edges.
@@ -616,6 +623,9 @@ var _owns_platform: bool = false
 var _vp_theme: int = Env.COUNTRY
 ## -1 unknown, else bit0=highway visible, bit1=scenic visible.
 var _corridor_flags: int = -1
+## Wall-clock mark for the current streamed slice; `_keep_streaming` parks only
+## once it is spent. Reset at each build entry so a queued job starts fresh.
+var _slice_started_usec: int = 0
 
 
 func setup(index: int, theme_id: int, include_scenic: bool = true, include_highway: bool = true) -> void:
@@ -697,6 +707,7 @@ func setup_ribbon_incremental(index: int, theme_id: int) -> void:
 
 
 func setup_props_incremental() -> void:
+	_slice_started_usec = Time.get_ticks_usec()
 	await _build_props_incremental()
 
 
@@ -879,11 +890,15 @@ func _keep_streaming() -> bool:
 	## mesh into a world the bike has already left.
 	if not is_instance_valid(self) or not is_inside_tree():
 		return false
+	if Time.get_ticks_usec() - _slice_started_usec < STREAM_SLICE_USEC:
+		return true
 	await get_tree().process_frame
+	_slice_started_usec = Time.get_ticks_usec()
 	return is_instance_valid(self) and is_inside_tree()
 
 
 func _configure(index: int, theme_id: int) -> void:
+	_slice_started_usec = Time.get_ticks_usec()
 	chunk_index = index
 	theme = theme_id
 	_path = get_node("/root/RoadPath")
@@ -971,6 +986,7 @@ func ensure_scenic_dress() -> void:
 		return
 	if bool(get_meta("scenic_building", false)):
 		return
+	_slice_started_usec = Time.get_ticks_usec()
 	set_meta("scenic_requested", true)
 	set_meta("scenic_building", true)
 	await _build_scenic_props_incremental()
@@ -1024,6 +1040,7 @@ func ensure_highway_dress() -> void:
 		return
 	if bool(get_meta("highway_building", false)):
 		return
+	_slice_started_usec = Time.get_ticks_usec()
 	set_meta("highway_requested", true)
 	set_meta("highway_building", true)
 	await _build_highway_props_incremental()
