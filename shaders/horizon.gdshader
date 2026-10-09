@@ -243,7 +243,7 @@ void fragment() {
 	// cream card no matter its value. A far range therefore has to arrive
 	// saturated — violet-blue deep enough that its red channel never reaches
 	// the warm part of the curve. The multiplier carries that hue.
-	vec3 air = mix(mix(mist_color, sky_color, 0.55), haze_color, 0.10) * vec3(0.42, 0.58, 1.02);
+	vec3 air = mix(mix(mist_color, sky_color, 0.55), haze_color, 0.10) * vec3(0.60, 0.74, 1.08);
 	// A linear haze weight is fine up to the third range, but at the fourth's
 	// 0.66 it erased almost half the mountain's own colour — which is where the
 	// biggest silhouette in the frame lived, and it arrived as a flat pale
@@ -265,7 +265,7 @@ void fragment() {
 	// grade's warm highlights returned every slate-blue panel as cream card.
 	// Kept shallow: the far band has to stay *lighter* than the mid one for
 	// the depth ladder to read, so the path eats a fifth, not a third.
-	col *= 1.0 - 0.20 * haze_v;
+	col *= 1.0 - 0.10 * haze_v;
 	// ...and it cools what is left of it. The warm key is scattered out of the
 	// light long before the light is gone, so the residual rock colour shifts
 	// blue with distance on top of the veil the mix lays over it.
