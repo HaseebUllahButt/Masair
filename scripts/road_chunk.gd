@@ -1370,6 +1370,12 @@ func _ground_color(lateral: float, z: float) -> Color:
 		var bank: float = 0.5 + 0.5 * sin(lateral * 0.028 + z * 0.011) * sin(absf(lateral) * 0.09 - z * 0.007)
 		mix = lerpf(mix, bank, 0.55)
 	var color: Color = (_pal["ground"] as Color).lerp(_pal["ground_alt"], mix * 0.95)
+	if theme == Env.FOREST and not _on_spur and not _on_lake:
+		# Under the canopy the floor sits in shade. Past the planted edge the
+		# ground sinks toward the wood's dark instead of staying lit pasture —
+		# the old even lawn was half of why the forest read as a park.
+		var shade: float = smoothstep(HALF_WIDTH + 14.0, HALF_WIDTH + 46.0, absf(lateral))
+		color = color.lerp(color.darkened(0.32), shade)
 	# Near the carriageway lean toward verge green so the soft shoulder meets
 	# the hard curb without a painted seam.
 	var near: float = 1.0 - smoothstep(HALF_WIDTH + 2.0, HALF_WIDTH + 18.0, absf(lateral))
@@ -3294,6 +3300,10 @@ func _commit_mm(
 		# The far shore and the stacks sit a kilometre out. The old 720 m window
 		# popped the trees off the opposite bank while the rider was still looking.
 		mmi.visibility_range_end = 1800.0
+	elif theme == Env.FOREST and node_name in ["Conifers", "Trunks", "Crowns", "Foliage", "Rocks"]:
+		# The forest's back band and canopy wall sit 90–170 m off the centreline:
+		# at the prop cull the deep wood would blink on as the rider closed in.
+		mmi.visibility_range_end = 300.0
 	else:
 		mmi.visibility_range_end = 200.0 if node_name == "Architecture" else 160.0
 	if not shadows or _on_lake:
@@ -4120,59 +4130,307 @@ func _scenery_forest() -> void:
 	## Each side also rolls a mood: mostly the usual mixed stands, sometimes a
 	## wall of timber tight over the verge, sometimes the wood steps back and
 	## leaves a glade of grass and saplings between the rider and the trees.
+	##
+	## Depth is what sells it: verge shrubs, then the planted stands, then a deep
+	## band of taller, darker timber, then canopy masses under the fog line — a
+	## wood that keeps going, not trees parked on a lawn.
 	var z0: float = float(chunk_index) * LENGTH
 	for side in [-1.0, 1.0]:
-		var stand_count := 3
-		var stand_near := 5.0
-		var stand_far := 49.0
 		var mood := _rng.randf()
-		if mood < 0.16:
-			stand_count = 5
-			stand_near = 4.0
-			stand_far = 26.0
-		elif mood < 0.38:
-			stand_count = 1 + int(_rng.randf() < 0.45)
-			stand_near = 19.0
-			stand_far = 60.0
+		var stand_count := _forest_stand_count(mood)
 		for _stand in stand_count:
-			var stand_z := z0 + _rng.randf_range(0.0, LENGTH)
-			var stand_x: float = side * (HALF_WIDTH + _rng.randf_range(stand_near, stand_far))
-			var roll := _rng.randf()
-			var species: int = Flora.CONIFER if roll < 0.58 else (Flora.BIRCH if roll < 0.74 else Flora.BROADLEAF)
-			var tint: Color = (_pal["prop_a"] as Color).lerp(_pal["prop_c"], _rng.randf() * 0.7)
-			var tall: float = _rng.randf_range(8.0, 15.0) if species == Flora.CONIFER else _rng.randf_range(6.0, 11.0)
-			for _i in 6:
-				var z := stand_z + _rng.randf_range(-11.0, 11.0)
-				var lx: float = stand_x + _rng.randf_range(-11.0, 11.0)
-				_tree(species, z, lx, tall * _rng.randf_range(0.72, 1.15), tint.darkened(_rng.randf() * 0.2))
-		# Saplings and stumps in the first few metres, so the wood starts at the verge
-		# instead of behind an empty strip.
-		for _i in 4:
-			var z := z0 + _rng.randf_range(0.0, LENGTH)
-			var lx: float = side * (HALF_WIDTH + 3.0 + _rng.randf_range(0.0, 6.0))
-			_tree(
-				Flora.CONIFER if _rng.randf() < 0.6 else Flora.BROADLEAF,
-				z,
-				lx,
-				_rng.randf_range(2.2, 4.2),
-				(_pal["prop_a"] as Color).darkened(_rng.randf() * 0.3)
-			)
-		for _i in 8:
-			var z := z0 + _rng.randf_range(0.0, LENGTH)
-			var lx: float = side * (HALF_WIDTH + 2.5 + _rng.randf_range(0.0, 8.0))
-			var s := _rng.randf_range(0.7, 1.8)
-			if _rng.randf() < 0.5:
-				var rock: PackedScene = _rock_scene(_rng.randf() < 0.5)
-				if rock:
-					_asset_prop(rock, z, lx, s * 2.1, s * 1.1)
-				else:
-					_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
+			_forest_stand(z0, side, mood)
+		_forest_back_band(z0, side, mood)
+		_forest_verge(z0, side)
+		_forest_floor(side)
+	_forest_water(z0)
+
+
+func _forest_stand_count(mood: float) -> int:
+	if mood < 0.16:
+		return 5
+	if mood < 0.38:
+		return 1 + int(_rng.randf() < 0.45)
+	return 3
+
+
+func _forest_stand(z0: float, side: float, mood: float, pace: Callable = Callable()) -> void:
+	## One stand: same species, same tint family, one size range. Stands overlap
+	## each other and the back band, which is what knits the wood edge together.
+	## `pace` is the incremental build's slice budget: invalid on the one-shot
+	## path, so both callers grow the same stand off the same stream.
+	var stand_near := 5.0
+	var stand_far := 49.0
+	if mood < 0.16:
+		stand_near = 4.0
+		stand_far = 26.0
+	elif mood < 0.38:
+		stand_near = 19.0
+		stand_far = 60.0
+	var stand_z := z0 + _rng.randf_range(0.0, LENGTH)
+	var stand_x: float = side * (HALF_WIDTH + _rng.randf_range(stand_near, stand_far))
+	var roll := _rng.randf()
+	var species: int = (
+		Flora.CONIFER if roll < 0.5 else (Flora.BIRCH if roll < 0.68 else (Flora.PINE if roll < 0.78 else Flora.BROADLEAF))
+	)
+	var tint: Color = (_pal["prop_a"] as Color).lerp(_pal["prop_c"], _rng.randf() * 0.7)
+	var tall: float = (
+		_rng.randf_range(9.0, 18.0) if species == Flora.CONIFER or species == Flora.PINE else _rng.randf_range(6.0, 12.0)
+	)
+	for _i in 7:
+		var z := stand_z + _rng.randf_range(-12.0, 12.0)
+		var lx: float = stand_x + _rng.randf_range(-12.0, 12.0)
+		_tree(species, z, lx, tall * _rng.randf_range(0.7, 1.18), tint.darkened(_rng.randf() * 0.2))
+		# Each `_tree` sweeps the corridor for clearance; a whole stand in one
+		# slice was a ~20 ms block on forest chunks.
+		if pace.is_valid() and _i % 3 == 2 and _slice_spent() and not await pace.call():
+			return
+	# Undergrowth in the stand's lee — a wood is not trees on a lawn, and the
+	# shaded gap between trunks and ground is where the eye finds the lie.
+	for _i in _rng.randi_range(2, 4):
+		var s := _rng.randf_range(1.4, 3.2)
+		_blob(
+			stand_z + _rng.randf_range(-9.0, 9.0),
+			stand_x + _rng.randf_range(-8.0, 8.0),
+			Vector3(s * 1.7, s * _rng.randf_range(0.45, 0.75), s * 1.5),
+			tint.darkened(_rng.randf_range(0.15, 0.38)),
+			0.0,
+			true
+		)
+
+
+func _forest_back_band(z0: float, side: float, mood: float, pace: Callable = Callable()) -> void:
+	## The deep wood. Behind the stands the forest keeps going — taller, darker
+	## trunks and crowns out where the canopy shades the ground to black. Every
+	## tree out here starts far enough past the corridor that `_tree` never pays
+	## its clearance sweep, so the depth is nearly free.
+	##
+	## Glade moods hold the band back so the clearing stays open to the sky; a
+	## wall mood pushes it right up behind the planted edge.
+	var near := 38.0
+	var far := 95.0
+	var rows := 6
+	var deep: Color = (_pal["prop_c"] as Color).lerp(Color("152e24"), 0.45)
+	if mood < 0.16:
+		near = 26.0
+		far = 70.0
+		rows = 7
+	elif mood < 0.38:
+		near = 62.0
+		far = 130.0
+		rows = 4
+	for _i in rows:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var lx: float = side * (HALF_WIDTH + _rng.randf_range(near, far))
+		var roll := _rng.randf()
+		var species: int = (
+			Flora.CONIFER if roll < 0.62 else (Flora.PINE if roll < 0.78 else Flora.BROADLEAF)
+		)
+		var tall := _rng.randf_range(13.0, 21.0)
+		_tree(species, z, lx, tall, deep.lightened(_rng.randf() * 0.14))
+		if pace.is_valid() and _i % 3 == 2 and _slice_spent() and not await pace.call():
+			return
+	# The furthest layer is canopy, not trees: past a hundred metres a trunk is
+	# a pixel wide, so wide dark crowns sitting on the slope carry the treeline.
+	var wall_near := 88.0 if mood >= 0.16 else 60.0
+	for _i in _rng.randi_range(3, 5):
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var lx: float = side * (HALF_WIDTH + _rng.randf_range(wall_near, 150.0))
+		var w := _rng.randf_range(9.0, 16.0)
+		_blob(
+			z,
+			lx,
+			Vector3(w, _rng.randf_range(4.5, 8.5), w * _rng.randf_range(0.7, 1.1)),
+			deep.darkened(_rng.randf() * 0.16),
+			0.0,
+			true
+		)
+	# Underwood between the planted edge and the deep band — the shaded
+	# mid-layer that stops the floor reading as open grass between the trunks.
+	var fill_near := 15.0 if mood < 0.16 else 20.0
+	var fill_far := 46.0 if mood < 0.38 else 70.0
+	for _i in _rng.randi_range(4, 6):
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var lx: float = side * (HALF_WIDTH + _rng.randf_range(fill_near, fill_far))
+		var s := _rng.randf_range(1.8, 4.2)
+		_blob(
+			z,
+			lx,
+			Vector3(s * 1.7, s * _rng.randf_range(0.5, 0.8), s * 1.5),
+			(_pal["prop_a"] as Color).lerp(deep, _rng.randf_range(0.4, 0.8)),
+			0.0,
+			true
+		)
+		if pace.is_valid() and _i % 3 == 2 and _slice_spent() and not await pace.call():
+			return
+
+
+func _forest_verge(z0: float, side: float, pace: Callable = Callable()) -> void:
+	## Saplings, young birch and rocks in the first few metres, so the wood
+	## starts at the verge instead of behind an empty strip.
+	for _i in 5:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var lx: float = side * (HALF_WIDTH + 3.0 + _rng.randf_range(0.0, 6.0))
+		var roll := _rng.randf()
+		var species: int = (
+			Flora.CONIFER if roll < 0.5 else (Flora.BIRCH if roll < 0.72 else Flora.BROADLEAF)
+		)
+		_tree(
+			species,
+			z,
+			lx,
+			_rng.randf_range(2.2, 4.6),
+			(_pal["prop_a"] as Color).darkened(_rng.randf() * 0.3)
+		)
+	for _i in 8:
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var lx: float = side * (HALF_WIDTH + 2.5 + _rng.randf_range(0.0, 8.0))
+		var s := _rng.randf_range(0.7, 1.8)
+		if _rng.randf() < 0.5:
+			var rock: PackedScene = _rock_scene(_rng.randf() < 0.5)
+			if rock:
+				_asset_prop(rock, z, lx, s * 2.1, s * 1.1)
 			else:
 				_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
-		_forest_floor(side)
+		else:
+			_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
+		if pace.is_valid() and _i % 4 == 3 and _slice_spent() and not await pace.call():
+			return
+	# An outcrop every few chunks: a knuckle of bedrock breaking the wood edge
+	# is one of the things a planted verge never says.
+	if posmod(chunk_index * 2 + int(side > 0.0), 5) == 2:
+		var oz := z0 + _rng.randf_range(8.0, LENGTH - 8.0)
+		var ox: float = side * (HALF_WIDTH + _rng.randf_range(7.0, 16.0))
+		_forest_outcrop(oz, ox)
 
 
-func _forest_floor(side: float) -> void:
+func _forest_outcrop(z: float, lateral: float) -> void:
+	## A small crag of mossy stone: overlapping lobes, dark at the foot, moss on
+	## the shoulders. One footprint check for the whole cluster.
+	var s := _rng.randf_range(1.1, 2.0)
+	if not _footprint_is_clear(z, lateral, s * 2.2, s * 1.8):
+		return
+	var stone := Color("6f6d64")
+	for _i in _rng.randi_range(3, 5):
+		var bz := z + _rng.randf_range(-s * 1.6, s * 1.6)
+		var bx: float = lateral + _rng.randf_range(-s, s)
+		var bs := s * _rng.randf_range(0.55, 1.05)
+		_blob(
+			bz,
+			bx,
+			Vector3(bs * 1.7, bs * _rng.randf_range(0.7, 1.15), bs * 1.4),
+			stone.darkened(_rng.randf() * 0.22),
+			0.0,
+			false
+		)
+	# Moss and fern on top, the way a real outcrop carries its own garden.
+	for _i in _rng.randi_range(2, 3):
+		var bz := z + _rng.randf_range(-s * 1.2, s * 1.2)
+		var bx: float = lateral + _rng.randf_range(-s * 0.8, s * 0.8)
+		var ms := s * _rng.randf_range(0.4, 0.7)
+		_blob(
+			bz,
+			bx,
+			Vector3(ms * 1.6, ms * 0.5, ms * 1.4),
+			(_pal["prop_a"] as Color).lerp(_pal["verge"], 0.45).lightened(0.06),
+			s * 0.55,
+			true
+		)
+
+
+func _forest_snag(z: float, lateral: float) -> void:
+	## A standing dead trunk — forests carry their dead, and one bare spike among
+	## the crowns says grown woodland rather than planted verge. Trunk bucket
+	## only: nothing leafy on it, so nothing to sweep.
+	if not _footprint_is_clear(z, lateral, 0.45, 0.45):
+		return
+	var base: Vector3 = _ground_base_for_footprint(z, lateral, 0.45, 0.45) - _origin
+	var h := _rng.randf_range(3.5, 7.0)
+	var yaw := Basis(Vector3.UP, _rng.randf_range(0.0, TAU))
+	var lean := Basis(Vector3.RIGHT, _rng.randf_range(-0.07, 0.07))
+	_trunks.append(Transform3D(yaw * lean * Basis.IDENTITY.scaled(Vector3(0.4, h, 0.4)), base))
+	# Silvered deadwood, not fresh bark — a snag is pale grey long before it falls.
+	_trunk_cols.append(BARK.lerp(BARK_PALE, _rng.randf_range(0.45, 0.85)))
+	# One snapped bough near the top, or it reads as a telegraph pole.
+	if _rng.randf() < 0.7:
+		var stub := Transform3D(
+			(Basis(Vector3.UP, _rng.randf_range(0.0, TAU)) * Basis(Vector3.RIGHT, _rng.randf_range(0.5, 0.9))).scaled(
+				Vector3(0.16, _rng.randf_range(0.8, 1.6), 0.16)
+			),
+			base + Vector3(0, h * _rng.randf_range(0.55, 0.8), 0)
+		)
+		_trunks.append(stub)
+		_trunk_cols.append(BARK.lerp(BARK_PALE, 0.5))
+
+
+func _forest_water(z0: float) -> void:
+	## A still pool in a dip beside the road — the forest floor detail that turns
+	## a verge into a place. Rare, small, always off the carriageway, and only
+	## where the ground is flat enough that a sheet of water sits in it instead
+	## of clipping through the slope.
+	if _on_spur or _on_lake:
+		return
+	if posmod(chunk_index, 6) != 2:
+		return
+	var side: float = -1.0 if posmod(int(_path.world_seed) + chunk_index, 2) == 0 else 1.0
+	var z := z0 + LENGTH * _rng.randf_range(0.3, 0.7)
+	var lx: float = side * (HALF_WIDTH + _rng.randf_range(9.0, 15.0))
+	var r := _rng.randf_range(2.8, 4.6)
+	if not _footprint_is_clear(z, lx, r * 1.4 + 1.0, r * 1.4 + 1.0):
+		return
+	# Flat enough to hold water: if the ground under the sheet tips more than a
+	# metre the pool reads as a tilted mirror, so the chunk just grows marsh
+	# plants instead.
+	var low := INF
+	var high := -INF
+	for i in 9:
+		var a: float = TAU * float(i) / 8.0
+		var sz := z
+		var sx := lx
+		if i < 8:
+			sz += cos(a) * r * 0.8
+			sx += sin(a) * r * 0.8
+		var h: float = _terrain_surface_at(sz, sx).y
+		low = minf(low, h)
+		high = maxf(high, h)
+	if high - low > 1.5:
+		return
+	var water_y := low - 0.05
+	var b := LowPoly.new()
+	b.smooth = true
+	var sheet: Vector3 = _path.ground_at(z, lx)
+	sheet.y = water_y
+	b.add_cylinder(Transform3D(Basis.IDENTITY, sheet - _origin), r * 1.5, 0.07, 12, Color("14383c"))
+	var mesh: MeshInstance3D = b.commit_to(self, "ForestPool")
+	if mesh:
+		mesh.material_override = water_material()
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		LowPoly.cheap_draw(mesh)
+	# Reeds round the waterline and a couple of lily pads on it: without a ragged
+	# edge the sheet reads as a dropped mirror rather than a dug pool.
+	for _i in _rng.randi_range(8, 13):
+		var a := _rng.randf_range(0.0, TAU)
+		var rz := z + cos(a) * r * _rng.randf_range(0.85, 1.5)
+		var rx: float = lx + sin(a) * r * _rng.randf_range(0.85, 1.5)
+		var rh: float = _terrain_surface_at(rz, rx).y
+		if rh > water_y + 0.02 and rh < water_y + 0.6:
+			_grass_at(
+				rz, rx, Vector3(_rng.randf_range(0.22, 0.4), _rng.randf_range(1.0, 1.7), _rng.randf_range(0.22, 0.4)),
+				(_pal["verge"] as Color).lerp(_pal["prop_a"], 0.4).darkened(_rng.randf_range(0.1, 0.3))
+			)
+	for _i in _rng.randi_range(2, 4):
+		var a := _rng.randf_range(0.0, TAU)
+		var pad := _rng.randf_range(0.3, 0.55)
+		var world: Vector3 = _path.ground_at(
+			z + cos(a) * r * _rng.randf_range(0.15, 0.55),
+			lx + sin(a) * r * _rng.randf_range(0.15, 0.55)
+		)
+		world.y = water_y + 0.04
+		_cubes.append(Transform3D(Basis.IDENTITY.scaled(Vector3(pad, 0.04, pad)), world - _origin))
+		_cube_cols.append((_pal["prop_a"] as Color).darkened(_rng.randf_range(0.05, 0.2)))
+
+
+func _forest_floor(side: float, pace: Callable = Callable()) -> void:
 	## Undergrowth and deadfall: fern clumps where the light comes in at the
 	## verge, a mossy fallen log, stumps from an old thinning, a mossy boulder
 	## or two. The floor is what makes a stand read as woodland instead of
@@ -4192,6 +4450,8 @@ func _forest_floor(side: float) -> void:
 				0.0,
 				true
 			)
+		if pace.is_valid() and _slice_spent() and not await pace.call():
+			return
 	if _rng.randf() < 0.55:
 		var lz := z0 + _rng.randf_range(5.0, LENGTH - 5.0)
 		var lx: float = side * (HALF_WIDTH + _rng.randf_range(5.5, 18.0))
@@ -4203,6 +4463,12 @@ func _forest_floor(side: float) -> void:
 		)
 	for _i in _rng.randi_range(1, 3):
 		_stump(z0 + _rng.randf_range(0.0, LENGTH), side * (HALF_WIDTH + 4.0 + _rng.randf_range(0.0, 14.0)))
+	# A dead standing trunk most chunks — grown woodland carries its dead.
+	if _rng.randf() < 0.55:
+		_forest_snag(
+			z0 + _rng.randf_range(0.0, LENGTH),
+			side * (HALF_WIDTH + _rng.randf_range(6.0, 30.0))
+		)
 	for _b in _rng.randi_range(0, 2):
 		var bz := z0 + _rng.randf_range(0.0, LENGTH)
 		var bx: float = side * (HALF_WIDTH + 4.0 + _rng.randf_range(0.0, 15.0))
@@ -4232,62 +4498,26 @@ func _stump(z: float, lateral: float) -> void:
 
 
 func _scenery_forest_incremental() -> void:
+	## Same wood as `_scenery_forest`, one slice at a time. The helpers take the
+	## streaming pace callable and yield only once a slice is spent, so the two
+	## paths grow identical stands off the identical stream.
 	var z0: float = float(chunk_index) * LENGTH
+	var pace := Callable(self, "_keep_streaming")
 	for side in [-1.0, 1.0]:
-		var stand_count := 3
-		var stand_near := 5.0
-		var stand_far := 49.0
 		var mood := _rng.randf()
-		if mood < 0.16:
-			stand_count = 5
-			stand_near = 4.0
-			stand_far = 26.0
-		elif mood < 0.38:
-			stand_count = 1 + int(_rng.randf() < 0.45)
-			stand_near = 19.0
-			stand_far = 60.0
+		var stand_count := _forest_stand_count(mood)
 		for _stand in stand_count:
-			var stand_z := z0 + _rng.randf_range(0.0, LENGTH)
-			var stand_x: float = side * (HALF_WIDTH + _rng.randf_range(stand_near, stand_far))
-			var roll := _rng.randf()
-			var species: int = Flora.CONIFER if roll < 0.58 else (Flora.BIRCH if roll < 0.74 else Flora.BROADLEAF)
-			var tint: Color = (_pal["prop_a"] as Color).lerp(_pal["prop_c"], _rng.randf() * 0.7)
-			var tall: float = _rng.randf_range(8.0, 15.0) if species == Flora.CONIFER else _rng.randf_range(6.0, 11.0)
-			for _i in 6:
-				var z := stand_z + _rng.randf_range(-11.0, 11.0)
-				var lx: float = stand_x + _rng.randf_range(-11.0, 11.0)
-				_tree(species, z, lx, tall * _rng.randf_range(0.72, 1.15), tint.darkened(_rng.randf() * 0.2))
-				# Each `_tree` sweeps the corridor for clearance; a whole stand in
-				# one slice was a ~20 ms block on forest chunks.
-				if _i % 3 == 2 and _slice_spent() and not await _keep_streaming():
-					return
+			await _forest_stand(z0, side, mood, pace)
 			if not await _keep_streaming():
 				return
-		for _i in 4:
-			var z := z0 + _rng.randf_range(0.0, LENGTH)
-			var lx: float = side * (HALF_WIDTH + 3.0 + _rng.randf_range(0.0, 6.0))
-			_tree(
-				Flora.CONIFER if _rng.randf() < 0.6 else Flora.BROADLEAF,
-				z,
-				lx,
-				_rng.randf_range(2.2, 4.2),
-				(_pal["prop_a"] as Color).darkened(_rng.randf() * 0.3)
-			)
-		for _i in 8:
-			var z := z0 + _rng.randf_range(0.0, LENGTH)
-			var lx: float = side * (HALF_WIDTH + 2.5 + _rng.randf_range(0.0, 8.0))
-			var s := _rng.randf_range(0.7, 1.8)
-			if _rng.randf() < 0.5:
-				var rock: PackedScene = _rock_scene(_rng.randf() < 0.5)
-				if rock:
-					_asset_prop(rock, z, lx, s * 2.1, s * 1.1)
-				else:
-					_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
-			else:
-				_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
-		_forest_floor(side)
+		await _forest_back_band(z0, side, mood, pace)
 		if not await _keep_streaming():
 			return
+		await _forest_verge(z0, side, pace)
+		await _forest_floor(side, pace)
+		if not await _keep_streaming():
+			return
+	_forest_water(z0)
 
 
 func _scenery_mountain() -> void:
