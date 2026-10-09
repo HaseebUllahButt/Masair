@@ -345,7 +345,10 @@ func _player_committed() -> bool:
 
 
 func _player_wants_highway() -> bool:
-	return not (_player_wants_scenic() and _player_committed())
+	## Always: the main road's dressing is in view from the side road, so it
+	## keeps streaming while the rider climbs to an overlook. Skipping it left
+	## the woods beside the spur bare or blinking out as chunks rebuilt.
+	return true
 
 
 func _enqueue_scenic(current: int) -> void:
