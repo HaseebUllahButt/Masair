@@ -4,20 +4,25 @@ render_mode cull_disabled;
 // Foliage: vertex-coloured like everything else, but it moves.
 //
 // Static trees are the loudest tell that a world is a diorama. The sway is
-// driven by world position so neighbouring trees are out of phase with each
-// other, and weighted by height above the instance origin so trunks stay
-// planted while crowns travel.
+// driven by the shared wind field (wind.gdshaderinc) sampled at the instance
+// origin, so a gust travels across the whole landscape at walking speed and a
+// hedge line flexes as one wave instead of every plant shivering on its own
+// clock. Sway is weighted by height above the instance origin so trunks stay
+// planted while crowns travel, and peaks stay inside the corridor allowance
+// test_clearance measures (FOLIAGE_SWAY, road_chunk.gd).
+
+#include "res://shaders/wind.gdshaderinc"
 
 uniform float sway_strength = 0.055;
 uniform float sway_speed = 1.05;
 // Leaves are thin enough to pass light. A little of the albedo added back on the
 // unlit side stops crowns reading as solid black cutouts against a bright sky.
-uniform float translucency : hint_range(0.0, 1.0) = 0.22;
+uniform float translucency : hint_range(0.0, 1.0) = 0.26;
 // Sun through the leaves. BACKLIGHT alone is grey light passing a grey sheet;
 // real leaves glow yellow-green where the sun is behind them, and that rim is
 // the whole difference between a tree against a low sun and a cardboard cutout.
 uniform vec3 leaf_glow : source_color = vec3(1.0, 0.86, 0.42);
-uniform float leaf_glow_strength : hint_range(0.0, 2.0) = 0.55;
+uniform float leaf_glow_strength : hint_range(0.0, 2.0) = 0.80;
 // Self-shadowing a canopy would take a shadow map. The underside of a crown is
 // dark and the top catches sky for the same reason every time, so it is painted
 // from height in the mesh's own space: crowns and conifers stand on Y=0 and
@@ -34,7 +39,7 @@ uniform float canopy_sky_strength : hint_range(0.0, 1.0) = 0.5;
 // crown, so the terminator is soft and far past 90°. Half-Lambert is the cheap
 // form of that, and it is what keeps the side of a spruce turned from a low sun
 // green instead of a black paper cutout.
-uniform float wrap : hint_range(0.0, 1.0) = 0.55;
+uniform float wrap : hint_range(0.0, 1.0) = 0.62;
 
 // Canopy hexes were authored nearly black ("1c3328" is 0.02 linear) back when
 // ambient was strong enough to wash everything mint. Nothing multiplied onto an
@@ -42,20 +47,40 @@ uniform float wrap : hint_range(0.0, 1.0) = 0.55;
 // value; bright verge greens, which already read, are left where they are.
 uniform float leaf_floor : hint_range(0.0, 0.1) = 0.072;
 
+// How much a passing gust flashes the leaf colour. Leaves turn their pale
+// undersides to the light when the wind picks them up, which is the silvery
+// ripple that runs down a hedge or across a crown — visible far beyond the
+// distance the geometry's own movement resolves at.
+uniform float gust_sheen : hint_range(0.0, 0.5) = 0.16;
+
 varying float crown_h;
 varying float drift;
+varying float gust_now;
 
 void vertex() {
-	// Instance origin in world space: the per-tree phase offset.
+	// Instance origin in world space: the per-tree phase offset and the point
+	// the gust field is sampled at.
 	vec3 origin = (MODEL_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
-	float phase = TIME * sway_speed + origin.x * 0.23 + origin.z * 0.17;
+	float gust = wind_gust(origin.xz, TIME);
+	gust_now = gust;
 	// Height above the instance origin, so the sway hinges at the base.
 	float lever = max(VERTEX.y, 0.0);
 	crown_h = smoothstep(-0.35, 0.9, VERTEX.y);
 	drift = fract(sin(dot(floor(origin.xz * 0.5), vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
-	float gust = 0.75 + 0.25 * sin(TIME * 0.31 + origin.z * 0.05);
-	VERTEX.x += sin(phase) * sway_strength * lever * gust;
-	VERTEX.z += cos(phase * 0.83) * sway_strength * 0.6 * lever * gust;
+
+	// Three motions. A slow per-plant rock, still phased from the origin so
+	// neighbours disagree; a lean downwind with the gust, which is what makes a
+	// front read as one wave arriving rather than every plant doing its own
+	// wobble; and a small fast flutter for leaf shimmer. The sum stays under
+	// ~1.0 * sway_strength at peak gust, the same envelope the corridor test
+	// was tuned against.
+	float phase = TIME * sway_speed + origin.x * 0.23 + origin.z * 0.17;
+	vec2 rock = vec2(sin(phase) * 0.30, cos(phase * 0.83) * 0.22);
+	vec2 lean = WIND_DIR * (gust * 0.85 - 0.30);
+	float flutter = sin(TIME * 5.3 + VERTEX.x * 5.0 + origin.x * 3.1 + origin.z * 2.3) * 0.07;
+	vec2 sway = rock + lean + vec2(flutter, flutter * 0.6);
+	VERTEX.x += sway.x * sway_strength * lever;
+	VERTEX.z += sway.y * sway_strength * lever;
 }
 
 // sRGB decode for hex-authored vertex colour — see LowPoly._srgb(). No
@@ -79,6 +104,10 @@ void fragment() {
 	// Drift warms as it brightens, the way sun-bleached leaves do.
 	albedo *= depth * (1.0 + drift * instance_drift * 2.0);
 	albedo *= mix(vec3(1.0), vec3(1.05, 1.02, 0.9), max(drift, 0.0) * 2.0 * instance_drift * 4.0);
+	// The gust's silvering: a flash of paler leaf on the windward pass, keyed to
+	// the same field that is bending the plant. Weighted toward the crown top,
+	// where the leaves actually turn over.
+	albedo *= 1.0 + (gust_now - 0.5) * gust_sheen * (0.5 + 0.5 * crown_h);
 	// Keep a cool canopy tint, but let the environment and wrapped light
 	// illuminate it. Self-emission made the trees glow green after dark.
 	ALBEDO = albedo * mix(vec3(1.0), canopy_sky, canopy_sky_strength * 0.2);
@@ -95,7 +124,11 @@ void light() {
 	DIFFUSE_LIGHT += wrapped * ATTENUATION * LIGHT_COLOR / PI;
 	float behind = clamp(-ndl, 0.0, 1.0);
 	float toward = pow(clamp(dot(-VIEW, LIGHT), 0.0, 1.0), 3.0);
-	// DIFFUSE_LIGHT is multiplied by albedo afterwards, so no ALBEDO here.
-	vec3 glow = leaf_glow * (translucency * behind + leaf_glow_strength * toward * (0.35 + 0.65 * behind));
+	// The gold lives on the silhouette, not the body: ungated, a sunward crown
+	// blows out to a flat cream balloon. Fresnel keeps the rim to the leaf edge
+	// and crown_h to the top of the canopy, where backlit leaves actually sit.
+	float rim_edge = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 2.0);
+	vec3 glow = leaf_glow * (translucency * behind
+		+ leaf_glow_strength * toward * (0.15 + 0.85 * behind) * (0.30 + 0.70 * rim_edge) * (0.45 + 0.55 * crown_h));
 	DIFFUSE_LIGHT += glow * ATTENUATION * LIGHT_COLOR / PI * 3.0;
 }

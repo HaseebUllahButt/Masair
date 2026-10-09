@@ -36,7 +36,11 @@ uniform float wet : hint_range(0.0, 1.0) = 0.0;
 // Asphalt is the darkest large surface in the frame, not a hole in it. The
 // vertex colour decoded to 0.04 linear, and once the grade's contrast had it the
 // lower half of every screenshot was flat black with lane paint floating on it.
-uniform float tone : hint_range(0.5, 3.0) = 1.75;
+uniform float tone : hint_range(0.5, 3.0) = 1.95;
+// Soft charcoal rather than pure tarmac black, leaning blue-violet the way a
+// real road picks up the sky. A neutral surface this dark just clips; a tinted
+// one keeps the road in the same colour world as the grade's shadows.
+uniform vec3 tarmac_tint : source_color = vec3(0.98, 0.97, 1.0);
 // Horizon colour, pushed from main.gd with the water's. Even rough tarmac turns
 // into a mirror at a grazing angle: the road ahead picks up the sky and the
 // ribbon runs pale into the distance, which is most of what makes a long road
@@ -93,7 +97,7 @@ void fragment() {
 	// same sRGB decode the StandardMaterial3D channels get — see LowPoly._srgb().
 	// Without it "3b3b3d" tarmac is a 0.231 linear mid grey and the road is the
 	// brightest large surface in the frame instead of the darkest.
-	ALBEDO = to_linear(COLOR.rgb) * tone
+	ALBEDO = to_linear(COLOR.rgb) * tone * tarmac_tint
 		* (1.0 + grain * grain_strength * (1.0 - wet * 0.7))
 		* (1.0 - track * track_darkening)
 		* (1.0 - soaked * 0.55);

@@ -1,6 +1,8 @@
 shader_type spatial;
 render_mode cull_disabled, depth_draw_opaque;
 
+#include "res://shaders/wind.gdshaderinc"
+
 uniform float wave_height = 0.18;
 uniform float wave_speed = 0.72;
 uniform float wave_scale = 1.0;
@@ -44,10 +46,14 @@ float glitter(vec2 p, float t) {
 }
 
 float water_height(vec2 p, float t) {
+	// The slow swell under everything: ~400 m crests breathing at a few
+	// centimetres, so the basin heaves rather than lying dead flat under the
+	// chop. Same family as the wind the fields and hedges answer to.
+	float swell = sin(dot(p, normalize(vec2(0.82, 0.57))) * 0.016 * wave_scale + t * 0.42) * 1.15;
 	float broad = sin(dot(p, normalize(vec2(0.82, 0.57))) * 0.055 * wave_scale + t * 0.55) * 0.48;
 	float crosswave = sin(dot(p, normalize(vec2(-0.38, 0.92))) * 0.105 * wave_scale - t * 0.78) * 0.30;
 	float ripple = sin(dot(p, normalize(vec2(0.97, -0.24))) * 0.215 * wave_scale + t * 1.18) * 0.16;
-	return (broad + crosswave + ripple) * wave_height;
+	return (swell + broad + crosswave + ripple) * wave_height;
 }
 
 void vertex() {
@@ -110,6 +116,9 @@ void fragment() {
 	// sky and turned the far basin into a pale cream slab — the largest
 	// "greyed out" area in every overlook view.
 	float structure = 0.88 + 0.5 * shimmer * shimmer_amount + 0.15 * wave_phase;
+	// The same gust front that bends the hedge dims and brightens the mirror:
+	// broad patches of sun drift across the basin on the wind's own clock.
+	structure *= 0.90 + 0.22 * wind_gust(world_position.xz, TIME);
 	// Light scattered back up out of the body of the water. Small, but it is
 	// what keeps deep water teal under a key of any colour instead of taking the
 	// hue of the sunset like a painted floor would.

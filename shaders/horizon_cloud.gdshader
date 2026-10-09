@@ -21,8 +21,8 @@ float vnoise(vec2 p) {
 
 void vertex() {
 	float id = float(INSTANCE_ID);
-	float bob = sin(TIME * 0.09 + id * 0.37) * 5.0;
-	float along = sin(TIME * 0.055 + id * 0.21) * 9.0;
+	float bob = sin(TIME * 0.09 + id * 0.37) * 7.0;
+	float along = sin(TIME * 0.055 + id * 0.21) * 14.0;
 	vec3 origin = MODEL_MATRIX[3].xyz;
 	vec3 radial = vec3(origin.x, 0.0, origin.z);
 	float rl = length(radial);

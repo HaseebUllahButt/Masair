@@ -218,7 +218,7 @@ void sky() {
 		float shade = clamp(1.0 - cloud_shadow * 0.85 - cloud_thickness * 0.35, 0.0, 1.0);
 		cloud_col = mix(cloud_dark, cloud_lit, clamp(facing * 0.55 + shade * 0.65, 0.0, 1.0));
 		float rim = (1.0 - cloud_thickness) * facing;
-		cloud_col += sun_color * (rim * 0.75 + halo * facing * 0.4);
+		cloud_col += sun_color * (rim * 1.05 + halo * facing * 0.5);
 		bank_col = mix(cloud_dark, cloud_lit, clamp(facing * 0.4 + (1.0 - bank_thickness * 0.5) * 0.7, 0.0, 1.0));
 		bank_col += sun_color * (1.0 - bank_thickness) * facing * 0.4;
 		bank_col = mix(bank_col, horizon_color, bank_haze);

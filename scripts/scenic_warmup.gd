@@ -153,7 +153,7 @@ func _build_surfaces(preview: SubViewport) -> void:
 	## batches. Drawing only one form leaves the other's compile for the middle
 	## of the ride.
 	var materials: Array[Material] = [LowPolyGD.solid_material(), LowPolyGD.glow_material(),
-		LowPolyGD.road_material(), LowPolyGD.terrain_material(), LowPolyGD.metal_material(),
+		LowPolyGD.road_material(), LowPolyGD.terrain_material(), LowPolyGD.field_material(), LowPolyGD.metal_material(),
 		LowPolyGD.paint_material(), LowPolyGD.foliage_material(), LowPolyGD.mirror_material(),
 		RoadChunkGD.water_material(), RoadChunkGD.beacon_material(),
 		RangeMaterialGD.ring(), RangeMaterialGD.overlook(1),

@@ -521,6 +521,7 @@ static func warm_shared_resources() -> void:
 	LowPoly.glow_material()
 	LowPoly.road_material()
 	LowPoly.terrain_material()
+	LowPoly.field_material()
 	LowPoly.metal_material()
 	LowPoly.paint_material()
 	LowPoly.foliage_material()
@@ -533,6 +534,11 @@ var _origin: Vector3
 var _pal: Dictionary
 var _cubes: Array[Transform3D] = []
 var _cube_cols: Array[Color] = []
+## Cubes that are allowed to move: hedgerows. They ride the foliage material so
+## the shared gust field runs visibly down a field boundary instead of the line
+## standing bolted while the grass around it ripples.
+var _leaf_cubes: Array[Transform3D] = []
+var _leaf_cube_cols: Array[Color] = []
 var _arch: Array[Transform3D] = []
 var _arch_cols: Array[Color] = []
 var _prisms: Array[Transform3D] = []
@@ -1755,7 +1761,7 @@ func _commit_road_ribbon(road: LowPoly) -> void:
 func _commit_terrain_ribbon(soft: LowPoly, node_name: String) -> void:
 	var terrain_mesh: MeshInstance3D = soft.commit_to(self, node_name)
 	if terrain_mesh:
-		terrain_mesh.material_override = LowPoly.terrain_material()
+		terrain_mesh.material_override = LowPoly.field_material()
 		# Flat ground casting onto itself buys nothing and costs a shadow pass.
 		terrain_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
@@ -2223,6 +2229,30 @@ func _cube(
 	var base: Vector3 = _ground_base_for_footprint(z, lateral, half_lateral, half_depth, follow_terrain) - _origin
 	_cubes.append(Transform3D(scaled, base + flat.y * (lift + size.y * 0.5)))
 	_cube_cols.append(color)
+
+
+func _leaf_cube(
+	z: float,
+	lateral: float,
+	size: Vector3,
+	color: Color,
+	yaw: float = 0.0,
+	lift: float = 0.0,
+	allow_road_overlap: bool = false,
+	follow_terrain: bool = true
+) -> void:
+	## `_cube` into the wind bucket. Same placement rules, same corridor margin —
+	## a hedge keeps its whole body, sway included, out of the rider's airspace.
+	var half_lateral := absf(cos(yaw)) * size.x * 0.5 + absf(sin(yaw)) * size.z * 0.5
+	var half_depth := absf(sin(yaw)) * size.x * 0.5 + absf(cos(yaw)) * size.z * 0.5
+	if not allow_road_overlap and not _footprint_is_clear(z, lateral, half_lateral, half_depth):
+		return
+	var flat: Basis = _path.frame_flat_at(z)
+	var frame := Basis(flat.x, flat.y, flat.z).rotated(flat.y, yaw)
+	var scaled := Basis(frame.x * size.x, frame.y * size.y, frame.z * size.z)
+	var base: Vector3 = _ground_base_for_footprint(z, lateral, half_lateral, half_depth, follow_terrain) - _origin
+	_leaf_cubes.append(Transform3D(scaled, base + flat.y * (lift + size.y * 0.5)))
+	_leaf_cube_cols.append(color)
 
 
 func _deck_cube(
@@ -2822,6 +2852,7 @@ func _tag_new_children(from_index: int, corridor: String) -> void:
 func _prop_marks() -> Dictionary:
 	return {
 		"cubes": _cubes.size(),
+		"leaf_cubes": _leaf_cubes.size(),
 		"arch": _arch.size(),
 		"prisms": _prisms.size(),
 		"blobs": _blobs.size(),
@@ -2860,6 +2891,7 @@ func _commit_mm_range(
 
 func _commit_props(from: Dictionary = {}) -> void:
 	_commit_mm_range(_cubes, _cube_cols, int(from.get("cubes", 0)), unit_cube(), LowPoly.solid_material(), "Cubes", true)
+	_commit_mm_range(_leaf_cubes, _leaf_cube_cols, int(from.get("leaf_cubes", 0)), unit_cube(), LowPoly.foliage_material(), "Hedges", false)
 	_commit_mm_range(_arch, _arch_cols, int(from.get("arch", 0)), unit_box_sharp(), LowPoly.solid_material(), "Architecture", true)
 	_commit_mm_range(_prisms, _prism_cols, int(from.get("prisms", 0)), unit_cone(), LowPoly.solid_material(), "Cones", true)
 	_commit_mm_range(_blobs, _blob_cols, int(from.get("blobs", 0)), unit_sphere(), LowPoly.solid_material(), "Rocks", false)
@@ -2881,6 +2913,11 @@ func _commit_props_incremental(from: Dictionary = {}) -> void:
 	const PER_FRAME := 1
 	if int(from.get("cubes", 0)) < _cubes.size():
 		_commit_mm_range(_cubes, _cube_cols, int(from.get("cubes", 0)), unit_cube(), LowPoly.solid_material(), "Cubes", true)
+		published += 1
+		if published % PER_FRAME == 0 and not await _keep_streaming():
+			return
+	if int(from.get("leaf_cubes", 0)) < _leaf_cubes.size():
+		_commit_mm_range(_leaf_cubes, _leaf_cube_cols, int(from.get("leaf_cubes", 0)), unit_cube(), LowPoly.foliage_material(), "Hedges", false)
 		published += 1
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
@@ -3882,7 +3919,7 @@ func _scenery_country() -> void:
 				# was ~945 terrain lookups per chunk across the ~100 segments and was the
 				# single largest per-chunk streaming hitch; one sample is imperceptible
 				# on a hedge this narrow.
-				_cube(
+				_leaf_cube(
 					hz,
 					side * out,
 					Vector3(2.6, h, 1.5),

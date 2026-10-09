@@ -24,6 +24,7 @@ static var _solid: StandardMaterial3D
 static var _glow: StandardMaterial3D
 static var _road: ShaderMaterial
 static var _terrain: StandardMaterial3D
+static var _field: ShaderMaterial
 static var _metal: StandardMaterial3D
 static var _paint: StandardMaterial3D
 static var _foliage: ShaderMaterial
@@ -177,6 +178,18 @@ static func terrain_material() -> StandardMaterial3D:
 		# thing giving a hillside form in a game that renders no shadows.
 		_terrain.diffuse_mode = BaseMaterial3D.DIFFUSE_LAMBERT
 	return _terrain
+
+
+static func field_material() -> ShaderMaterial:
+	## The roadside ground ribbons, which are close enough to the camera for
+	## wind to be seen on them: same matte vertex-colour surface as
+	## terrain_material() plus the rolling light bands of shaders/field.gdshader.
+	## Distant ground keeps the plain material — the bands fade out long before
+	## it and the vista meshes would only pay for them.
+	if _field == null:
+		_field = ShaderMaterial.new()
+		_field.shader = load("res://shaders/field.gdshader")
+	return _field
 
 
 ## Averaged vertex normals instead of hard per-face ones. Rolling ground and

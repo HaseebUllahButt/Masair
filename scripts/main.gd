@@ -67,16 +67,16 @@ const MOODS := {
 	LightingMode.DUSK:
 	{
 		"zenith_color": Color("12183c"),
-		"mid_color": Color("c45e78"),
-		"horizon_color": Color("f6b06a"),
+		"mid_color": Color("cf6681"),
+		"horizon_color": Color("f7a76a"),
 		"ground_color": Color("1e2a30"),
 		"band_low": 0.08,
 		"band_high": 0.50,
-		"horizon_glow": 0.34,
+		"horizon_glow": 0.42,
 		"energy": 1.0,
 		"sun_color": Color(1.0, 0.55, 0.28),
 		"sun_radius": 0.026,
-		"sun_halo": 0.38,
+		"sun_halo": 0.52,
 		"sun_halo_falloff": 11.0,
 		"sun_disc": 1.0,
 		"moon_face": 0.0,
@@ -85,7 +85,7 @@ const MOODS := {
 		"cloud_cover": 0.34,
 		"cloud_sharpness": 0.36,
 		"cloud_scale": 1.35,
-		"cloud_speed": 0.004,
+		"cloud_speed": 0.007,
 		"cloud_opacity": 0.72,
 		"bank_cover": 0.50,
 		"bank_opacity": 0.70,
@@ -121,7 +121,7 @@ const MOODS := {
 		"fill_color": Color("5b7ea0"),
 		"fill_energy": 0.52,
 		"ambient": 0.70,
-		"ambient_color": Color("40556f"),
+		"ambient_color": Color("46426e"),
 		"ambient_sky_mix": 0.30,
 		"exposure": 0.96,
 		# Pulled down from 1.62 to pay for the key energy above. Exposure here is
@@ -158,16 +158,17 @@ const MOODS := {
 		"fog_sky": 0.07,
 		"fog_height": 3.0,
 		"fog_height_density": 0.0,
-		"glow": 0.52,
-		"glow_bloom": 0.08,
-		"contrast": 1.30,
+		"glow": 0.82,
+		"glow_bloom": 0.16,
+		"glow_strength": 1.25,
+		"contrast": 1.18,
 		# Dusk was the most saturated of the three moods while also being the
 		# flattest, and the two fed each other: no value separation meant the only
 		# way to make the picture read was to push chroma, which is exactly the
 		# mobile-game primary look the note in the day row warns about. With the
 		# key/exposure trade above supplying real separation, saturation goes to
 		# neutral and lets the sunset's own colours do the work.
-		"saturation": 1.00,
+		"saturation": 1.08,
 	},
 	LightingMode.DAY:
 	{
@@ -177,17 +178,17 @@ const MOODS := {
 		# and warm, and that warm band is what makes the distance look like air
 		# instead of paint. It also feeds the sky ambient, so it warms the light
 		# on every shaded face in the world at the same time.
-		"zenith_color": Color("1a5688"),
-		"mid_color": Color("6aa3c4"),
-		"horizon_color": Color("e6d0a8"),
+		"zenith_color": Color("12457e"),
+		"mid_color": Color("79a8cc"),
+		"horizon_color": Color("f4d2a0"),
 		"ground_color": Color("505e57"),
 		"band_low": 0.10,
 		"band_high": 0.78,
-		"horizon_glow": 0.20,
+		"horizon_glow": 0.26,
 		"energy": 1.0,
 		"sun_color": Color(1.70, 1.58, 1.30),
 		"sun_radius": 0.019,
-		"sun_halo": 0.30,
+		"sun_halo": 0.42,
 		"sun_halo_falloff": 18.0,
 		"sun_disc": 1.0,
 		"moon_face": 0.0,
@@ -196,7 +197,7 @@ const MOODS := {
 		"cloud_cover": 0.46,
 		"cloud_sharpness": 0.44,
 		"cloud_scale": 1.18,
-		"cloud_speed": 0.006,
+		"cloud_speed": 0.009,
 		"cloud_opacity": 0.90,
 		"bank_cover": 0.62,
 		"bank_opacity": 0.90,
@@ -260,23 +261,24 @@ const MOODS := {
 		# Halved: over the lake basin the sightline runs hundreds of metres
 		# through the low band and the water drowned in it.
 		"fog_height_density": 0.0025,
-		"glow": 0.55,
-		"glow_bloom": 0.06,
+		"glow": 0.72,
+		"glow_bloom": 0.11,
+		"glow_strength": 1.15,
 		# Contrast over saturation. Turning saturation up to compensate for a flat
 		# image is what gives a scene the primary-colour look of a mobile game;
 		# what it was actually missing was separation between light and dark.
-		"contrast": 1.25,
-		"saturation": 1.08,
+		"contrast": 1.16,
+		"saturation": 1.14,
 	},
 	LightingMode.NIGHT:
 	{
-		"zenith_color": Color("01040f"),
-		"mid_color": Color("071428"),
-		"horizon_color": Color("123650"),
-		"ground_color": Color("010309"),
+		"zenith_color": Color("030a22"),
+		"mid_color": Color("0d1e42"),
+		"horizon_color": Color("17475f"),
+		"ground_color": Color("050a16"),
 		"band_low": 0.10,
 		"band_high": 0.62,
-		"horizon_glow": 0.28,
+		"horizon_glow": 0.34,
 		"energy": 1.0,
 		"sun_color": Color(0.68, 0.72, 0.84),
 		"sun_radius": 0.040,
@@ -307,12 +309,12 @@ const MOODS := {
 		"galaxy_color": Color("7d8ed4"),
 		# Moonlit surfaces stay below daylight. The former strong fill made the
 		# pale terrace brighter at night and kept the woodland saturated green.
-		"light_color": Color("a8c2e6"),
+		"light_color": Color("9ec8de"),
 		"light_energy": 0.80,
 		"fill_color": Color("4d6d9a"),
 		"fill_energy": 0.35,
-		"ambient": 0.32,
-		"ambient_color": Color("213b66"),
+		"ambient": 0.36,
+		"ambient_color": Color("1e3a66"),
 		"ambient_sky_mix": 0.30,
 		"exposure": 0.91,
 		"white": 1.52,
@@ -351,10 +353,11 @@ const MOODS := {
 		"fog_sky": 0.04,
 		"fog_height": 3.5,
 		"fog_height_density": 0.003,
-		"glow": 0.58,
-		"glow_bloom": 0.06,
-		"contrast": 1.30,
-		"saturation": 1.12,
+		"glow": 0.72,
+		"glow_bloom": 0.10,
+		"glow_strength": 1.15,
+		"contrast": 1.22,
+		"saturation": 1.16,
 	},
 }
 
@@ -384,8 +387,20 @@ var _fill: DirectionalLight3D
 var _ride_audio: Node
 var _rain_fx: GPUParticles3D
 var _rain_process: ParticleProcessMaterial
+var _pollen_fx: GPUParticles3D
+var _pollen_mat: StandardMaterial3D
 var _road_material: ShaderMaterial
 var _applied_rain: float = -1.0
+
+## Dust-mote tints per biome: gold over the corn, greener under the trees,
+## paler on the fell. Anything not listed falls back to the first colour —
+## warm pollen, which is right almost everywhere the light reaches.
+const POLLEN_TINT := {
+	RoadChunkGD.Env.FOREST: Color(0.90, 1.35, 0.62, 0.30),
+	RoadChunkGD.Env.MOUNTAIN: Color(1.20, 1.22, 1.05, 0.26),
+	RoadChunkGD.Env.COUNTRY: Color(1.70, 1.28, 0.58, 0.32),
+}
+const POLLEN_DEFAULT := Color(1.55, 1.20, 0.60, 0.28)
 
 
 func _ready() -> void:
@@ -411,6 +426,7 @@ func _ready() -> void:
 	_build_environment()
 	_build_grade_overlay()
 	_build_rain()
+	_build_pollen()
 	_ride_audio = RideAudioGD.new()
 	_ride_audio.name = "RideAudio"
 	add_child(_ride_audio)
@@ -427,6 +443,7 @@ func _process(delta: float) -> void:
 		# one is grain, and only the moving one breaks up gradient banding.
 		_grade_mat.set_shader_parameter("seed", float(Time.get_ticks_msec() % 10000) * 0.37)
 	_update_weather(delta)
+	_update_pollen()
 	# Realtime sky can absorb a uniform write every frame, so rain eases the
 	# overcast instead of jumping the deck in fifths.
 	if _applied_rain < 0.0 or not is_equal_approx(rain, _applied_rain):
@@ -498,12 +515,15 @@ func _build_environment() -> void:
 	_environment.glow_enabled = true
 	_environment.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
 	# Only genuinely-HDR pixels bloom. Below ~1.2 the lit sky itself qualifies.
-	_environment.glow_hdr_threshold = 1.25
+	_environment.glow_hdr_threshold = 1.20
 	_environment.glow_hdr_scale = 2.0
 	_environment.glow_intensity = 0.55
 	_environment.glow_strength = 1.0
+	# The wide levels carry a little weight now: levels 4-6 are the broad,
+	# low halos that put a soft aura round the sun and the lit horizon band —
+	# the dreamy part of the grade — while 3 still does the sharp sparkle.
 	for level in [1, 2, 3, 4, 5, 6, 7]:
-		_environment.set("glow_levels/%d" % level, [0.0, 0.4, 1.0, 0.5, 0.15, 0.0, 0.0][level - 1])
+		_environment.set("glow_levels/%d" % level, [0.0, 0.35, 1.0, 0.55, 0.35, 0.20, 0.0][level - 1])
 
 	_environment.fog_enabled = true
 	_environment.fog_mode = Environment.FOG_MODE_EXPONENTIAL
@@ -570,18 +590,20 @@ func _grade_lut() -> ImageTexture:
 			# The toe. At 0.014/0.026/0.039 this was a 2.8:1 blue lift sitting
 			# under the large majority of the frame, which both tinted every
 			# shadow navy and held the image's floor up at ~4% luminance — the
-			# single biggest reason the midtones had nowhere to go. Nearly
-			# neutral and down at ~2.7%: shadows are dark, not blue, and the
-			# darks stop competing with the value band the eye reads as subject.
-			Color(0.005, 0.007, 0.013),
+			# single biggest reason the midtones had nowhere to go. The pastel
+			# grade wants the blacks gently lifted and cool again, but it keeps
+			# the floor near 1.7% so the darks still have somewhere to fall:
+			# lavender shadow, not navy wash.
+			Color(0.013, 0.017, 0.031),
 			# Shadow anchor, and the value most of the landscape actually maps
 			# into. It was blue-biased, which meant the whole scene was being
 			# pulled toward one hue in exactly the range where the image has to
-			# be a value. Darker and closer to neutral, so the grade reads as
-			# light on a form instead of a colour cast over the frame.
-			Color(0.110, 0.132, 0.172),
-			Color(0.600, 0.568, 0.520),
-			Color(1.000, 0.956, 0.875),
+			# be a value. The dreamy grade leans the same bias a little further —
+			# lavender-teal shade against apricot light — but stays dark enough
+			# to read as shadow rather than cast.
+			Color(0.118, 0.134, 0.196),
+			Color(0.605, 0.566, 0.515),
+			Color(1.000, 0.945, 0.845),
 		]
 	)
 	const WIDTH := 256
@@ -838,6 +860,83 @@ func _build_rain() -> void:
 	player.add_child(_rain_fx)
 
 
+func _build_pollen() -> void:
+	## Pollen and dust hanging in the air near the camera.
+	##
+	## A few dozen soft discs drifting on world coordinates, emitted ahead of the
+	## rider like the rain so they are left behind rather than riding along as a
+	## film on the lens. Slightly HDR, so a mote crossing the sun side of the
+	## frame catches the same bloom the sky does; gone at night and in rain,
+	## where there is no light for dust to hang in.
+	var process := ParticleProcessMaterial.new()
+	process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	process.emission_box_extents = Vector3(14.0, 4.5, 20.0)
+	process.direction = Vector3(0.0, 0.0, 0.0)
+	process.spread = 180.0
+	process.initial_velocity_min = 0.15
+	process.initial_velocity_max = 0.6
+	process.gravity = Vector3(0.0, -0.10, 0.0)
+	process.scale_min = 0.5
+	process.scale_max = 1.5
+
+	# A soft generated disc — bright core rolling off to nothing, the bokeh
+	# shape a real speck makes against the light. No texture import needed.
+	var img := Image.create(48, 48, false, Image.FORMAT_RGBA8)
+	for y in 48:
+		for x in 48:
+			var d: float = Vector2(x - 23.5, y - 23.5).length() / 23.5
+			img.set_pixel(x, y, Color(1.0, 1.0, 1.0, pow(clampf(1.0 - d, 0.0, 1.0), 1.7)))
+	var sprite := ImageTexture.create_from_image(img)
+
+	_pollen_mat = StandardMaterial3D.new()
+	_pollen_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_pollen_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_pollen_mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	_pollen_mat.albedo_texture = sprite
+	_pollen_mat.disable_receive_shadows = true
+	_pollen_mat.disable_fog = true
+	_pollen_mat.albedo_color = POLLEN_DEFAULT
+
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.10, 0.10)
+	quad.material = _pollen_mat
+
+	_pollen_fx = GPUParticles3D.new()
+	_pollen_fx.name = "Pollen"
+	_pollen_fx.amount = 80
+	_pollen_fx.lifetime = 7.0
+	_pollen_fx.explosiveness = 0.0
+	_pollen_fx.local_coords = false
+	_pollen_fx.draw_pass_1 = quad
+	_pollen_fx.process_material = process
+	_pollen_fx.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# World-space particles outlive the emitter's own box; without a generous
+	# bounds they vanish the moment the emitter's default AABB leaves the lens.
+	_pollen_fx.visibility_aabb = AABB(Vector3(-60.0, -40.0, -60.0), Vector3(120.0, 80.0, 120.0))
+	_pollen_fx.position = Vector3(0.0, 2.5, 10.0)
+	player.add_child(_pollen_fx)
+
+
+func _update_pollen() -> void:
+	if _pollen_fx == null:
+		return
+	## Motes only exist where there is light to see them in. The hour's key
+	## energy is the daylight test (day ~3, dusk ~5.5, night ~0.8); rain washes
+	## the air clear and is handled the same way the headlight is, off the mood
+	## row rather than a second weather branch.
+	var daylight := clampf(inverse_lerp(0.9, 1.6, float(_hour_mood()["light_energy"])), 0.0, 1.0)
+	var in_rain := clampf(rain * 2.5, 0.0, 1.0)
+	var strength: float = daylight * (1.0 - in_rain)
+	_pollen_fx.emitting = strength > 0.02
+	var theme := -1
+	var path := get_node_or_null("/root/RoadPath")
+	if path:
+		theme = int(path.call("theme_at", _route_metres()))
+	var tint: Color = POLLEN_TINT.get(theme, POLLEN_DEFAULT)
+	tint.a *= strength
+	_pollen_mat.albedo_color = tint
+
+
 func _apply_lighting() -> void:
 	var mood: Dictionary = _mood_now()
 	# Headlight off the sunlight rather than off the name of the mood, so it comes
@@ -882,6 +981,7 @@ func _apply_lighting() -> void:
 	_environment.fog_height_density = mood["fog_height_density"]
 	_environment.glow_intensity = mood["glow"]
 	_environment.glow_bloom = mood["glow_bloom"]
+	_environment.glow_strength = mood["glow_strength"]
 	_environment.adjustment_contrast = float(mood["contrast"]) / GRADE_CONTRAST
 	_environment.adjustment_saturation = mood["saturation"]
 	sun.light_color = mood["light_color"]
