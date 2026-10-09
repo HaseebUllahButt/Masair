@@ -199,6 +199,15 @@ func _sync(build_all: bool) -> void:
 
 	if not _chunks.has(current):
 		_spawn_ribbon_sync(current, _stream_generation)
+	# A chunk in _chunks proves the node exists, not that a surface was
+	# committed: the sliced build emits its meshes at the very end, and at
+	# top speed the bike can reach it first — riding an invisible road the
+	# dusk QA caught as "no lane markings". Lay emergency tarmac+paint on
+	# it now; the in-flight build re-commits the full ribbon when it lands.
+	for i in range(current, mini(current + 1, build_max) + 1):
+		var riding: Node3D = _chunks.get(i)
+		if riding != null and riding.get_node_or_null("RoadSurface") == null:
+			_emergency_surface(riding, i)
 	_apply_corridor()
 	if _player_wants_scenic():
 		_enqueue_scenic(current)
@@ -236,17 +245,7 @@ func _sync(build_all: bool) -> void:
 		):
 			_build_in_flight = true
 			started_ribbon = true
-			# Sync only the hole under the wheels. Syncing current+1 paid an
-			# 11–24 ms ribbon hitch every chunk boundary at top speed.
-			var under: Node = _chunks.get(current)
-			var need_sync := next == current and (
-				under == null or under.get_node_or_null("RoadSurface") == null
-			)
-			if need_sync:
-				_build_in_flight = false
-				_spawn_ribbon_sync(next, _stream_generation)
-			else:
-				_spawn_incremental(next, _stream_generation)
+			_spawn_incremental(next, _stream_generation)
 	if not started_ribbon:
 		_start_next_dress(current)
 	if (
@@ -609,6 +608,18 @@ func _spawn_ribbon_sync(index: int, generation: int) -> void:
 		return
 	if scenic_chunk:
 		_ribbon_queue.append(chunk)
+
+
+func _emergency_surface(chunk: Node3D, index: int) -> void:
+	## Fast tarmac and paint on a chunk whose sliced build has not landed yet.
+	## setup_ribbon_fast is the light "road under the wheels" path; it also
+	## flags ribbon_ready=false because its normal callers are scenic spawns
+	## awaiting a full rebuild — keep whatever state this chunk had so the
+	## incremental build still in flight dresses it when it finishes.
+	var ready := bool(chunk.get_meta("ribbon_ready", true))
+	chunk.call("setup_ribbon_fast", index, theme_for_chunk(index))
+	chunk.set_meta("ribbon_ready", ready)
+	_apply_corridor_to(chunk)
 
 
 func _complete_ribbon(chunk: Node3D, generation: int) -> void:
