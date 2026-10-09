@@ -143,7 +143,7 @@ void fragment() {
 	// side. Note this is the *internal* spread only — the whole frame's
 	// light-to-dark ratio also has to survive tonemapping and the grade LUT
 	// above it, and at dusk the air is what finally sets that.
-	float lum = mix(0.50, 1.05, lit);
+	float lum = mix(0.57, 1.04, lit);
 	lum += 0.16 * dome * dome;
 	lum *= mix(0.90, 1.08, grit_v);
 	lum *= mix(0.88 + 0.08 * light_soft, 1.08, relief);
@@ -154,10 +154,10 @@ void fragment() {
 	// rather than collapsing into black. This gives the low-poly range shape at
 	// distances where per-facet normals are no longer legible.
 	//
-	// The shade tint is cool but no longer blue-heavy: `foot_color` is already a
-	// blue-grey scree, so pushing the shadow further towards blue as well as
-	// darkening it is what turned a backlit peak into a navy spike.
-	vec3 shade_tint = vec3(0.78, 0.84, 1.02);
+	// The shade tint is nearly neutral now: the grade already cools the frame's
+	// darks, and a blue multiplier here *and* there is what kept crushing shaded
+	// faces into the "near-black navy" the reviewer kept sending back.
+	vec3 shade_tint = vec3(0.85, 0.89, 1.00);
 	// Cooled and pulled back: at 1.10 warm a lit face went over 1.0 and ACES
 	// returned it as cream — half the "sand dune" problem was the sun tint.
 	// The other half is that air cools the light itself: a warm key scattered
@@ -176,18 +176,22 @@ void fragment() {
 	// hole cut in the picture. The shade side now collects skylight, weighted to
 	// how much sky it actually faces — and enough of it that the near ring's
 	// shaded panels hold a readable navy instead of crushing to black.
-	// Kept small. A bright day sky at 0.13-0.16 laid a pale veil over every
-	// shaded face on the sun side — the "blurred grey" ranges beside the road —
-	// while the rock under it was fine.
-	col += haze_color * (0.006 + 0.012 * dome) * mix(0.45, 1.0, lit);
-	col += sky_color * dome * dome * 0.05 * (1.0 - lit);
+	// Skylight is the shade light. The ring's faces are mostly walls, and a
+	// dome-squared term gave a wall almost nothing — shaded panels crushed to
+	// navy while their lit neighbours stayed readable. The linear dome term
+	// reaches a vertical face properly, and the same term is handed to the
+	// woods below so the forested foot lifts with the rock instead of staying
+	// a black band under it.
+	vec3 amb = haze_color * (0.006 + 0.012 * dome) * mix(0.45, 1.0, lit)
+		+ sky_color * dome * 0.115 * (1.0 - lit);
+	col += amb;
 
 	// Treeline, ragged, by height alone. Gating it on the facet normal switched
 	// whole kilometre-wide quads on and off and left hard green rectangles in
 	// the middle of the skyline.
 	float ragged = (couloir - 0.5) * 90.0 + (grit_v - 0.5) * 30.0;
 	float forest = 1.0 - smoothstep(treeline - 30.0, treeline + 30.0, band_v + ragged);
-	vec3 woods = forest_color * mix(0.62, 1.05, lit) * (0.9 + 0.2 * dome);
+	vec3 woods = forest_color * mix(0.70, 1.05, lit) * (0.9 + 0.2 * dome) + amb * 0.75;
 	forest *= 1.0 - steep * slope_rock;
 	col = mix(col, woods, forest * 0.9);
 
@@ -247,7 +251,13 @@ void fragment() {
 	// cream card no matter its value. A far range therefore has to arrive
 	// saturated — violet-blue deep enough that its red channel never reaches
 	// the warm part of the curve. The multiplier carries that hue.
-	vec3 air = mix(mix(mist_color, sky_color, 0.55), haze_color, 0.06);
+	//
+	// The mix leans on the sky anchor (which is now the mood's mid-band blue,
+	// not a grey next to the horizon) and the whole target sits a step darker
+	// than before: a ridge veiled by air should read *bluer*, not paler —
+	// real airlight never out-brightens the face it hides.
+	vec3 air = mix(mist_color, sky_color, 0.62);
+	air = mix(air, haze_color, 0.04) * 0.92;
 	// A linear haze weight is fine up to the third range, but at the fourth's
 	// 0.66 it erased almost half the mountain's own colour — which is where the
 	// biggest silhouette in the frame lived, and it arrived as a flat pale
@@ -283,7 +293,7 @@ void fragment() {
 	// The floor is not symmetric: a shaded far face is lit by the sky itself,
 	// not by nothing, so its air only falls to four-fifths — a shaded band
 	// that went to near-black was the "navy cut-out" complaint all over again.
-	col = mix(col, air * mix(0.86, 1.16, lit), haze_w);
+	col = mix(col, air * mix(0.88, 1.04, lit), haze_w);
 	// Soften the ring into the air at the extreme edges of a wide lens, but
 	// keep the mountains when the rider looks aside.
 	vec3 cam = INV_VIEW_MATRIX[3].xyz;

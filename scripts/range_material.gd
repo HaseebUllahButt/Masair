@@ -113,9 +113,15 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	## side on without bleaching.
 	var crest: Color = Color("6b7683").lerp(fog.darkened(0.1), 0.5 * (1.0 - daylight_r))
 	mat.set_shader_parameter("crest_color", crest)
-	## What an up-facing plane collects from the dusk dome. This is the term
-	## that keeps the backlit face off zero without smearing sunset over it.
-	mat.set_shader_parameter("sky_color", haze.lerp(Color("8fa6c8"), 0.62).lightened(0.04))
+	## What an up-facing plane collects from the dome, and the colour the
+	## aerial term veils toward. It used to anchor on 8fa6c8 — a grey so close
+	## to the haze's own value that a kilometre of "air" arrived as a grey
+	## sheet, which is the washed-pale-range complaint. Airlight is scattered
+	## skylight: anchor on the sky's mid band instead, so the veil is blue by
+	## day, rose at dusk and navy at night — and a touch darker than the real
+	## horizon, because a ridge never reads brighter than the sky behind it.
+	var mid: Color = _mood.get("mid_color", Color("8fa6c8"))
+	mat.set_shader_parameter("sky_color", haze.lerp(mid, 0.55).darkened(0.06))
 	## Snow is only white by daylight. The shader is unshaded, so a constant
 	## white would glow on a night skyline; walk it toward the crest colour as
 	## the fog darkens.
@@ -128,7 +134,7 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	## it merged into one near-black silhouette.
 	var woods: Color = profile["woods"]
 	mat.set_shader_parameter("forest_color", fog.darkened(0.15).lerp(woods, 0.85 * daylight))
-	mat.set_shader_parameter("mist_color", fog.lerp(haze, 0.25).lerp(Color("9fb4cc"), 0.45 * daylight))
+	mat.set_shader_parameter("mist_color", fog.lerp(haze, 0.25).lerp(Color("9fb4cc"), 0.55 * daylight))
 	mat.set_shader_parameter("sun_dir", toward_sun)
 	# The lit-face tint follows the key. Under a warm sun it keeps the authored
 	# warm cast; once the key goes blue (night's 9ec8de) the same warm cast
