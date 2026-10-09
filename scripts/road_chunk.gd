@@ -1943,10 +1943,10 @@ func _commit_spur_meshes_incremental(z0: float) -> void:
 		_build_spur_ribbon(spur_hard, spur_road, z0, first, mini(2, STEPS - first), false)
 		if _slice_spent() and not await _keep_streaming():
 			return
-	_build_platform_bays(spur_hard, z0)
+	await _build_platform_bays(spur_hard, z0, true)
 	if not await _keep_streaming():
 		return
-	_build_spur_barrier(spur_hard, z0)
+	await _build_spur_barrier(spur_hard, z0, true)
 	if not await _keep_streaming():
 		return
 	var from_index := get_child_count()
@@ -3393,7 +3393,7 @@ func _build_furniture_incremental() -> void:
 	await _hedge_verge_incremental()
 	if not await _keep_streaming():
 		return
-	_verge_flowers()
+	await _verge_flowers(true)
 	if not await _keep_streaming():
 		return
 	await _verge_plant_fringe_incremental(-1.0)
@@ -3403,7 +3403,7 @@ func _build_furniture_incremental() -> void:
 	if not await _keep_streaming():
 		return
 	if theme_carries_power_line(theme) and not _on_lake:
-		_power_line()
+		await _power_line(true)
 		if not await _keep_streaming():
 			return
 	await _build_guardrail_incremental()
@@ -3711,7 +3711,7 @@ func _pole_exists_at(z: float) -> bool:
 	return not _junction_occupies(z, _power_line_lateral())
 
 
-func _power_line() -> void:
+func _power_line(streamed: bool = false) -> void:
 	## Utility poles and three gently sagging cables down one side of the route.
 	## Cables use the shared cube MultiMesh rather than a unique ribbon mesh per
 	## chunk, so they inherit the 280 m prop cutoff and cannot alias into the long
@@ -3756,6 +3756,8 @@ func _power_line() -> void:
 			)
 			_cube_cols.append(Color("6e7276"))
 		z += SPACING
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 	# Each span belongs to the chunk containing its first pole. It may extend past
 	# the chunk origin, which is fine; this ownership rule prevents doubled cables
@@ -3774,6 +3776,8 @@ func _power_line() -> void:
 					var pb := _cable_point(zb, span_start, tb, cable_index, lx, arm_height)
 					_local_cable_segment(pa, pb, cable_color)
 		span_start += SPACING
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 
 func _road_across(z: float) -> Vector3:
@@ -3855,7 +3859,7 @@ func _verge_planting() -> void:
 	_verge_plant_fringe(0.0)
 
 
-func _verge_flowers() -> void:
+func _verge_flowers(streamed: bool = false) -> void:
 	## Patches of wildflowers in the grass band — the small bright notes that
 	## keep a verge reading as a verge rather than an even green stripe. Poppy
 	## red, daisy white, buttercup gold and the odd cornflower in the farmland;
@@ -3886,6 +3890,8 @@ func _verge_flowers() -> void:
 				0.0,
 				true
 			)
+			if streamed and _slice_spent() and not await _keep_streaming():
+				return
 	set_meta("flowers_done", true)
 
 
@@ -4277,6 +4283,8 @@ func _forest_stand(z0: float, side: float, mood: float, pace: Callable = Callabl
 			0.0,
 			true
 		)
+		if pace.is_valid() and _slice_spent() and not await pace.call():
+			return
 
 
 func _forest_back_band(z0: float, side: float, mood: float, pace: Callable = Callable()) -> void:
@@ -4397,10 +4405,10 @@ func _forest_verge(z0: float, side: float, pace: Callable = Callable()) -> void:
 	if posmod(chunk_index * 2 + int(side > 0.0), 5) == 2:
 		var oz := z0 + _rng.randf_range(8.0, LENGTH - 8.0)
 		var ox: float = side * (HALF_WIDTH + _rng.randf_range(7.0, 16.0))
-		_forest_outcrop(oz, ox)
+		await _forest_outcrop(oz, ox, pace)
 
 
-func _forest_outcrop(z: float, lateral: float) -> void:
+func _forest_outcrop(z: float, lateral: float, pace: Callable = Callable()) -> void:
 	## A small crag of mossy stone: overlapping lobes, dark at the foot, moss on
 	## the shoulders. One footprint check for the whole cluster.
 	var s := _rng.randf_range(1.1, 2.0)
@@ -4432,6 +4440,8 @@ func _forest_outcrop(z: float, lateral: float) -> void:
 			s * 0.55,
 			true
 		)
+		if pace.is_valid() and _slice_spent() and not await pace.call():
+			return
 
 
 func _forest_snag(z: float, lateral: float) -> void:
@@ -5674,7 +5684,7 @@ func _road_paint(hard: LowPoly, corners: Array[Vector2], drop: float, color: Col
 		hard.add_quad(q[0], q[1], q[2], q[3], color)
 
 
-func _build_spur_barrier(hard: LowPoly, z0: float) -> void:
+func _build_spur_barrier(hard: LowPoly, z0: float, streamed: bool = false) -> void:
 	## A low stone wall along the drop, built as one continuous ribbon.
 	##
 	## It used to be a beam a half-metre off the deck on posts spaced every four
@@ -5722,6 +5732,8 @@ func _build_spur_barrier(hard: LowPoly, z0: float) -> void:
 		hard.add_quad(a_foot - out, b_foot - out, b_top - out, a_top - out, segment_stone.lightened(0.1))
 		hard.add_quad(b_foot + out, a_foot + out, a_top + out, b_top + out, segment_stone.darkened(0.14))
 		hard.add_quad(a_top - out, b_top - out, b_top + out, a_top + out, segment_stone)
+		if i % 3 == 2 and streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 
 func _spur_span(z: float) -> Vector2:
@@ -5737,7 +5749,7 @@ func _spur_local(z: float, lateral: float) -> float:
 	return (lateral - _vp_side * float(_path.spur_offset(z))) * _vp_side
 
 
-func _build_platform_bays(hard: LowPoly, z0: float) -> void:
+func _build_platform_bays(hard: LowPoly, z0: float, streamed: bool = false) -> void:
 	## Marked parking bays along the outer edge of the platform, drawn into the
 	## ribbon so they lie exactly on it however the ground rolls underneath.
 	if _lookout_scene(LOOKOUT_BAYS) != null:
@@ -5793,6 +5805,8 @@ func _build_platform_bays(hard: LowPoly, z0: float) -> void:
 				stripe
 			)
 		run = next
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 
 func _build_spur_furniture() -> void:
