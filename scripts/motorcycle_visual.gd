@@ -691,7 +691,7 @@ func _build_steering() -> Node3D:
 	var mi := MeshInstance3D.new()
 	mi.name = "SteeringMesh"
 	mi.mesh = b.commit()
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	LowPoly.cheap_draw(mi)
 	head.add_child(mi)
 	_build_style_fenders(head, o)
@@ -780,7 +780,7 @@ func _ensure_fender(style: int) -> MeshInstance3D:
 	var fender := MeshInstance3D.new()
 	fender.name = "FrontFender%d" % safe_style
 	fender.mesh = fb.commit()
-	fender.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	fender.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	fender.visible = safe_style == _bike_style
 	LowPoly.cheap_draw(fender)
 	_fender_head.add_child(fender)
@@ -887,7 +887,7 @@ func _build_wheel(pos: Vector3, is_front: bool) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.name = "FrontWheel" if is_front else "RearWheel"
 	mi.mesh = b.commit()
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	LowPoly.cheap_draw(mi)
 	mi.position = pos
 	if not is_front:
@@ -1003,7 +1003,9 @@ func _attach(parent: Node, b: LowPoly, node_name: String) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.name = node_name
 	mi.mesh = b.commit()
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# The rider's own shadow on the tarmac is half of what makes the bike feel
+	# planted; it costs one extra draw of a ~1k-tri mesh into the near box.
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	LowPoly.cheap_draw(mi)
 	parent.add_child(mi)
 	return mi

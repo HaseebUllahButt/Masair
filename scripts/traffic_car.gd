@@ -125,10 +125,11 @@ func setup(vehicle_kind: int, start_lane: int, z: float, cruise: float, color_in
 	if _mesh_instance == null:
 		_mesh_instance = MeshInstance3D.new()
 		_mesh_instance.name = "VehicleMesh"
-		# Traffic silhouettes are readable from colour and shape. Real-time shadow
-		# maps produced a dotted screen-door pattern on the tarmac and rendered every
-		# car again for each sun cascade.
-		_mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		# The sun's shadow box is now a single 110 m ortho, not a horizon-wide
+		# cascade, so a car pays one small draw into it and the tarmac stays
+		# clean — the dotted screen-door that killed shadow maps the first time
+		# was the old kilometre-wide map's texel size, not the cars.
+		_mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		_mesh_instance.visibility_range_end = 380.0
 		LowPoly.cheap_draw(_mesh_instance)
 		add_child(_mesh_instance)
