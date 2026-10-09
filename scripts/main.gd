@@ -452,6 +452,11 @@ func _ready() -> void:
 	var lookout_life: Node3D = load("res://scripts/lookout_life.gd").new()
 	lookout_life.name = "LookoutLife"
 	add_child(lookout_life)
+	# The same birds working the open road — skeins crossing the sky ahead and
+	# the odd low dart over the tarmac. Idle the moment the rider sits down.
+	var ride_life: Node3D = load("res://scripts/ride_life.gd").new()
+	ride_life.name = "RideLife"
+	add_child(ride_life)
 	_build_environment()
 	_build_grade_overlay()
 	_build_rain()

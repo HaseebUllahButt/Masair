@@ -2611,7 +2611,7 @@ func _tree(
 	# A tree rooted well clear of every corridor band cannot swing a crown onto
 	# the road from there; the deep-scenery majority skips the grow-measure-shift
 	# dance entirely and pays only for its own shape.
-	var corridor_near: bool = _band_hit(z, lateral, height * 0.75 + FOLIAGE_LOW_CLEARANCE + 11.0)
+	var corridor_near: bool = _band_hit(z, lateral, height * 0.95 + FOLIAGE_LOW_CLEARANCE + 11.0)
 	for _attempt in 4:
 		if _on_tarmac(z, lateral, foot + PROP_ROAD_CLEARANCE):
 			return
@@ -2634,7 +2634,7 @@ func _tree(
 			# between two bands (INF) falls through to the per-part verdict: a
 			# slimmer real tree can still fit where the cylinder cannot.
 			var bound := _foliage_road_push(
-				base + _origin, height * 0.75, base.y + _origin.y - height * 0.2, true
+				base + _origin, height * 0.95, base.y + _origin.y - height * 0.2, true
 			)
 			measure = is_inf(bound)
 			if bound != 0.0 and not is_inf(bound):
@@ -3218,6 +3218,9 @@ func _build_furniture_incremental() -> void:
 	_hedge_verge()
 	if not await _keep_streaming():
 		return
+	_verge_flowers()
+	if not await _keep_streaming():
+		return
 	_verge_plant_fringe(-1.0)
 	if not await _keep_streaming():
 		return
@@ -3344,9 +3347,11 @@ func _grass_verge() -> void:
 
 
 func _hedge_verge() -> void:
-	## A continuous low hedge along the first few metres of curb. Looking sideways
-	## from the saddle, this is the entire near field — grass tufts alone read as
-	## a painted stripe.
+	## A low hedge along the first few metres of curb, grown in runs with real
+	## gaps between them: hawthorn-dark for a stretch, lighter bramble next, then
+	## a bare strip of verge where the grass runs on. A hedge that never breaks
+	## reads as wallpaper at riding speed; the gaps are most of what makes it
+	## countryside. In country the gap earns a field gate half the time.
 	if bool(get_meta("hedge_done", false)):
 		return
 	if theme == Env.CITY:
@@ -3356,28 +3361,50 @@ func _hedge_verge() -> void:
 	for side in [-1.0, 1.0]:
 		var hz := z0 + _rng.randf_range(0.0, 1.1)
 		while hz < z0 + LENGTH:
-			var lx: float = _mow_lateral(hz, side * (HALF_WIDTH + 3.0 + _rng.randf_range(0.0, 2.6)))
-			# Forced blobs skip `_footprint_is_clear`; without a tarmac test they grow
-			# on the slip road the moment spur chunks start dressing the verge again.
-			if ((_on_lake or _on_spur) and _viewpoint_reserves_sightline(hz, lx)) or _on_tarmac(hz, lx, 1.2):
-				hz += 2.0
+			if _rng.randf() < 0.17:
+				var gap := _rng.randf_range(3.0, 8.0)
+				if theme == Env.COUNTRY and _rng.randf() < 0.5:
+					_field_gate(hz + gap * 0.5, side)
+				hz += gap
 				continue
-			var h := _rng.randf_range(1.15, 2.05)
-			var w := _rng.randf_range(1.55, 2.55)
-			var col: Color = (_pal["prop_a"] as Color).lerp(_pal["verge"], _rng.randf() * 0.5).darkened(
-				_rng.randf() * 0.18
-			)
-			_blob(hz, lx, Vector3(w, h, w * 0.78), col, 0.0, true, true)
-			if _rng.randf() < 0.28:
-				var s := _rng.randf_range(0.4, 0.9)
-				_cube(
-					hz + 0.35,
-					_mow_lateral(hz, side * (HALF_WIDTH + 1.65 + _rng.randf() * 1.5)),
-					Vector3(s * 1.35, s * 0.72, s * 1.1),
-					(_pal["prop_c"] as Color).darkened(_rng.randf() * 0.22)
+			var run_end := minf(hz + _rng.randf_range(7.0, 22.0), z0 + LENGTH)
+			var run_col: Color = (_pal["prop_a"] as Color).lerp(_pal["verge"], _rng.randf_range(0.15, 0.55))
+			var run_h := _rng.randf_range(1.1, 2.1)
+			while hz < run_end:
+				var lx: float = _mow_lateral(hz, side * (HALF_WIDTH + 3.0 + _rng.randf_range(0.0, 2.6)))
+				# Forced blobs skip `_footprint_is_clear`; without a tarmac test they grow
+				# on the slip road the moment spur chunks start dressing the verge again.
+				if ((_on_lake or _on_spur) and _viewpoint_reserves_sightline(hz, lx)) or _on_tarmac(hz, lx, 1.2):
+					hz += 2.0
+					continue
+				var w := _rng.randf_range(1.55, 2.55)
+				_blob(
+					hz, lx, Vector3(w, run_h * _rng.randf_range(0.82, 1.12), w * 0.78),
+					run_col.darkened(_rng.randf() * 0.18), 0.0, true, true
 				)
-			hz += _rng.randf_range(1.65, 2.45)
+				if _rng.randf() < 0.28:
+					var s := _rng.randf_range(0.4, 0.9)
+					_cube(
+						hz + 0.35,
+						_mow_lateral(hz, side * (HALF_WIDTH + 1.65 + _rng.randf() * 1.5)),
+						Vector3(s * 1.35, s * 0.72, s * 1.1),
+						(_pal["prop_c"] as Color).darkened(_rng.randf() * 0.22)
+					)
+				hz += _rng.randf_range(1.65, 2.45)
 	set_meta("hedge_done", true)
+
+
+func _field_gate(z: float, side: float) -> void:
+	## A five-bar field gate stood in a hedge gap — one of the few roadside
+	## details that says somebody works this land. It hangs on the fence line,
+	## clear of the tarmac, and the beams answer the same corridor test the
+	## guardrails do rather than floating over a spur junction.
+	var lat: float = _mow_lateral(z, side * (HALF_WIDTH + 4.6))
+	var wood: Color = (_pal["rail"] as Color).darkened(_rng.randf_range(0.05, 0.2))
+	_cube(z - 1.7, lat, Vector3(0.24, 1.45, 0.24), (_pal["prop_c"] as Color).darkened(0.1))
+	_cube(z + 1.7, lat, Vector3(0.18, 1.2, 0.18), wood)
+	for r in 3:
+		_terrain_beam(z - 1.7, z + 1.7, lat, 0.07, 0.09, wood, 0.36 + float(r) * 0.32)
 
 
 static func theme_carries_power_line(theme_id: int) -> bool:
@@ -3575,7 +3602,42 @@ func _verge_planting() -> void:
 	_verge_plant_bushes(int(VERGE_BUSH_COUNT[theme]))
 	_grass_verge()
 	_hedge_verge()
+	_verge_flowers()
 	_verge_plant_fringe(0.0)
+
+
+func _verge_flowers() -> void:
+	## Patches of wildflowers in the grass band — the small bright notes that
+	## keep a verge reading as a verge rather than an even green stripe. Poppy
+	## red, daisy white, buttercup gold and the odd cornflower in the farmland;
+	## foxglove pink and white under the trees. They go in the foliage bucket
+	## like the grass they stand in, so they lean with the same wind.
+	if theme == Env.CITY or theme == Env.MOUNTAIN:
+		return
+	if bool(get_meta("flowers_done", false)):
+		return
+	var blooms: Array[Color] = []
+	if theme == Env.COUNTRY:
+		blooms.assign([Color("d4492f"), Color("e9e3d2"), Color("e0b63f"), Color("7f7496")])
+	else:
+		blooms.assign([Color("b96e92"), Color("e3ddcc"), Color("d5c88e")])
+	var z0: float = float(chunk_index) * LENGTH
+	for _p in _rng.randi_range(1, 3):
+		var patch_z := z0 + _rng.randf_range(0.0, LENGTH)
+		var side: float = 1.0 if _rng.randf() < 0.5 else -1.0
+		var patch_x: float = side * (HALF_WIDTH + _rng.randf_range(3.0, 6.5))
+		var col: Color = blooms[_rng.randi() % blooms.size()]
+		for _f in _rng.randi_range(8, 14):
+			var s := _rng.randf_range(0.2, 0.38)
+			_blob(
+				patch_z + _rng.randf_range(-2.6, 2.6),
+				_mow_lateral(patch_z, patch_x + _rng.randf_range(-1.5, 1.5)),
+				Vector3(s * 1.5, s, s * 1.5),
+				col.darkened(_rng.randf() * 0.15),
+				0.0,
+				true
+			)
+	set_meta("flowers_done", true)
 
 
 func _verge_plant_bushes(count: int) -> void:
@@ -3869,11 +3931,26 @@ func _scenery_forest() -> void:
 	## Woodland comes in stands: a patch of one species, one tint, one size range,
 	## with the odd stray between. An even scatter of individually random trees
 	## reads as an orchard planted by a computer, which is what this used to be.
+	## Each side also rolls a mood: mostly the usual mixed stands, sometimes a
+	## wall of timber tight over the verge, sometimes the wood steps back and
+	## leaves a glade of grass and saplings between the rider and the trees.
 	var z0: float = float(chunk_index) * LENGTH
 	for side in [-1.0, 1.0]:
-		for _stand in 3:
+		var stand_count := 3
+		var stand_near := 5.0
+		var stand_far := 49.0
+		var mood := _rng.randf()
+		if mood < 0.16:
+			stand_count = 5
+			stand_near = 4.0
+			stand_far = 26.0
+		elif mood < 0.38:
+			stand_count = 1 + int(_rng.randf() < 0.45)
+			stand_near = 19.0
+			stand_far = 60.0
+		for _stand in stand_count:
 			var stand_z := z0 + _rng.randf_range(0.0, LENGTH)
-			var stand_x: float = side * (HALF_WIDTH + 5.0 + _rng.randf_range(0.0, 44.0))
+			var stand_x: float = side * (HALF_WIDTH + _rng.randf_range(stand_near, stand_far))
 			var roll := _rng.randf()
 			var species: int = Flora.CONIFER if roll < 0.58 else (Flora.BIRCH if roll < 0.74 else Flora.BROADLEAF)
 			var tint: Color = (_pal["prop_a"] as Color).lerp(_pal["prop_c"], _rng.randf() * 0.7)
@@ -3906,14 +3983,86 @@ func _scenery_forest() -> void:
 					_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
 			else:
 				_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
+		_forest_floor(side)
+
+
+func _forest_floor(side: float) -> void:
+	## Undergrowth and deadfall: fern clumps where the light comes in at the
+	## verge, a mossy fallen log, stumps from an old thinning, a mossy boulder
+	## or two. The floor is what makes a stand read as woodland instead of
+	## trees parked on a lawn — and it is all small enough to stay cheap.
+	var z0: float = float(chunk_index) * LENGTH
+	for _clump in _rng.randi_range(2, 3):
+		var cz := z0 + _rng.randf_range(0.0, LENGTH)
+		var cx: float = side * (HALF_WIDTH + 4.5 + _rng.randf_range(0.0, 13.0))
+		var fern: Color = (_pal["prop_a"] as Color).lerp(_pal["verge"], _rng.randf_range(0.3, 0.6))
+		for _f in _rng.randi_range(4, 7):
+			var s := _rng.randf_range(0.8, 1.4)
+			_blob(
+				cz + _rng.randf_range(-2.4, 2.4),
+				cx + _rng.randf_range(-2.0, 2.0),
+				Vector3(s, s * _rng.randf_range(0.3, 0.45), s),
+				fern.darkened(_rng.randf() * 0.2),
+				0.0,
+				true
+			)
+	if _rng.randf() < 0.55:
+		var lz := z0 + _rng.randf_range(5.0, LENGTH - 5.0)
+		var lx: float = side * (HALF_WIDTH + _rng.randf_range(5.5, 18.0))
+		var span := _rng.randf_range(3.5, 6.5)
+		_terrain_beam(lz - span * 0.5, lz + span * 0.5, lx, 0.42, 0.4, BARK.darkened(0.15), 0.18)
+		_blob(
+			lz, lx, Vector3(0.55, 0.3, span * 0.45),
+			(_pal["prop_a"] as Color).lightened(0.14), 0.36, false
+		)
+	for _i in _rng.randi_range(1, 3):
+		_stump(z0 + _rng.randf_range(0.0, LENGTH), side * (HALF_WIDTH + 4.0 + _rng.randf_range(0.0, 14.0)))
+	for _b in _rng.randi_range(0, 2):
+		var bz := z0 + _rng.randf_range(0.0, LENGTH)
+		var bx: float = side * (HALF_WIDTH + 4.0 + _rng.randf_range(0.0, 15.0))
+		var s := _rng.randf_range(0.8, 1.6)
+		_blob(bz, bx, Vector3(s * 1.5, s * 0.9, s * 1.3), Color("6f6d64").darkened(_rng.randf() * 0.2), 0.0, false)
+		_blob(
+			bz + _rng.randf_range(-0.2, 0.2), bx + _rng.randf_range(-0.2, 0.2),
+			Vector3(s * 0.85, s * 0.4, s * 0.85),
+			(_pal["prop_a"] as Color).lerp(_pal["verge"], 0.4).lightened(0.08),
+			s * 0.42, false
+		)
+
+
+func _stump(z: float, lateral: float) -> void:
+	## A cut trunk a stride off the ground — the trunk mesh squat down, so it
+	## shares the wood bucket and the corridor rule rather than needing a mesh
+	## of its own.
+	if not _footprint_is_clear(z, lateral, 0.45, 0.45):
+		return
+	var base: Vector3 = _ground_base_for_footprint(z, lateral, 0.45, 0.45) - _origin
+	var s := _rng.randf_range(0.55, 0.95)
+	var basis := Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(
+		Vector3(s, _rng.randf_range(0.4, 0.85), s)
+	)
+	_trunks.append(Transform3D(basis, base))
+	_trunk_cols.append(BARK.lightened(_rng.randf_range(0.05, 0.25)))
 
 
 func _scenery_forest_incremental() -> void:
 	var z0: float = float(chunk_index) * LENGTH
 	for side in [-1.0, 1.0]:
-		for _stand in 3:
+		var stand_count := 3
+		var stand_near := 5.0
+		var stand_far := 49.0
+		var mood := _rng.randf()
+		if mood < 0.16:
+			stand_count = 5
+			stand_near = 4.0
+			stand_far = 26.0
+		elif mood < 0.38:
+			stand_count = 1 + int(_rng.randf() < 0.45)
+			stand_near = 19.0
+			stand_far = 60.0
+		for _stand in stand_count:
 			var stand_z := z0 + _rng.randf_range(0.0, LENGTH)
-			var stand_x: float = side * (HALF_WIDTH + 5.0 + _rng.randf_range(0.0, 44.0))
+			var stand_x: float = side * (HALF_WIDTH + _rng.randf_range(stand_near, stand_far))
 			var roll := _rng.randf()
 			var species: int = Flora.CONIFER if roll < 0.58 else (Flora.BIRCH if roll < 0.74 else Flora.BROADLEAF)
 			var tint: Color = (_pal["prop_a"] as Color).lerp(_pal["prop_c"], _rng.randf() * 0.7)
@@ -3946,6 +4095,7 @@ func _scenery_forest_incremental() -> void:
 					_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
 			else:
 				_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
+		_forest_floor(side)
 		if not await _keep_streaming():
 			return
 
@@ -4082,26 +4232,29 @@ func _scenery_country() -> void:
 	## is meant to feel like nobody lives out here.
 	var z0: float = float(chunk_index) * LENGTH
 
-	# Post-and-rail fence hugging both verges. The scenic-side verge is the
-	# exit: a field fence there is the unused climb's barrier seen from below.
-	var fz := z0
-	var fseg := 0
-	while fz < z0 + LENGTH - 0.01:
-		for side in [-1.0, 1.0]:
-			if _on_spur and is_equal_approx(side, _vp_side):
-				continue
-			var lx: float = side * (HALF_WIDTH + 4.0)
-			_cube(fz, lx, Vector3(0.12, 1.15, 0.12), _pal["rail"])
-			# Rails span two post bays (8 m), the way real post-and-rail runs do,
-			# rather than one terrain-fitted beam per 4 m: half the beam count, and
-			# each beam is two `_terrain_surface_at` + a footprint query, so the fence
-			# was the second-largest streaming cost after the hedgerows.
-			if fseg % 2 == 0:
-				var zend: float = minf(fz + 8.0, z0 + LENGTH)
-				_terrain_beam(fz, zend, lx, 0.09, 0.09, _pal["rail"], 0.92)
-				_terrain_beam(fz, zend, lx, 0.09, 0.09, _pal["rail"], 0.58)
-		fz += 4.0
-		fseg += 1
+	# Field boundaries hugging both verges — mostly post-and-rail, with whole
+	# stretches of dry-stone wall and the odd open pasture where the field grass
+	# runs right up to the verge. One repeating fence is a wallpaper stripe; a
+	# boundary that changes its mind every field is what reads as worked land.
+	# The scenic-side verge is the exit, so it keeps no boundary at all.
+	for side in [-1.0, 1.0]:
+		if _on_spur and is_equal_approx(side, _vp_side):
+			continue
+		var blx: float = side * (HALF_WIDTH + 4.0)
+		var bz := z0
+		while bz < z0 + LENGTH - 0.01:
+			var seg_end := minf(bz + _rng.randf_range(20.0, 55.0), z0 + LENGTH)
+			var kind := _rng.randf()
+			if kind < 0.55:
+				_boundary_rail(bz, seg_end, blx)
+			elif kind < 0.85:
+				_boundary_stone(bz, seg_end, blx)
+			# The open stretches and the segment joints are where a gate belongs:
+			# one entrance every few hundred metres, not one per field.
+			if seg_end < z0 + LENGTH - 6.0 and _rng.randf() < 0.14:
+				_field_gate(seg_end + 2.1, side)
+				seg_end += 4.2
+			bz = seg_end
 
 	# Hedgerows: field boundaries marching away from the road over the swells.
 	for side in [-1.0, 1.0]:
@@ -4177,8 +4330,99 @@ func _scenery_country() -> void:
 			var lx: float = clx + _rng.randf_range(-4.0, 4.0)
 			_hay_bale(z, lx, _rng.randf_range(0.55, 0.7), _rng.randf_range(1.1, 1.4), bale_color)
 
+	# Sheep out in the nearer fields — a flock every couple of chunks, never an
+	# even scatter. At the only distances they are ever seen from, a cream blob
+	# with a dark head tucked under its shoulder is a ewe; rarer, a bigger
+	# brown-black body is cattle. All of it goes through the same corridor
+	# checks as the bales.
+	for _flock in 2:
+		if _rng.randf() > 0.52:
+			continue
+		var fz2 := z0 + _rng.randf_range(2.0, LENGTH - 2.0)
+		var fside: float = 1.0 if _rng.randf() < 0.5 else -1.0
+		# The near edge of the band matters most: a ewe 20 m out is a cream dot
+		# over the wall top, one at 60 m is lost against the far pasture.
+		var fx: float = fside * (HALF_WIDTH + _rng.randf_range(12.0, 44.0))
+		if not _footprint_is_clear(fz2, fx, 7.0, 9.0):
+			continue
+		if _rng.randf() < 0.2:
+			# Cattle: fewer, bigger, darker, spread wider across the field.
+			var hide := Color("4a362a").darkened(_rng.randf() * 0.15)
+			for _i in _rng.randi_range(2, 4):
+				_grazer(
+					fz2 + _rng.randf_range(-9.0, 9.0), fx + _rng.randf_range(-8.0, 8.0),
+					_rng.randf_range(1.5, 1.75), hide
+				)
+		else:
+			var wool := Color("eae3d4").darkened(_rng.randf() * 0.1)
+			for _i in _rng.randi_range(4, 7):
+				_sheep(
+					fz2 + _rng.randf_range(-7.0, 7.0), fx + _rng.randf_range(-5.5, 5.5),
+					wool.darkened(_rng.randf() * 0.07)
+				)
+
 	# No farmstead, no telegraph stubs: buildings are out, and the power line is
 	# built by _power_line() with real spans rather than bare poles.
+
+
+func _boundary_rail(z_a: float, z_b: float, lateral: float) -> void:
+	## Post-and-rail on the verge line. Rails span two post bays (8 m), the way
+	## real post-and-rail runs do, rather than one terrain-fitted beam per 4 m:
+	## half the beam count, and each beam is two `_terrain_surface_at` plus a
+	## footprint query, so the fence was once the second-largest streaming cost.
+	var fz := z_a
+	var fseg := 0
+	while fz < z_b - 0.01:
+		_cube(fz, lateral, Vector3(0.12, 1.15, 0.12), _pal["rail"])
+		if fseg % 2 == 0:
+			var zend: float = minf(fz + 8.0, z_b)
+			_terrain_beam(fz, zend, lateral, 0.09, 0.09, _pal["rail"], 0.92)
+			_terrain_beam(fz, zend, lateral, 0.09, 0.09, _pal["rail"], 0.58)
+		fz += 4.0
+		fseg += 1
+
+
+func _boundary_stone(z_a: float, z_b: float, lateral: float) -> void:
+	## A run of dry-stone wall: a course beam and a wider coping course per bay.
+	## Kept low — about hip height — so the fields still read over the top, and
+	## slightly darker than the rail timber so the swap reads at a glance.
+	var stone: Color = (_pal["rail"] as Color).lerp(Color("7f786c"), 0.45)
+	var fz := z_a
+	var fseg := 0
+	while fz < z_b - 0.01:
+		var zend: float = minf(fz + 4.0, z_b)
+		_terrain_beam(fz, zend, lateral, 0.5, 0.86, stone.darkened(_rng.randf() * 0.14), 0.43)
+		_terrain_beam(fz, zend, lateral, 0.6, 0.13, stone.lightened(0.04).darkened(_rng.randf() * 0.1), 0.93)
+		# A stood through-stone every third bay gives the wall its silhouette
+		# breaks — the piece that says dry stone, not poured kerb.
+		if fseg % 3 == 1:
+			_cube(
+				fz + _rng.randf_range(0.0, 3.0), lateral,
+				Vector3(0.26, 1.12, 0.34), stone.darkened(_rng.randf_range(0.12, 0.3))
+			)
+		fz += 4.0
+		fseg += 1
+
+
+func _sheep(z: float, lateral: float, wool: Color) -> void:
+	## One grazing sheep: a fat woolly body, a dark head tucked low at one end,
+	## and a thin dark slab under it for legs and shade. Headed whichever way it
+	## happened to be cropping when we looked.
+	_grazer(z, lateral, _rng.randf_range(0.95, 1.15), wool)
+
+
+func _grazer(z: float, lateral: float, s: float, coat: Color) -> void:
+	## Body plus head plus a leg-shadow slab; `s` scales a sheep up into a cow.
+	## The head sits low at one end of the body — grazing, not alert — and is a
+	## separate blob so the animal reads as two tones instead of one lozenge.
+	var head_col := Color("4a423c").darkened(_rng.randf() * 0.1)
+	_cube(z, lateral, Vector3(0.42 * s, 0.32 * s, 0.9 * s), head_col.darkened(0.15))
+	_blob(z, lateral, Vector3(s * 0.95, s * 0.62, s * 1.3), coat, 0.24 * s, false)
+	var a := _rng.randf_range(0.0, TAU)
+	_blob(
+		z + cos(a) * 0.62 * s, lateral + sin(a) * 0.62 * s,
+		Vector3(s * 0.26, s * 0.3, s * 0.3), head_col, 0.34 * s, false
+	)
 
 
 func _build_distant_scenery() -> void:
