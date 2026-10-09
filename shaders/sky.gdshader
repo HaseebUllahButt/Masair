@@ -149,15 +149,22 @@ void sky() {
 			fbm(uv * 0.72 + drift, warp_oct),
 			fbm(uv * 0.72 + drift + vec2(5.2, 1.7), warp_oct)
 		);
-		float density = fbm(uv + drift + warp * 1.05, octaves);
-		density = mix(density, fbm(uv * 0.38 - drift * 0.55, max(octaves - 1, 1)), 0.28);
+		float density = fbm(uv + drift + warp * 1.42, octaves);
+		if (!AT_CUBEMAP_PASS) {
+			// Macro lobes and interior erosion are screen-detail: the radiance
+			// pass only needs the deck's silhouette, so it skips both.
+			density = mix(density, fbm(uv * 0.38 - drift * 0.55, 2), 0.28);
+			// Erode the deck's interior so the masses read as piled cumulus —
+			// lobes and gaps — instead of one smooth fog sheet with edges.
+			density -= fbm(uv * 2.15 + drift * 1.3 + warp * 0.6, 2) * 0.16;
+		}
 		float edge = mix(0.40, 0.11, clamp(cloud_sharpness, 0.0, 1.0));
 		float base = 1.0 - cloud_cover;
 		cloud_alpha = smoothstep(base, base + edge, density);
 		cloud_thickness = clamp((density - base) / max(edge, 1e-3), 0.0, 1.0);
 		if (!AT_CUBEMAP_PASS && LIGHT0_ENABLED) {
 			vec2 toward_sun = normalize(LIGHT0_DIRECTION.xz + vec2(1e-4)) * 0.50;
-			float above = fbm(uv + toward_sun + drift + warp * 1.05, max(octaves - 2, 1));
+			float above = fbm(uv + toward_sun + drift + warp * 1.42, max(octaves - 2, 1));
 			cloud_shadow = clamp((above - base) / max(edge, 1e-3), 0.0, 1.0);
 		}
 		cloud_alpha *= smoothstep(0.0, 0.09, up) * cloud_opacity;
@@ -215,10 +222,10 @@ void sky() {
 		}
 
 		facing = pow(max(dot(EYEDIR, to_light) * 0.5 + 0.5, 0.0), 3.0);
-		float shade = clamp(1.0 - cloud_shadow * 0.85 - cloud_thickness * 0.35, 0.0, 1.0);
+		float shade = clamp(1.0 - cloud_shadow * 0.95 - cloud_thickness * 0.35, 0.0, 1.0);
 		cloud_col = mix(cloud_dark, cloud_lit, clamp(facing * 0.55 + shade * 0.65, 0.0, 1.0));
 		float rim = (1.0 - cloud_thickness) * facing;
-		cloud_col += sun_color * (rim * 1.05 + halo * facing * 0.5);
+		cloud_col += sun_color * (rim * 1.25 + halo * facing * 0.5);
 		bank_col = mix(cloud_dark, cloud_lit, clamp(facing * 0.4 + (1.0 - bank_thickness * 0.5) * 0.7, 0.0, 1.0));
 		bank_col += sun_color * (1.0 - bank_thickness) * facing * 0.4;
 		bank_col = mix(bank_col, horizon_color, bank_haze);

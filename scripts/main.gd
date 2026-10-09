@@ -232,7 +232,10 @@ const MOODS := {
 		# lighting-balance problem, not a colour one, and it shows in the numbers:
 		# 1.72 of sun against 0.18 fill and 0.32 ambient left too little of the
 		# frame's range coming from a direction.
-		"light_energy": 3.0,
+		# 3.0 -> 3.3, with the ambient paid back out of the same row below: more
+		# of the frame's light now arrives from a direction, which is what puts a
+		# lit side on every crown, wall and hillside in a game with no shadow map.
+		"light_energy": 3.3,
 		# Lower than midday. A sun near the zenith lights the tops of everything
 		# and leaves the sides equal, which is the worst case for a world with no
 		# shadows: raking it gives every box, tree and hillside a lit side and a
@@ -254,7 +257,9 @@ const MOODS := {
 		# north-facing slope off the floor.
 		"fill_color": Color("7395ae"),
 		"fill_energy": 0.18,
-		"ambient": 0.32,
+		# Down a step to pay for the stronger key above — the total light stays,
+		# the flat share of it shrinks.
+		"ambient": 0.28,
 		"ambient_color": Color("6f8796"),
 		"ambient_sky_mix": 0.52,
 		# ACES with the white point down at 1.45 compresses everything above a
@@ -960,7 +965,7 @@ func _build_pollen() -> void:
 
 	_pollen_fx = GPUParticles3D.new()
 	_pollen_fx.name = "Pollen"
-	_pollen_fx.amount = 80
+	_pollen_fx.amount = 120
 	_pollen_fx.lifetime = 7.0
 	_pollen_fx.explosiveness = 0.0
 	_pollen_fx.local_coords = false
