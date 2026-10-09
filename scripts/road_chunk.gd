@@ -117,7 +117,7 @@ const FOLIAGE_SWAY := 0.12
 ## Bushes packed onto the first few metres of verge. Indexed by Env. Split across
 ## frames while streaming — planting all of them at once was a 35–90 ms hitch.
 const VERGE_BUSH_COUNT := [8, 34, 18, 26, 32]
-const VERGE_BUSH_BATCH := 2
+const VERGE_BUSH_BATCH := 1
 ## Hard cap on GLB instances per chunk. The Kenney kit is suburban, so it stocks
 ## the countryside and villages; the city builds its own frontage.
 const MAX_IMPORTED_ASSETS_PER_CHUNK := 4
@@ -698,11 +698,11 @@ func setup_ribbon_incremental(index: int, theme_id: int) -> void:
 	# keeps the climb inside a frame; two at a time was still a hitch, four was ~40 ms.
 	var steps_per: int = RIBBON_STEPS_PER_FRAME
 	var band_count: int = _view_bands().size()
-	# Four cross-section bands per call: the lake's view-refined bands are a
-	# metre or two of verts each, and eight at a time overran the slice to
-	# ~12 ms on the climb — a visible stutter arriving exactly where the rider
-	# turns to look at the water.
-	const BANDS_PER_FRAME := 4
+	# Two cross-section bands per call: the lake's view-refined bands are a
+	# metre or two of verts each, and four at a time still overran the slice
+	# to ~10 ms on the climb — a visible stutter arriving exactly where the
+	# rider turns to look at the water.
+	const BANDS_PER_FRAME := 2
 	for first_step in range(0, STEPS, steps_per):
 		for first_band in range(0, band_count, BANDS_PER_FRAME):
 			_build_ribbon_rows(hard, road, soft_left, soft_right, z0, first_step, mini(first_step + steps_per, STEPS), first_band, mini(first_band + BANDS_PER_FRAME, band_count))
@@ -740,7 +740,7 @@ func _dress_shoulder_incremental() -> void:
 	if bool(get_meta("shoulder_done", false)):
 		return
 	var from_index := get_child_count()
-	_build_reflectors()
+	await _build_reflectors(true)
 	if not await _keep_streaming():
 		return
 	await _grass_verge_incremental()
@@ -832,7 +832,7 @@ func _build_highway_props_incremental() -> void:
 		_build_junction()
 		if not await _keep_streaming():
 			return
-		_build_highway_spur_screen()
+		await _build_highway_spur_screen(true)
 		if not await _keep_streaming():
 			return
 	if _on_lake:
@@ -1090,7 +1090,7 @@ func _build_scenic_stub_incremental() -> void:
 		return
 	var marks := _prop_marks()
 	var from_index := get_child_count()
-	_build_spur_woodland(0, 2)
+	await _build_spur_woodland(0, 2, true)
 	if not await _keep_streaming():
 		return
 	await _commit_props_incremental(marks)
@@ -1186,7 +1186,7 @@ func _plant_inland_carriageway_incremental() -> void:
 		)
 		var height := _rng.randf_range(5.5, 11.5)
 		_tree(species, z, lx, height, tint)
-		if i % 8 == 7 and _slice_spent() and not await _keep_streaming():
+		if i % 4 == 3 and _slice_spent() and not await _keep_streaming():
 			return
 
 
@@ -1373,9 +1373,18 @@ func _ground_normal(z: float, lateral: float, drop: float) -> Vector3:
 # ---------------------------------------------------------------- road ribbon
 
 
+var _ground_colors: Dictionary = {}
+
+
 func _ground_color(lateral: float, z: float) -> Color:
 	## Smooth function of position, sampled per vertex — a per-quad colour would
 	## stop index() merging vertices and smooth shading would never kick in.
+	## Ribbon vertices are shared by the quads on either side, so the lake-side
+	## mixes underneath run at least twice per sample without this cache.
+	var key := Vector2(lateral, z)
+	var cached: Variant = _ground_colors.get(key)
+	if cached != null:
+		return cached
 	var mix: float = 0.5 + 0.5 * sin(lateral * 0.055 + z * 0.038) * sin(lateral * 0.017 - z * 0.021)
 	# A second, slower grain so the midfield is patchwork instead of one wash —
 	# the blank tan plane past the first trees in the rider's peripheral view.
@@ -1408,6 +1417,7 @@ func _ground_color(lateral: float, z: float) -> Color:
 			color = color.lerp(_face_color(z, lateral), face)
 		color = color.lerp(_shore_color(), _shore_mix(z, lateral))
 		color = color.lerp(_wash_color(), _wash_mix(z, lateral))
+	_ground_colors[key] = color
 	return color
 
 
@@ -1929,8 +1939,8 @@ func _commit_spur_meshes_incremental(z0: float) -> void:
 		return
 	var spur_hard := LowPoly.new()
 	var spur_road := LowPoly.new()
-	for first in range(0, STEPS, 4):
-		_build_spur_ribbon(spur_hard, spur_road, z0, first, mini(4, STEPS - first), false)
+	for first in range(0, STEPS, 2):
+		_build_spur_ribbon(spur_hard, spur_road, z0, first, mini(2, STEPS - first), false)
 		if _slice_spent() and not await _keep_streaming():
 			return
 	_build_platform_bays(spur_hard, z0)
@@ -2093,6 +2103,8 @@ func _build_markings(b: LowPoly, z0: float, streamed: bool = false) -> void:
 				_p(zb, lx - 0.11, -LIFT),
 				stripe
 			)
+			if i % 4 == 3 and streamed and _slice_spent() and not await _keep_streaming():
+				return
 		if streamed and _slice_spent() and not await _keep_streaming():
 			return
 
@@ -2117,7 +2129,7 @@ func _build_markings(b: LowPoly, z0: float, streamed: bool = false) -> void:
 		marks += 1
 		# ~80 dashes of path samples was the head of `_finish_ribbon` — the whole
 		# stripe pass in one slice. Streamed builds get a boundary mid-run.
-		if marks % 16 == 0 and streamed and _slice_spent() and not await _keep_streaming():
+		if marks % 8 == 0 and streamed and _slice_spent() and not await _keep_streaming():
 			return
 
 
@@ -3362,7 +3374,7 @@ func _build_furniture_incremental() -> void:
 	## CPU spike each time a country chunk streams in.
 	# Reflectors + grass already landed with the ribbon on the highway.
 	if not bool(get_meta("shoulder_done", false)):
-		_build_reflectors()
+		await _build_reflectors(true)
 		if not await _keep_streaming():
 			return
 	var bushes_left: int = int(VERGE_BUSH_COUNT[theme])
@@ -3397,7 +3409,7 @@ func _build_furniture_incremental() -> void:
 	await _build_guardrail_incremental()
 
 
-func _build_reflectors() -> void:
+func _build_reflectors(streamed: bool = false) -> void:
 	if bool(get_meta("reflectors_done", false)):
 		return
 	var z0: float = float(chunk_index) * LENGTH
@@ -3409,6 +3421,8 @@ func _build_reflectors() -> void:
 			_cube(z, lx, Vector3(0.14, 0.16, 0.11), _pal["curb"].darkened(0.35), 0.0, 0.8)
 			_lamp(z, lx, Vector3(0.11, 0.09, 0.045), REFLECTOR, 0.86)
 		z += 10.0
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 	set_meta("reflectors_done", true)
 
 
@@ -3526,7 +3540,7 @@ func _grass_verge_incremental() -> void:
 			z, lx, tuft,
 			(base as Color).lerp(_pal["prop_a"], _rng.randf() * 0.5).darkened(_rng.randf() * 0.25)
 		)
-		if i % 6 == 5 and _slice_spent() and not await _keep_streaming():
+		if i % 2 == 1 and _slice_spent() and not await _keep_streaming():
 			return
 	set_meta("grass_done", true)
 
@@ -3935,7 +3949,7 @@ func _verge_plant_fringe_incremental(side_filter: float) -> void:
 			)
 		gz += _rng.randf_range(2.0, 3.6)
 		n += 1
-		if n % 4 == 0 and _slice_spent() and not await _keep_streaming():
+		if n % 2 == 0 and _slice_spent() and not await _keep_streaming():
 			return
 
 
@@ -4761,6 +4775,8 @@ func _scenery_country(streamed: bool = false) -> void:
 				_field_gate(seg_end + 2.1, side)
 				seg_end += 4.2
 			bz = seg_end
+			if streamed and _slice_spent() and not await _keep_streaming():
+				return
 		if streamed and _slice_spent() and not await _keep_streaming():
 			return
 
@@ -4787,6 +4803,8 @@ func _scenery_country(streamed: bool = false) -> void:
 					false
 				)
 				out += _rng.randf_range(2.2, 3.0)
+				if streamed and _slice_spent() and not await _keep_streaming():
+					return
 			hz += _rng.randf_range(30.0, 60.0)
 			if streamed and _slice_spent() and not await _keep_streaming():
 				return
@@ -5795,7 +5813,7 @@ func _build_spur_furniture() -> void:
 		z += 3.0
 
 
-func _build_highway_spur_screen() -> void:
+func _build_highway_spur_screen(streamed: bool = false) -> void:
 	## Trees between the carriageway and the unused climb. Once the scenic
 	## corridor is culled, this is what the bottom road looks at instead of a
 	## fenced empty spur.
@@ -5803,6 +5821,8 @@ func _build_highway_spur_screen() -> void:
 		return
 	var z0: float = float(chunk_index) * LENGTH
 	for station in 5:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		var z: float = z0 + 4.0 + float(station) * 7.2
 		if z >= z0 + LENGTH:
 			continue
@@ -8061,6 +8081,33 @@ func _build_face_scree_fan(z0: float, face_run: float) -> void:
 		)
 
 
+static var _face_edges_left: Array = []
+static var _face_edges_right: Array = []
+
+
+func _face_band_edges() -> Array:
+	## The view bands as a table sorted by inner edge, built once per side. The
+	## face profile walks it ~30 times per z and the linear band scan that used
+	## to answer each lookup was most of the headland's build cost.
+	var edges: Array = _face_edges_right if _vp_side > 0.0 else _face_edges_left
+	if edges.is_empty():
+		var side := _vp_side if _vp_side != 0.0 else 1.0
+		for band in _view_bands():
+			var u0: float = float(band[0]) * side
+			var u1: float = float(band[2]) * side
+			var lo := minf(u0, u1)
+			var hi := maxf(u0, u1)
+			if hi - lo < 0.01:
+				continue
+			edges.append([lo, hi, u0, u1, float(band[0]), float(band[1]), float(band[2]), float(band[3])])
+		edges.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) < float(b[0]))
+		if _vp_side > 0.0:
+			_face_edges_right = edges
+		else:
+			_face_edges_left = edges
+	return edges
+
+
 func _face_chord_point(z: float, out: float) -> Vector3:
 	## The surface the terrain ribbon actually *draws* at this spot on the
 	## headland face: the straight chord between the mesh's own lateral edge
@@ -8068,18 +8115,26 @@ func _face_chord_point(z: float, out: float) -> Vector3:
 	## this profile — dressing placed on the analytic one ends up underneath the
 	## drawn slope, which is what buried every earlier attempt at face detail.
 	var side := _vp_side
-	for band in _view_bands():
-		var e0: float = float(band[0])
-		var e1: float = float(band[2])
-		var u0 := e0 * side
-		var u1 := e1 * side
-		var lo := minf(u0, u1)
-		var hi := maxf(u0, u1)
-		if out < lo or out > hi or hi - lo < 0.01:
-			continue
-		var pa := _p(z, e0, _band_drop(z, e0, float(band[1])))
-		var pb := _p(z, e1, _band_drop(z, e1, float(band[3])))
-		return pa.lerp(pb, (out - u0) / (u1 - u0))
+	var edges := _face_band_edges()
+	# The band covering `out` is the last one whose inner edge starts at or
+	# before it; bands tile the profile contiguously, so one binary search
+	# replaces the seventy-odd band tests this used to pay per point.
+	var lo_i := 0
+	var hi_i := edges.size()
+	while lo_i < hi_i:
+		var mid := (lo_i + hi_i) >> 1
+		if float((edges[mid] as Array)[0]) <= out:
+			lo_i = mid + 1
+		else:
+			hi_i = mid
+	if lo_i > 0:
+		var band: Array = edges[lo_i - 1]
+		if out <= float(band[1]):
+			var e0: float = float(band[4])
+			var e1: float = float(band[6])
+			var pa := _p(z, e0, _band_drop(z, e0, float(band[5])))
+			var pb := _p(z, e1, _band_drop(z, e1, float(band[7])))
+			return pa.lerp(pb, (out - float(band[2])) / (float(band[3]) - float(band[2])))
 	return _p(z, side * out, 0.0)
 
 
