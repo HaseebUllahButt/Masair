@@ -17,7 +17,7 @@ uniform vec3 sky_mirror : source_color = vec3(0.10, 0.11, 0.12);
 // The sky higher up, reflected where the eye looks down on the water steeply.
 uniform vec3 sky_high : source_color = vec3(0.08, 0.10, 0.14);
 // Stylised floor under the Fresnel term — see fragment().
-uniform float mirror_floor : hint_range(0.0, 1.0) = 0.27;
+uniform float mirror_floor : hint_range(0.0, 1.0) = 0.20;
 
 varying vec3 world_position;
 

@@ -353,31 +353,50 @@ static func unit_ridge() -> ArrayMesh:
 	## on the skyline; this widens the crest into a flat-topped hump and smooth-
 	## shades it, so a whole range of these reads as English downland rolling
 	## into the distance instead of a saw blade of peaks.
+	##
+	## Lofted along its length, not extruded: the profile shrinks toward both
+	## ends and pinches to the baseline, so the hill rounds off into the ground
+	## instead of stopping at a flat vertical cap. Seen end-on from the saddle
+	## that cap was a boxy gold slab — a wall of unbroken flat shading with a
+	## dead straight top, unmistakably a set piece rather than a hillside.
 	if _unit_ridge == null:
 		var b := LowPoly.new()
 		b.smooth = true
 		b.hull_origin = Vector3(0.0, 0.22, 0.0)
-		const FRONT := [
-			Vector3(-0.55, 0.0, -0.30), Vector3(-0.34, 0.40, -0.20), Vector3(-0.10, 0.62, -0.12),
-			Vector3(0.16, 0.60, -0.12), Vector3(0.40, 0.32, -0.17), Vector3(0.55, 0.0, -0.30)
+		const PROFILE := [
+			Vector3(-0.55, 0.0, 0.0), Vector3(-0.34, 0.40, 0.0), Vector3(-0.10, 0.62, 0.0),
+			Vector3(0.16, 0.60, 0.0), Vector3(0.40, 0.32, 0.0), Vector3(0.55, 0.0, 0.0)
 		]
-		const BACK := [
-			Vector3(-0.55, 0.0, 0.30), Vector3(-0.34, 0.40, 0.20), Vector3(-0.10, 0.62, 0.12),
-			Vector3(0.16, 0.60, 0.12), Vector3(0.40, 0.32, 0.17), Vector3(0.55, 0.0, 0.30)
-		]
+		# Stations along the long axis and the fraction of the profile each
+		# keeps. The two end rings sit at zero — a ground line, not a wall.
+		const RING_Z := [-0.30, -0.165, 0.0, 0.165, 0.30]
+		const RING_S := [0.0, 0.78, 1.0, 0.78, 0.0]
 		var base_col := Color(0.64, 0.68, 0.60)
 		var top_col := Color(0.90, 0.90, 0.86)
-		for i in FRONT.size() - 1:
-			var t: float = (float(i) + 0.5) / float(FRONT.size() - 1)
-			b.add_hull_quad(FRONT[i], FRONT[i + 1], BACK[i + 1], BACK[i], base_col.lerp(top_col, t))
-		# Fan each broad face from its baseline. The value difference paints in the
-		# raking-light separation without another shadow render pass.
-		var front_col := base_col.lerp(top_col, 0.55).darkened(0.08)
-		var back_col := base_col.lerp(top_col, 0.55).darkened(0.22)
-		for i in range(1, FRONT.size() - 1):
-			b.add_hull_tri(FRONT[0], FRONT[i], FRONT[i + 1], front_col)
-			b.add_hull_tri(BACK[0], BACK[i + 1], BACK[i], back_col)
-		b.add_hull_quad(FRONT[0], BACK[0], BACK[FRONT.size() - 1], FRONT[FRONT.size() - 1], base_col.darkened(0.15))
+		var rings: Array[Array] = []
+		for k in RING_Z.size():
+			var ring: Array[Vector3] = []
+			for p in PROFILE:
+				ring.append(Vector3(p.x * RING_S[k], p.y * RING_S[k], RING_Z[k]))
+			rings.append(ring)
+		for k in rings.size() - 1:
+			# The tapers bake in a little ground shadow the way the old cap did:
+			# a hill's feet are darker than its shoulder.
+			var shade: float = 0.16 * (1.0 - (RING_S[k] + RING_S[k + 1]) * 0.5)
+			for i in PROFILE.size() - 1:
+				var t: float = (float(i) + 0.5) / float(PROFILE.size() - 1)
+				b.add_hull_quad(
+					rings[k][i], rings[k][i + 1], rings[k + 1][i + 1], rings[k + 1][i],
+					base_col.lerp(top_col, t).darkened(shade)
+				)
+		# Underside strip between the two baseline edges, so nothing shows
+		# through if a ridge is ever seen from below.
+		for k in rings.size() - 1:
+			b.add_hull_quad(
+				rings[k][0], rings[k][PROFILE.size() - 1],
+				rings[k + 1][PROFILE.size() - 1], rings[k + 1][0],
+				base_col.darkened(0.15)
+			)
 		_unit_ridge = b.commit()
 	return _unit_ridge
 
@@ -452,14 +471,15 @@ static var _water_sky: Color = Color(0.10, 0.11, 0.12)
 static var _water_sky_high: Color = Color(0.08, 0.10, 0.14)
 
 
-static func set_water_sky(c: Color, high: Color = Color(0.08, 0.10, 0.14)) -> void:
+static func set_water_sky(c: Color, high: Color = Color(0.08, 0.10, 0.14), sheen: Color = Color(0.03, 0.03, 0.03)) -> void:
 	## main.gd pushes the mood's horizon colour (and the sky above it) in here;
 	## the water materials are built lazily and shared across every chunk, so the
 	## values are cached on the script and applied to whichever sheets exist.
 	_water_sky = c
 	_water_sky_high = high
-	# The tarmac reflects the same sky at a grazing angle.
-	LowPoly.road_material().set_shader_parameter("sky_sheen", c)
+	# The tarmac reflects the same sky at a grazing angle, at a much dimmer
+	# share — the water is the mirror, the road only remembers it is wet.
+	LowPoly.road_material().set_shader_parameter("sky_sheen", sheen)
 	for mat in [_water_material]:
 		if mat:
 			_apply_water_sky(mat)
@@ -9058,12 +9078,21 @@ static func palette(t: int) -> Dictionary:
 			return {
 				"road": ROAD_TARMAC,
 				"stripe": Color("ded2a0"),
-				"shoulder": Color("736857"),
-				"curb": Color("74563b"),
+				# Near-neutral gravel. The old warm brown caught the low key
+				# square-on and graded into the neon orange ribbon riders read
+				# as the fence; the light supplies the warmth by itself.
+				"shoulder": Color("6e6a5e"),
+				# Stone lip, not loam — the warm brown lip flat-shaded itself
+				# into a second orange ribbon hugging the edge line.
+				"curb": Color("6d675e"),
 				"verge": Color("5f7138"),
 				"ground": Color("4d6638"),
 				"ground_alt": Color("304d39"),
-				"rail": Color("796b5b"),
+				# Weathered grey timber. The old brown carried just enough warm
+				# bias for the golden key and the 1.14 saturation grade to stack
+				# into a neon orange rail; a near-neutral grey leans a hair cool
+				# so the same light lands on it as silvery wood.
+				"rail": Color("53595c"),
 				"prop_a": Color("315e3e"),
 				"prop_b": Color("70462e"),
 				"prop_c": Color("234b3b"),
@@ -9083,7 +9112,7 @@ static func palette(t: int) -> Dictionary:
 				"verge": Color("5c6b3f"),
 				"ground": Color("4a5940"),  # moss and alpine turf
 				"ground_alt": Color("6a5e4e"),  # bare scree breaking through
-				"rail": Color("a8afb4"),
+				"rail": Color("9aa1a7"),  # galvanised, dimmed a step off the cream
 				"prop_a": Color("2b5140"),  # spruce
 				"prop_b": Color("8a5a34"),  # larch and rust
 				"prop_c": Color("7d8794"),  # cold granite
@@ -9097,15 +9126,19 @@ static func palette(t: int) -> Dictionary:
 			return {
 				"road": ROAD_TARMAC,
 				"stripe": Color("efe6bc"),
-				"shoulder": Color("8a7d63"),
-				"curb": Color("857a66"),
+				# Same fix as the forest shoulder: sandy grit under a golden key
+				# was the neon ribbon along the verge, not the fence on top of it.
+				"shoulder": Color("817b6b"),
+				"curb": Color("7c7468"),
 				"verge": Color("7d8a3c"),
 				# Two meadow greens, not corn against pasture. Golden standing corn
 				# under the warm grade covered whole valleys in what read as sand
 				# dunes, and the user wants English farmland, not a desert.
 				"ground": Color("6b8a3e"),  # hay meadow
 				"ground_alt": Color("4c6834"),  # grazed pasture
-				"rail": Color("b9ac8e"),
+				# Bleached post-and-rail oak, not fresh cream paint — the old tan
+				# was the brightest man-made object in every dusk frame.
+				"rail": Color("837f76"),
 				"prop_a": Color("425e32"),
 				"prop_b": Color("a74e32"),  # brick and rust
 				"prop_c": Color("d8b96a"),  # cut hay

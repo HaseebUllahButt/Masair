@@ -1026,15 +1026,23 @@ func _apply_lighting() -> void:
 	_fill.light_energy = mood["fill_energy"]
 	# The lake is a mirror before it is water: at the grazing angle a seated
 	# rider sees it from, its far half carries the horizon colour back to the
-	# eye. Dimmed by the mood's own horizon glow so a flat grey sky still reads
-	# as flat grey water.
-	# Down from 0.30 + 0.80 * glow. The mirror colour is multiplied across the
-	# whole basin: at the old weight the near water rendered as a pale cream
-	# slab — the single largest "greyed out" area at every overlook.
-	var sky_glow: float = 0.15 + 0.40 * float(mood["horizon_glow"])
+	# eye. So the mirror colour is the colour the sky *actually renders* at the
+	# horizon — horizon plus its own glow skirt, dimmed a step for absorption.
+	# A quarter-strength version was tried and the basin came out as a dark
+	# void beside a burning sky; the water could not be lit while its mirror
+	# carried no light.
+	var horizon_col: Color = mood["horizon_color"]
+	var mirror_scale: float = (0.85 + 0.55 * float(mood["horizon_glow"])) * float(mood["energy"])
+	# Steeper sightlines reflect the band above the horizon, not the skyline
+	# itself — the mid colour, likewise a step under the sky.
+	var high_scale: float = (0.55 + 0.40 * float(mood["horizon_glow"])) * float(mood["energy"])
 	RoadChunkGD.set_water_sky(
-		(mood["horizon_color"] as Color) * sky_glow,
-		(mood["mid_color"] as Color) * sky_glow
+		horizon_col * mirror_scale,
+		(mood["mid_color"] as Color) * high_scale,
+		# The tarmac picks up the same sky at a grazing angle, but a wet-look
+		# road under every mood washed the far lanes pale — it keeps the older,
+		# much dimmer share.
+		horizon_col * (0.15 + 0.40 * float(mood["horizon_glow"]))
 	)
 	# The tarmac's counter-tint lives on the mood row with everything else that
 	# changes with the hour: the same sunset that paints the sky was painting
