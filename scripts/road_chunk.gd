@@ -2044,6 +2044,33 @@ func _ground_scatter_allowed(z: float, lateral: float, clearance: float = 0.6) -
 
 
 var _corridor_frames: Dictionary = {}
+var _band_env := Vector2.ZERO
+var _band_env_ready := false
+
+
+func _band_envelope() -> Vector2:
+	## The outermost lateral any corridor band reaches anywhere over this
+	## chunk, padded by the widest part span: a plant whose own station sits
+	## beyond it stays beyond every band at every station the sweep could
+	## visit, so it cannot touch the road and skips the sweep entirely. The
+	## frames it walks are the shared corridor cache, so it costs a few
+	## stations once per chunk rather than a sweep per plant. The sample step
+	## and the padding match the sweep's own grid and the widest part span, so
+	## a band edge the sweep could see can never reach past the envelope.
+	if _band_env_ready:
+		return _band_env
+	var z0 := float(chunk_index) * LENGTH
+	var lo := INF
+	var hi := -INF
+	var z := z0 - 20.0
+	while z <= z0 + LENGTH + 20.0:
+		for band: Vector2 in _corridor_frame(z)[2]:
+			lo = minf(lo, band.x)
+			hi = maxf(hi, band.y)
+		z += 4.0
+	_band_env = Vector2(lo, hi)
+	_band_env_ready = true
+	return _band_env
 
 
 func _corridor_frame(z: float) -> Array:
@@ -2117,6 +2144,18 @@ func _foliage_road_push(world_pos: Vector3, reach: float, bottom_y: float, sways
 	# spur's sideways sweep.
 	var station0 := _corridor_frame(world_pos.z)
 	var slat0: float = (world_pos - (station0[0] as Vector3)).dot(station0[1])
+	# The chunk's band envelope bounds every band edge the sweep could visit —
+	# but only inside the z span it was measured over. Verge planting hugs the
+	# corridor's flank and mostly sits beyond it, so one compare answers those
+	# instead of the station loop. Vista dressing is planted far outside the
+	# owning chunk (the platform chunk builds the whole basin), so anything
+	# beyond the covered span falls through to the real sweep.
+	var z0 := float(chunk_index) * LENGTH
+	if world_pos.z - span >= z0 - 20.0 and world_pos.z + span <= z0 + LENGTH + 20.0:
+		var env := _band_envelope()
+		var env_slack := need_max + 0.5 + span * span * 0.006
+		if slat0 - env_slack > env.y or slat0 + env_slack < env.x:
+			return 0.0
 	var halo := need_max + 2.5 + span * span * 0.006
 	var near_band := false
 	for band: Vector2 in station0[2]:
