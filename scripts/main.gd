@@ -282,7 +282,9 @@ const MOODS := {
 		# what it was actually missing was separation between light and dark.
 		"contrast": 1.16,
 		"saturation": 1.14,
-		# Day is the reference: the shader default is the hand-tuned charcoal,
+		# Measured to land neutral grey asphalt (R=G=B within 1%) under the warm
+		# day key and grade: less red and a touch more green, not more blue,
+		# which only turned the road violet.
 		"road_tint": Color(0.925,1.035,1.01),
 		"road_sheen": 0.16,
 	},
