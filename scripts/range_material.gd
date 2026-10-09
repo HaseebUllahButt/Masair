@@ -93,9 +93,17 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	## term had mixed in, near and far range had the same pale value and the
 	## distance read as white-out instead of as depth — sunlit faces blew out
 	## to sand-coloured dunes against a pale sky. Darker and bluer at both
-	## ends keeps a range a mountain at any hour.
-	mat.set_shader_parameter("foot_color", fog.darkened(0.26).lerp(Color("3c5266"), 0.48))
-	var crest: Color = fog.darkened(0.12).lerp(Color("5a7ea2"), 0.64)
+	## ends keeps a range a mountain at any hour — but only just: the near
+	## ring carries almost no haze, so the foot colour *is* its value, and at
+	## the old depth a shaded panel rendered inside the frame's darkest three
+	## percent, a navy cut-out against the sky.
+	mat.set_shader_parameter("foot_color", fog.darkened(0.18).lerp(Color("46607c"), 0.42))
+	## The crest is what a tall face is mostly made of, so this is effectively
+	## the mid and far ranges' surface colour. Pale enough to light up cream
+	## under the grade's warm highlights once, it now sits a shade deeper and
+	## bluer — still clearly above the foot, but a slate the sun can put a lit
+	## side on without bleaching.
+	var crest: Color = fog.darkened(0.08).lerp(Color("5d7d9d"), 0.55)
 	mat.set_shader_parameter("crest_color", crest)
 	## What an up-facing plane collects from the dusk dome. This is the term
 	## that keeps the backlit face off zero without smearing sunset over it.
@@ -105,9 +113,13 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	## the fog darkens.
 	var daylight := clampf(fog.get_luminance() * 2.2, 0.15, 1.0)
 	mat.set_shader_parameter("snow_color", crest.lerp(Color("f2f5fa"), daylight))
-	## Whatever grows below the treeline, as dark as the light allows.
+	## Whatever grows below the treeline, as dark as the light allows — and the
+	## light allows more than it used to get. The foothill ring is forested
+	## over almost its whole face, so this colour is most of what the nearest
+	## mountains are made of; at the old depth it and the shaded rock behind
+	## it merged into one near-black silhouette.
 	var woods: Color = profile["woods"]
-	mat.set_shader_parameter("forest_color", fog.darkened(0.16).lerp(woods, 0.62 * daylight).darkened(0.1))
+	mat.set_shader_parameter("forest_color", fog.darkened(0.08).lerp(woods, 0.55 * daylight))
 	mat.set_shader_parameter("mist_color", fog.lerp(haze, 0.25).lerp(Color("9fb4cc"), 0.45 * daylight))
 	mat.set_shader_parameter("sun_dir", toward_sun)
 	## Light, because the haze it lays on is the mist colour and the mist is
