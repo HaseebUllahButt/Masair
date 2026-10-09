@@ -683,6 +683,10 @@ func setup_ribbon_incremental(index: int, theme_id: int) -> void:
 	## Runtime streaming must not consume an entire render frame. The chunk is far
 	## beyond the camera when queued, so build its ribbon in small invisible slices.
 	_resumed_usec = Time.get_ticks_usec()
+	# The other build entry points set both clocks; without this the first
+	# `_keep_streaming` measured against a stale slice start and yielded a whole
+	# frame before the first row went down.
+	_slice_started_usec = _resumed_usec
 	_configure(index, theme_id)
 	var builders := _new_ribbon_builders()
 	var hard: LowPoly = builders[0]
@@ -694,15 +698,16 @@ func setup_ribbon_incremental(index: int, theme_id: int) -> void:
 	# keeps the climb inside a frame; two at a time was still a hitch, four was ~40 ms.
 	var steps_per: int = RIBBON_STEPS_PER_FRAME
 	var band_count: int = _view_bands().size()
-	const BANDS_PER_FRAME := 8
-	var slice_started: int = Time.get_ticks_usec()
+	# Four cross-section bands per call: the lake's view-refined bands are a
+	# metre or two of verts each, and eight at a time overran the slice to
+	# ~12 ms on the climb — a visible stutter arriving exactly where the rider
+	# turns to look at the water.
+	const BANDS_PER_FRAME := 4
 	for first_step in range(0, STEPS, steps_per):
 		for first_band in range(0, band_count, BANDS_PER_FRAME):
 			_build_ribbon_rows(hard, road, soft_left, soft_right, z0, first_step, mini(first_step + steps_per, STEPS), first_band, mini(first_band + BANDS_PER_FRAME, band_count))
-			if Time.get_ticks_usec() - slice_started >= 6000:
-				if not await _keep_streaming():
-					return
-				slice_started = Time.get_ticks_usec()
+			if _slice_spent() and not await _keep_streaming():
+				return
 	if not await _keep_streaming():
 		return
 	await _finish_ribbon_incremental(hard, road, soft_left, soft_right, z0)
@@ -874,9 +879,11 @@ func _build_scenic_props_incremental() -> void:
 		if not await _set_piece_platform_incremental():
 			return
 	# One woodland station per slice — each plants rows of trees through the
-	# corridor clearance sweep, and all three at once was a ~20 ms lump.
+	# corridor clearance sweep, and all three at once was a ~20 ms lump. The
+	# station itself is budget-checked per side now, so a fat station splits
+	# across two frames instead of landing whole.
 	for i in count:
-		_build_spur_woodland(first + i, 1)
+		await _build_spur_woodland(first + i, 1, true)
 		if _slice_spent() and not await _keep_streaming():
 			return
 	if _on_lake and _owns_platform:
@@ -1133,7 +1140,8 @@ func _build_ordinary_theme_scenery() -> void:
 
 func _build_ordinary_theme_scenery_incremental() -> void:
 	## Theme dress stays visually identical; forest and mountain yield between
-	## stands so fifty trees are not one hitch.
+	## stands so fifty trees are not one hitch. Country streams inside its own
+	## passes now — its fences and hedgerows were the same lump by another name.
 	match theme:
 		Env.CITY:
 			_scenery_city()
@@ -1142,7 +1150,7 @@ func _build_ordinary_theme_scenery_incremental() -> void:
 		Env.MOUNTAIN:
 			await _scenery_mountain_incremental()
 		Env.COUNTRY:
-			_scenery_country()
+			await _scenery_country(true)
 	if theme != Env.FOREST and theme != Env.MOUNTAIN and not await _keep_streaming():
 		return
 
@@ -1182,12 +1190,19 @@ func _plant_inland_carriageway_incremental() -> void:
 			return
 
 
-func _build_spur_woodland(first_station: int = 0, station_count: int = 5) -> void:
+func _build_spur_woodland(first_station: int = 0, station_count: int = 5, streamed: bool = false) -> void:
 	## Planting along the climb. The spur geometry is the same everywhere; what
 	## grows beside it follows the biome of this stretch, so a country rise is
 	## not ridden through a pine tunnel.
+	##
+	## `streamed` lets a frame boundary land between a station's two sides: each
+	## side runs its trees through the corridor sweep, and a whole station at
+	## once measured ~18 ms on the climb — the lump the climb used to pay mid
+	## frame.
 	var z0: float = float(chunk_index) * LENGTH
 	for station in range(first_station, mini(first_station + station_count, 5)):
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		var z: float = z0 + 3.2 + float(station) * 7.4
 		if z >= z0 + LENGTH:
 			continue
@@ -1203,6 +1218,8 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5) -> voi
 			continue
 		var towards_summit: float = 1.0 - clampf((distance - 80.0) / 1100.0, 0.0, 1.0)
 		for road_side in [-1.0, 1.0]:
+			if streamed and _slice_spent() and not await _keep_streaming():
+				return
 			# Near row only on most stations. The outer row carries more of the
 			# stand now that crowns may not lean over the spur — a tree slid back
 			# to clear the corridor still wants company beside it, not a gap.
@@ -1845,7 +1862,7 @@ func _finish_ribbon_incremental(
 	## ArrayMesh creation uploads geometry to the renderer. Publishing all three
 	## unique surfaces in one frame caused the remaining one-hitch-per-chunk spike,
 	## even though their CPU-side vertices were already built incrementally.
-	_build_markings(hard, z0)
+	await _build_markings(hard, z0, true)
 	if not await _keep_streaming():
 		return
 	if _on_spur:
@@ -2054,7 +2071,7 @@ func _view_bands() -> Array:
 	return out
 
 
-func _build_markings(b: LowPoly, z0: float) -> void:
+func _build_markings(b: LowPoly, z0: float, streamed: bool = false) -> void:
 	const LIFT := 0.015  # sits proud of the tarmac; no z-fighting
 	var stripe: Color = _pal["stripe"]
 	var step := LENGTH / float(STEPS)
@@ -2076,12 +2093,15 @@ func _build_markings(b: LowPoly, z0: float) -> void:
 				_p(zb, lx - 0.11, -LIFT),
 				stripe
 			)
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 	# Dashed lane dividers. Phase comes from world z, so dashes run unbroken
 	# across chunk seams.
 	var lanes: int = _path.LANE_COUNT
 	var dz := 0.5
 	var z := z0
+	var marks := 0
 	while z < z0 + LENGTH - 0.001:
 		if fposmod(z + dz * 0.5, DASH_PERIOD) < DASH_ON:
 			for lane in range(1, lanes):
@@ -2094,6 +2114,11 @@ func _build_markings(b: LowPoly, z0: float) -> void:
 					stripe
 				)
 		z += dz
+		marks += 1
+		# ~80 dashes of path samples was the head of `_finish_ribbon` — the whole
+		# stripe pass in one slice. Streamed builds get a boundary mid-run.
+		if marks % 16 == 0 and streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 
 # ------------------------------------------------------------------ prop API
@@ -3565,14 +3590,52 @@ func _field_gate(z: float, side: float) -> void:
 
 
 func _hedge_verge_incremental() -> void:
-	## The hedgerow pass for streamed chunks. It runs the one hedge builder so a
-	## streamed verge grows the same runs, gaps and gates as a synchronous one;
-	## a frame boundary on either side keeps it out of its neighbours' slice.
+	## Same hedgerow as `_hedge_verge` — identical rng draws, so a streamed verge
+	## grows the same runs, gaps and gates — but every blob walks the corridor
+	## clearance checks, and the whole strip measured up to ~35 ms on a scenic
+	## chunk. A budget check inside the run loop lets the frame boundary land
+	## mid-hedge instead of paying the whole verge in one slice.
 	if bool(get_meta("hedge_done", false)):
 		return
-	if not await _keep_streaming():
+	if theme == Env.CITY:
+		set_meta("hedge_done", true)
 		return
-	_hedge_verge()
+	var z0: float = float(chunk_index) * LENGTH
+	for side in [-1.0, 1.0]:
+		var hz := z0 + _rng.randf_range(0.0, 1.1)
+		while hz < z0 + LENGTH:
+			if _rng.randf() < 0.17:
+				var gap := _rng.randf_range(3.0, 8.0)
+				if theme == Env.COUNTRY and _rng.randf() < 0.5:
+					_field_gate(hz + gap * 0.5, side)
+				hz += gap
+				continue
+			var run_end := minf(hz + _rng.randf_range(7.0, 22.0), z0 + LENGTH)
+			var run_col: Color = (_pal["prop_a"] as Color).lerp(_pal["verge"], _rng.randf_range(0.15, 0.55))
+			var run_h := _rng.randf_range(1.1, 2.1)
+			while hz < run_end:
+				var lx: float = _mow_lateral(hz, side * (HALF_WIDTH + 3.0 + _rng.randf_range(0.0, 2.6)))
+				# Forced blobs skip `_footprint_is_clear`; without a tarmac test they grow
+				# on the slip road the moment spur chunks start dressing the verge again.
+				if ((_on_lake or _on_spur) and _viewpoint_reserves_sightline(hz, lx)) or _on_tarmac(hz, lx, 1.2):
+					hz += 2.0
+					continue
+				var w := _rng.randf_range(1.55, 2.55)
+				_blob(
+					hz, lx, Vector3(w, run_h * _rng.randf_range(0.82, 1.12), w * 0.78),
+					run_col.darkened(_rng.randf() * 0.18), 0.0, true, true
+				)
+				if _rng.randf() < 0.28:
+					var s := _rng.randf_range(0.4, 0.9)
+					_cube(
+						hz + 0.35,
+						_mow_lateral(hz, side * (HALF_WIDTH + 1.65 + _rng.randf() * 1.5)),
+						Vector3(s * 1.35, s * 0.72, s * 1.1),
+						(_pal["prop_c"] as Color).darkened(_rng.randf() * 0.22)
+					)
+				hz += _rng.randf_range(1.65, 2.45)
+				if _slice_spent() and not await _keep_streaming():
+					return
 	set_meta("hedge_done", true)
 
 
@@ -4227,16 +4290,32 @@ func _forest_back_band(z0: float, side: float, mood: float, pace: Callable = Cal
 			Flora.CONIFER if roll < 0.62 else (Flora.PINE if roll < 0.78 else Flora.BROADLEAF)
 		)
 		var tall := _rng.randf_range(13.0, 21.0)
-		_tree(species, z, lx, tall, deep.lightened(_rng.randf() * 0.14))
+		# Past ~80 m a grown tree is limbs the eye cannot pick out against the
+		# canopy wall behind it: a trunk, boughs and tiered skirts a hundred
+		# metres off is four to six instances where a single crown mass reads
+		# the same. The far band plants that mass instead — same z, same tint,
+		# a tenth of the vertex cost.
+		if absf(lx) - HALF_WIDTH > 80.0:
+			var w := tall * _rng.randf_range(0.38, 0.58)
+			_blob(
+				z,
+				lx,
+				Vector3(w, tall * _rng.randf_range(0.34, 0.55), w * _rng.randf_range(0.75, 1.05)),
+				deep.lightened(_rng.randf() * 0.14),
+				0.0,
+				true
+			)
+		else:
+			_tree(species, z, lx, tall, deep.lightened(_rng.randf() * 0.14))
 		if pace.is_valid() and _i % 3 == 2 and _slice_spent() and not await pace.call():
 			return
 	# The furthest layer is canopy, not trees: past a hundred metres a trunk is
 	# a pixel wide, so wide dark crowns sitting on the slope carry the treeline.
 	var wall_near := 88.0 if mood >= 0.16 else 60.0
-	for _i in _rng.randi_range(3, 5):
+	for _i in _rng.randi_range(3, 4):
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var lx: float = side * (HALF_WIDTH + _rng.randf_range(wall_near, 150.0))
-		var w := _rng.randf_range(9.0, 16.0)
+		var w := _rng.randf_range(10.0, 18.0)
 		_blob(
 			z,
 			lx,
@@ -4249,7 +4328,7 @@ func _forest_back_band(z0: float, side: float, mood: float, pace: Callable = Cal
 	# mid-layer that stops the floor reading as open grass between the trunks.
 	var fill_near := 15.0 if mood < 0.16 else 20.0
 	var fill_far := 46.0 if mood < 0.38 else 70.0
-	for _i in _rng.randi_range(4, 6):
+	for _i in _rng.randi_range(3, 5):
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var lx: float = side * (HALF_WIDTH + _rng.randf_range(fill_near, fill_far))
 		var s := _rng.randf_range(1.8, 4.2)
@@ -4646,10 +4725,14 @@ func _scenery_mountain_incremental() -> void:
 		return
 
 
-func _scenery_country() -> void:
+func _scenery_country(streamed: bool = false) -> void:
 	## Rolling farmland: hedged fields running off over the hills, post-and-rail
 	## along the verge, broadleaf trees and hay bales. No buildings — this route
 	## is meant to feel like nobody lives out here.
+	##
+	## `streamed` lets frame boundaries land between the stages: the fences,
+	## hedgerows and tree passes all answer clearance queries, so the whole pass
+	## in one slice was a ~20 ms lump on every other country chunk.
 	var z0: float = float(chunk_index) * LENGTH
 
 	# Field boundaries hugging both verges — mostly post-and-rail, with whole
@@ -4675,6 +4758,8 @@ func _scenery_country() -> void:
 				_field_gate(seg_end + 2.1, side)
 				seg_end += 4.2
 			bz = seg_end
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 	# Hedgerows: field boundaries marching away from the road over the swells.
 	for side in [-1.0, 1.0]:
@@ -4700,6 +4785,10 @@ func _scenery_country() -> void:
 				)
 				out += _rng.randf_range(2.2, 3.0)
 			hz += _rng.randf_range(30.0, 60.0)
+			if streamed and _slice_spent() and not await _keep_streaming():
+				return
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 	# Hedgerow oaks, pines, the odd birch clump, and one big field tree standing
 	# alone — a restrained English-country mix with no palms or tropical foliage.
@@ -4715,6 +4804,8 @@ func _scenery_country() -> void:
 				_tree(Flora.CONIFER, z, lx, _rng.randf_range(7.0, 12.0), tint.darkened(0.12))
 			else:
 				_tree(Flora.BIRCH, z, lx, _rng.randf_range(5.0, 8.0), tint.lightened(0.14))
+			if streamed and _slice_spent() and not await _keep_streaming():
+				return
 		if _rng.randf() < 0.5:
 			_tree(
 				Flora.BROADLEAF,
@@ -4723,6 +4814,8 @@ func _scenery_country() -> void:
 				_rng.randf_range(11.0, 15.0),
 				(_pal["prop_a"] as Color).darkened(_rng.randf() * 0.15)
 			)
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 	# Grass out across the fields themselves, thinning with distance — the verge
 	# planting alone stops at ~13 m and left everything beyond it a bare tinted
@@ -4737,6 +4830,8 @@ func _scenery_country() -> void:
 			z, lx, tuft,
 			(_pal["verge"] as Color).lerp(_pal["prop_a"], _rng.randf() * 0.5).darkened(_rng.randf() * 0.25)
 		)
+		if streamed and int(_i) % 10 == 9 and _slice_spent() and not await _keep_streaming():
+			return
 
 	# Round hay bales dotted through the fields, in loose little clusters rather
 	# than an even scatter — the way a baler actually leaves them behind.
@@ -6035,13 +6130,13 @@ func _dress_vista() -> void:
 func _dress_vista_incremental() -> void:
 	## Same passes in the same order, one stage per slice — the five loops in a
 	## row were a ~40 ms frame at the end of the basin build.
-	_build_far_bank_bands()
+	await _build_far_bank_bands(true)
 	if not await _keep_streaming():
 		return
-	_build_far_bank_ground()
+	await _build_far_bank_ground(true)
 	if not await _keep_streaming():
 		return
-	_build_vista_accent()
+	await _build_vista_accent(true)
 	if not await _keep_streaming():
 		return
 	await _dress_nose_tip_incremental()
@@ -6049,11 +6144,11 @@ func _dress_vista_incremental() -> void:
 		return
 	match _vp_theme:
 		Env.FOREST:
-			_dress_vista_forest()
+			await _dress_vista_forest(true)
 		Env.MOUNTAIN:
-			_dress_vista_mountain()
+			await _dress_vista_mountain(true)
 		_:
-			_dress_vista_country()
+			await _dress_vista_country(true)
 
 
 func _dress_nose_tip_incremental() -> void:
@@ -6123,12 +6218,14 @@ func _dress_nose_tip() -> void:
 				)
 
 
-func _dress_vista_forest() -> void:
+func _dress_vista_forest(streamed: bool = false) -> void:
 	## Yakushima / Ghost of Tsushima shrine forest: the gorge is a dark slot,
 	## water a long way down, cedar walls you cannot see the top of until you
 	## sit. The reveal is depth, not a postcard lake.
 	var z0 := _vp_centre - LENGTH * 0.5
 	for _i in 22:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		var z: float = _vp_centre + _rng.randf_range(-RoadPathGD.LAKE_SPAN, RoadPathGD.LAKE_SPAN)
 		if absf(z - _vp_centre) < 18.0:
 			continue
@@ -6145,6 +6242,8 @@ func _dress_vista_forest() -> void:
 			_far_bank_lift(z, out) if _far_bank_rise(z, out) >= 0.0 else _far_ground_lift(z, out)
 		)
 	for _i in 12:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.headland_crest(z)) + 8.0 + _rng.randf_range(0.0, 40.0)
 		if _height_above_water(z, out) < 10.0 or not _face_above_water(z, out, 2.0):
@@ -6161,6 +6260,8 @@ func _dress_vista_forest() -> void:
 			_face_ground_lift(z, out)
 		)
 	for _i in 8:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.viewpoint_near_shore(z)) + _rng.randf_range(-6.0, 14.0)
 		# Margin -0.5, not the old -1.5: a rock whose base sits a metre and a
@@ -6175,6 +6276,8 @@ func _dress_vista_forest() -> void:
 	# A near cedar rank gives the forest overlook a readable frame instead of a
 	# bare hillside. It is deliberately sparse: trunks, water and a clear gap.
 	for _i in 10:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		var z := _vp_centre + _rng.randf_range(-LENGTH * 0.5, LENGTH * 0.5)
 		var out: float = float(_path.viewpoint_near_shore(z)) + _rng.randf_range(28.0, 72.0)
 		if not _face_above_water(z, out, 2.0):
@@ -6189,12 +6292,14 @@ func _dress_vista_forest() -> void:
 		)
 
 
-func _dress_vista_mountain() -> void:
+func _dress_vista_mountain(streamed: bool = false) -> void:
 	## Glen Coe from the pass: a small tarn, scree to the water, peaks that
 	## actually fill the sky. Talus, snags, a few dwarf pines on the folds —
 	## not a forest, but not a quarry either.
 	var z0 := _vp_centre - LENGTH * 0.5
 	for _i in 16:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.headland_crest(z)) + 4.0 + _rng.randf_range(0.0, 80.0)
 		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.12:
@@ -6206,6 +6311,8 @@ func _dress_vista_mountain() -> void:
 			_rng.randf_range(-0.5, 0.5) + _face_ground_lift(z, out)
 		)
 	for _i in 14:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.headland_crest(z)) + 8.0 + _rng.randf_range(0.0, 64.0)
 		if _height_above_water(z, out) < 4.0 or not _face_above_water(z, out, 1.5):
@@ -6223,6 +6330,8 @@ func _dress_vista_mountain() -> void:
 			true
 		)
 	for _i in 8:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.headland_crest(z)) + 6.0 + _rng.randf_range(0.0, 40.0)
 		if _height_above_water(z, out) < 8.0 or not _face_above_water(z, out, 2.5):
@@ -6240,6 +6349,8 @@ func _dress_vista_mountain() -> void:
 		)
 	# Six bounded stands leave the central col open; each has a different depth.
 	for group: int in 6:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		var flank: float = -1.0 if group < 3 else 1.0
 		var band: int = group % 3
 		var group_z: float = _vp_centre + flank * (155.0 + float(band) * 175.0)
@@ -6257,12 +6368,14 @@ func _dress_vista_mountain() -> void:
 			_vista_rock(z, _vp_side * out, _rng.randf_range(4.0, 9.0), lift)
 
 
-func _dress_vista_country() -> void:
+func _dress_vista_country(streamed: bool = false) -> void:
 	## Wastwater / Art of Rally Wales: dark water, a sun path, screes, a pass
 	## between fells you look *through*. Heather on the near face, Kenney
 	## boulders as talus, trees only on the side folds.
 	var z0 := _vp_centre - LENGTH * 0.5
 	for _i in 11:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.headland_crest(z)) + 5.0 + _rng.randf_range(0.0, 55.0)
 		if float(_path.spur_deck_blend(z, _vp_side * out)) > 0.12:
@@ -6274,6 +6387,8 @@ func _dress_vista_country() -> void:
 			_rng.randf_range(-0.4, 0.5) + _face_ground_lift(z, out)
 		)
 	for _i in 18:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.headland_crest(z)) + 10.0 + _rng.randf_range(0.0, 48.0)
 		if _height_above_water(z, out) < 8.0 or not _face_above_water(z, out, 2.0):
@@ -6290,6 +6405,8 @@ func _dress_vista_country() -> void:
 			true
 		)
 	for _i in 14:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		var z: float = _vp_centre + _rng.randf_range(-RoadPathGD.LAKE_SPAN, RoadPathGD.LAKE_SPAN)
 		if absf(z - _vp_centre) < 55.0:
 			continue
@@ -6829,7 +6946,9 @@ func _build_lake_water_incremental() -> void:
 				col_bb,
 				col_ba
 			)
-		if i % 2 == 1 and _slice_spent() and not await _keep_streaming():
+		# Every strip costs a dozen shoreline samples; checking every other one
+		# let a pair run ~13 ms past the slice budget on a loaded frame.
+		if _slice_spent() and not await _keep_streaming():
 			return
 	var mesh: MeshInstance3D = b.commit_to(self, "ViewpointLake")
 	if mesh:
@@ -7183,7 +7302,7 @@ func _build_lake_edges() -> void:
 
 func _build_lake_edges_incremental() -> bool:
 	## Same dressing as `_build_lake_edges`, one Z strip per frame, then commit.
-	_build_lake_edge_boulders()
+	await _build_lake_edge_boulders(true)
 	if not await _keep_streaming():
 		return false
 	var fan_count := SCREE_FANS * 2 if _vp_theme == Env.MOUNTAIN else SCREE_FANS
@@ -7195,7 +7314,7 @@ func _build_lake_edges_incremental() -> bool:
 		_build_face_scree_fan(z0, face_run)
 		if not await _keep_streaming():
 			return false
-	_build_face_ledges()
+	await _build_face_ledges(true)
 	if not await _keep_streaming():
 		return false
 	_build_lake_reeds()
@@ -7204,7 +7323,7 @@ func _build_lake_edges_incremental() -> bool:
 	return await _build_basin_rocks_incremental()
 
 
-func _build_lake_edge_boulders() -> void:
+func _build_lake_edge_boulders(streamed: bool = false) -> void:
 	var z0 := _vp_centre - LENGTH * 0.5
 	# Boulders at and just under the waterline, in groups, and big enough to
 	# matter at a hundred and forty metres. The whole near shore sits in the
@@ -7212,6 +7331,8 @@ func _build_lake_edge_boulders() -> void:
 	# it contributed nothing but noise and the foreground read as empty water.
 	var groups: int = 6 if _vp_theme == Env.MOUNTAIN else 4
 	for group in groups:
+		if streamed and group > 0 and _slice_spent() and not await _keep_streaming():
+			return
 		var head_z: float = z0 + _rng.randf_range(0.0, LENGTH)
 		var head_out: float = float(_path.viewpoint_near_shore(head_z)) + _rng.randf_range(-14.0, 2.0)
 		for _i in 5:
@@ -7602,7 +7723,7 @@ func _far_ground_lift(z: float, out: float) -> float:
 	return _far_ground_y(z, out) - _terrain_surface_at(z, _vp_side * out).y
 
 
-func _build_far_bank_bands() -> void:
+func _build_far_bank_bands(streamed: bool = false) -> void:
 	## Three receding value bands on the far bank.
 	##
 	## The country overlook already does this and it is the best thing in the
@@ -7632,6 +7753,8 @@ func _build_far_bank_bands() -> void:
 	# it, each far enough back that the rank in front of it stands against it.
 	var ranks: Array[float] = [16.0, 82.0, 178.0]
 	while z < _vp_centre + 400.0:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		if sin((z - _vp_centre) * 0.021 + _vp_phase) < -0.18:
 			z += 9.0
 			continue
@@ -7688,7 +7811,7 @@ func _far_bank_ground_tone() -> Array[Color]:
 	return [Color("434c3d"), Color("242a21")]
 
 
-func _build_far_bank_ground() -> void:
+func _build_far_bank_ground(streamed: bool = false) -> void:
 	## Low masses on the ground between the shoreline and the treeline.
 	##
 	## No incremental twin, and that is deliberate: this is called from
@@ -7727,6 +7850,8 @@ func _build_far_bank_ground() -> void:
 	const FAR_OFFSET := 330.0
 	var groups: int = 14 if _vp_theme == Env.MOUNTAIN else (12 if _vp_theme == Env.FOREST else 11)
 	for group in groups:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 		# One clump per slot along the route, jittered so the slots do not read
 		# as slots. An even row of clumps is the pearl effect wearing a hat.
 		var head_z: float = (
@@ -7799,7 +7924,7 @@ func _build_far_bank_ground() -> void:
 			)
 
 
-func _build_vista_accent() -> void:
+func _build_vista_accent(streamed: bool = false) -> void:
 	## One bright diagonal per overlook.
 	##
 	## Every band in these frames is horizontal — treelines, banks, shorelines,
@@ -7825,6 +7950,8 @@ func _build_vista_accent() -> void:
 			var side := 1.0 if _rng.randf() < 0.5 else -1.0
 			var start_out: float = float(_path.viewpoint_far_shore(z0, _vp_centre)) + 46.0
 			for i in 9:
+				if streamed and i % 4 == 3 and _slice_spent() and not await _keep_streaming():
+					return
 				var t: float = float(i) / 8.0
 				var zz: float = z0 + side * t * 190.0
 				var shore: float = float(_path.viewpoint_far_shore(zz, _vp_centre))
@@ -7850,6 +7977,8 @@ func _build_vista_accent() -> void:
 			var z0: float = _vp_centre + _rng.randf_range(-200.0, -120.0)
 			var side2 := 1.0 if _rng.randf() < 0.5 else -1.0
 			for i in 14:
+				if streamed and i % 4 == 3 and _slice_spent() and not await _keep_streaming():
+					return
 				var t: float = float(i) / 13.0
 				var zz: float = z0 + side2 * t * 260.0
 				var near: float = float(_path.viewpoint_near_shore(zz))
@@ -8002,7 +8131,7 @@ func _face_ledge(z: float, out: float, size: Vector3, color: Color) -> void:
 	_ledge_cols.append(color)
 
 
-func _build_face_ledges() -> void:
+func _build_face_ledges(streamed: bool = false) -> void:
 	## Broken lines of rock shelves at the stratum boundaries — the crisp edge
 	## the vertex-colour bands cannot draw at seven-metre vertex spacing. The
 	## eye reads geology from the lit top edge of a shelf against the shadowed
@@ -8017,6 +8146,8 @@ func _build_face_ledges() -> void:
 	for run in [0.16, 0.42, 0.66]:
 		var z := z0 + _rng.randf_range(0.0, 6.0)
 		while z < z0 + LENGTH - 4.0:
+			if streamed and _slice_spent() and not await _keep_streaming():
+				return
 			var prof := _face_profile(z)
 			if prof.is_empty():
 				z += _rng.randf_range(6.0, 10.0)
@@ -8415,14 +8546,18 @@ func _build_far_shore_incremental() -> void:
 			_rng.randf_range(7.0, 13.0) if _vp_theme == Env.MOUNTAIN else _rng.randf_range(10.0, 16.0)
 		)
 		_tree(species, z, _vp_side * out, tall, tint, true, _far_bank_lift(z, out))
-		if i % 8 == 7 and _slice_spent() and not await _keep_streaming():
+		if i % 4 == 3 and _slice_spent() and not await _keep_streaming():
 			return
 	if not await _keep_streaming():
 		return
 	if _vp_theme == Env.FOREST:
 		# Same close-set bank rank as the sync path.
 		var tz := z0 + 4.0
+		var step_n := 0
 		while tz < z0 + z_span:
+			step_n += 1
+			if step_n % 48 == 0 and _slice_spent() and not await _keep_streaming():
+				return
 			if absf(tz - _vp_centre) > 34.0 and sin((tz - _vp_centre) * 0.018 + _vp_phase) > -0.28:
 				var tout: float = float(_path.viewpoint_far_shore(tz, _vp_centre)) + _rng.randf_range(8.0, 30.0)
 				if _far_bank_rise(tz, tout) >= 2.5:
@@ -9003,7 +9138,13 @@ func _set_piece_platform_incremental() -> bool:
 	_platform_step(rng, _build_platform_gate)
 	if not await _keep_streaming():
 		return false
-	_platform_step(rng, _build_platform_walk)
+	# The walk's three lanterns each instantiate a packed scene and its bollard
+	# light, and the pergola is a dozen timber members through the clearance
+	# sweep — one step for both was a 50 ms lump on arrival.
+	_platform_step(rng, _build_platform_lanterns)
+	if not await _keep_streaming():
+		return false
+	_platform_step(rng, _build_platform_pergola)
 	if not await _keep_streaming():
 		return false
 	_platform_step(rng, _build_platform_trees)
@@ -9082,6 +9223,11 @@ func _build_platform_gate() -> void:
 
 
 func _build_platform_walk() -> void:
+	_build_platform_lanterns()
+	_build_platform_pergola()
+
+
+func _build_platform_lanterns() -> void:
 	var centre := _vp_centre
 	# Promenade lanterns along the parking side of the walk: tall enough to read
 	# as street furniture from the road, behind the benches so the seated view
@@ -9089,11 +9235,12 @@ func _build_platform_walk() -> void:
 	# cap); the middle one keeps its emissive glass.
 	for offset in [-12.0, 0.0, 12.0]:
 		_viewpoint_lantern(centre + offset, RoadPathGD.PLATFORM_HALF_WIDTH + 1.05, absf(offset) > 1.0)
-	_build_platform_pergola()
 
 
 func _viewpoint_lantern(z: float, out: float, lit: bool) -> void:
-	var packed: PackedScene = load("res://scenes/lookout_bollard.tscn")
+	var packed: PackedScene = _lookout_scene("res://scenes/lookout_bollard.tscn")
+	if packed == null:
+		return
 	var lamp: Node3D = packed.instantiate()
 	var lateral := _platform_lateral(out, z)
 	lamp.transform = Transform3D(_path.frame_flat_at(z), _p(z, lateral, -0.05 - _terrace_floor_at(z, lateral)))

@@ -180,6 +180,19 @@ func _build_surfaces(preview: SubViewport) -> void:
 		instances.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		preview.add_child(instances)
 
+	# The far-ground slopes at every overlook draw a runtime `duplicate()` of
+	# the terrain material flipped to UNSHADED - a different program from the
+	# shaded one above, so the vista chunk used to pay its compile on the frame
+	# the basin first appeared (~200 ms of draw time, mid-arrival).
+	var far_ground: StandardMaterial3D = LowPolyGD.terrain_material().duplicate() as StandardMaterial3D
+	far_ground.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var far_mesh := MeshInstance3D.new()
+	far_mesh.mesh = RoadChunkGD.unit_cube()
+	far_mesh.material_override = far_ground
+	far_mesh.position = Vector3(14.0, -6.0, 0.0)
+	far_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	preview.add_child(far_mesh)
+
 	# The contact patch under every car. Nothing draws one until traffic does,
 	# so without this the first car to appear pays for it mid-ride.
 	var contact_shadow := MeshInstance3D.new()

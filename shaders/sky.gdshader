@@ -119,7 +119,10 @@ float star_layer(vec3 dir, float density, float cut, float radius, float halo, f
 
 
 void sky() {
-	int octaves = AT_CUBEMAP_PASS ? 2 : 5;
+	// Screen path runs one octave short of the old five: the finest wisp layer
+	// was a third of the cloud cost and read as shimmer rather than as sky on
+	// an integrated GPU. The radiance cube stays at two, as before.
+	int octaves = AT_CUBEMAP_PASS ? 2 : 4;
 	float up = EYEDIR.y;
 	float h = max(up, 0.0);
 	float t = TIME + sky_phase;
@@ -144,7 +147,7 @@ void sky() {
 	vec2 uv = cloud_uv(EYEDIR);
 	vec2 drift = vec2(t * cloud_speed, t * cloud_speed * 0.37);
 	if (cloud_opacity > 0.001 && up > -0.02) {
-		int warp_oct = AT_CUBEMAP_PASS ? 1 : 3;
+		int warp_oct = AT_CUBEMAP_PASS ? 1 : 2;
 		vec2 warp = vec2(
 			fbm(uv * 0.72 + drift, warp_oct),
 			fbm(uv * 0.72 + drift + vec2(5.2, 1.7), warp_oct)
@@ -174,7 +177,7 @@ void sky() {
 		if (!AT_CUBEMAP_PASS) {
 			vec2 cirrus_uv = EYEDIR.xz / (h + 0.22) * 0.55 + drift * 1.7;
 			cirrus_uv.x *= 2.4;
-			float cirrus = fbm(cirrus_uv, 3);
+			float cirrus = fbm(cirrus_uv, 2);
 			cirrus = smoothstep(0.52, 0.78, cirrus) * smoothstep(0.12, 0.42, h);
 			cirrus *= (1.0 - cloud_alpha) * cloud_opacity * 0.16;
 			col = mix(col, mix(cloud_lit, vec3(1.0), 0.22), cirrus);
