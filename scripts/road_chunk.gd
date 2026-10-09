@@ -6897,6 +6897,21 @@ func _build_lake_water() -> void:
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 
+var _lake_surface: Dictionary = {}
+
+
+func _lake_surface_y(z: float, out: float) -> float:
+	## Ground height at a sheet-grid node. The 4x4 dry test shares its edge
+	## samples with every neighbouring quad, so each node pays its basin
+	## queries once instead of four times.
+	var key := Vector2(z, out)
+	var surface: Variant = _lake_surface.get(key)
+	if surface == null:
+		surface = float(_path.height_at(z)) - float(_path.terrain_drop(_vp_side * out, z))
+		_lake_surface[key] = surface
+	return surface
+
+
 func _lake_quad_dry(za: float, zb: float, out_a: float, out_b: float) -> bool:
 	## True when the ground under this stretch of the sheet stands entirely
 	## above the water.
@@ -6914,8 +6929,7 @@ func _lake_quad_dry(za: float, zb: float, out_a: float, out_b: float) -> bool:
 		var z: float = lerpf(za, zb, float(i) / float(SAMPLES))
 		for j in SAMPLES + 1:
 			var out: float = lerpf(out_a, out_b, float(j) / float(SAMPLES))
-			var surface: float = float(_path.height_at(z)) - float(_path.terrain_drop(_vp_side * out, z))
-			if surface <= _vp_water_y + 0.05:
+			if _lake_surface_y(z, out) <= _vp_water_y + 0.05:
 				return false
 	return true
 
