@@ -98,6 +98,11 @@ func _process(delta: float) -> void:
 			_finish_fade()
 	_maybe_overlap_next()
 	if _voice_playing():
+		# Track the live position, not only the last pause. The final save on
+		# exit runs after the voices have stopped, so it falls back to this
+		# value; left at the pause or boot position it overwrote the right one
+		# and the song came back somewhere the player had never left it.
+		_resume_position = _voice().get_playback_position()
 		_save_timer += delta
 		if _save_timer >= SAVE_INTERVAL:
 			_save_timer = 0.0
