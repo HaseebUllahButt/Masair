@@ -27,7 +27,7 @@ uniform float seed = 0.0;
 // dropped over the corners.
 uniform float split_tone : hint_range(0.0, 0.5) = 0.065;
 uniform vec3 warm : source_color = vec3(1.02, 0.94, 0.80);
-uniform vec3 cool : source_color = vec3(0.78, 0.85, 1.00);
+uniform vec3 cool : source_color = vec3(0.85, 0.90, 1.00);
 // Film never reaches black. After ACES and the contrast adjustment every
 // backlit tree and the whole road clipped to 0, and a clipped shadow has no
 // colour and no depth. Lifting the toe toward a cool lavender keeps the darkest
@@ -82,7 +82,7 @@ void fragment() {
 	// Luminance split-tone: dusk-pastel shadows, warm-cream highlights.
 	c *= mix(dark_tint, light_tint, smoothstep(0.06, 0.62, lum)) * (1.0 + lum_split) - lum_split;
 
-	c *= mix(warm, cool, edge * 0.85) * (1.0 + split_tone) - split_tone;
+	c *= mix(warm, cool, edge * 0.55) * (1.0 + split_tone) - split_tone;
 	c *= 1.0 - edge * vignette;
 
 	c += (hash(SCREEN_UV * vec2(1279.0, 721.0) + seed) - 0.5) * grain;
