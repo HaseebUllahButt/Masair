@@ -21,7 +21,7 @@ const RANGE_SHADER: Shader = preload("res://shaders/horizon.gdshader")
 ## panel-to-panel turn out of its light, and `slope_rock` bares steep ground
 ## (see the shader for all three).
 const RING := {
-	"treeline": 105.0, "woods": Color("2b4a3a"), "snow_bias": 0.0, "light_soft": 0.3, "azimuth_flatten": 0.85
+	"treeline": 170.0, "woods": Color("34573f"), "snow_bias": -0.10, "light_soft": 0.3, "azimuth_flatten": 0.85
 }
 ## Keyed by RoadChunk.Env.
 const OVERLOOK := {
@@ -97,13 +97,18 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	## ring carries almost no haze, so the foot colour *is* its value, and at
 	## the old depth a shaded panel rendered inside the frame's darkest three
 	## percent, a navy cut-out against the sky.
-	mat.set_shader_parameter("foot_color", fog.darkened(0.18).lerp(Color("46607c"), 0.42))
+	## Real rock, not a tint. The user wants mountains that look like
+	## mountains: cool grey granite above dark green-grey scrub, white caps,
+	## and only the air between eye and ridge making far ranges paler and
+	## bluer. Night walks both toward the fog so the skyline stays moonlit.
+	var daylight_r := clampf(fog.get_luminance() * 2.2, 0.15, 1.0)
+	mat.set_shader_parameter("foot_color", Color("5c6a50").lerp(fog.darkened(0.2), 0.6 * (1.0 - daylight_r)))
 	## The crest is what a tall face is mostly made of, so this is effectively
 	## the mid and far ranges' surface colour. Pale enough to light up cream
 	## under the grade's warm highlights once, it now sits a shade deeper and
 	## bluer — still clearly above the foot, but a slate the sun can put a lit
 	## side on without bleaching.
-	var crest: Color = fog.darkened(0.08).lerp(Color("5d7d9d"), 0.55)
+	var crest: Color = Color("a6a49d").lerp(fog.darkened(0.1), 0.6 * (1.0 - daylight_r))
 	mat.set_shader_parameter("crest_color", crest)
 	## What an up-facing plane collects from the dusk dome. This is the term
 	## that keeps the backlit face off zero without smearing sunset over it.
@@ -119,7 +124,7 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	## mountains are made of; at the old depth it and the shaded rock behind
 	## it merged into one near-black silhouette.
 	var woods: Color = profile["woods"]
-	mat.set_shader_parameter("forest_color", fog.darkened(0.08).lerp(woods, 0.55 * daylight))
+	mat.set_shader_parameter("forest_color", fog.darkened(0.15).lerp(woods, 0.85 * daylight))
 	mat.set_shader_parameter("mist_color", fog.lerp(haze, 0.25).lerp(Color("9fb4cc"), 0.45 * daylight))
 	mat.set_shader_parameter("sun_dir", toward_sun)
 	## Light, because the haze it lays on is the mist colour and the mist is

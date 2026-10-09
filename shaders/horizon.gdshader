@@ -139,7 +139,7 @@ void fragment() {
 	// side. Note this is the *internal* spread only — the whole frame's
 	// light-to-dark ratio also has to survive tonemapping and the grade LUT
 	// above it, and at dusk the air is what finally sets that.
-	float lum = mix(0.42, 1.0, lit);
+	float lum = mix(0.50, 1.05, lit);
 	lum += 0.16 * dome * dome;
 	lum *= mix(0.90, 1.08, grit_v);
 	lum *= mix(0.88 + 0.08 * light_soft, 1.08, relief);
@@ -195,7 +195,7 @@ void fragment() {
 	// front, and a fixed snowline puts that whole window under snow — the
 	// tallest peak in the frame arrives as a blank pale sheet. Far ranges
 	// hold snow on their tips alone so the visible face stays rock.
-	float snow_edge = 0.64 + snow_bias + 0.38 * smoothstep(0.30, 0.70, haze_v)
+	float snow_edge = 0.64 + snow_bias + 0.16 * smoothstep(0.30, 0.70, haze_v)
 		+ (relief - 0.5) * 0.22 - (rake - 0.5) * 0.08;
 	float hold = smoothstep(0.05, 0.38, n.y);
 	// The nearest ring is foothills: caps start on the ranges behind.
@@ -203,11 +203,11 @@ void fragment() {
 	float cap = smoothstep(snow_edge - 0.03, snow_edge + 0.05, lift_v) * hold;
 	// Rock ribs cut through the snowfield down the couloirs.
 	cap *= smoothstep(0.22, 0.46, couloir + (lift_v - snow_edge) * 1.4);
-	float snow_amt = max(snow_v * hold, cap) * 0.85;
+	float snow_amt = max(snow_v * hold, cap);
 	// Held a step under white and only lightly warmed: a sunlit cap through the
 	// filmic curve and the warm grade went to cream and spread beige over the
 	// sun side of every range.
-	vec3 snow_lit = mix(snow_color, snow_color * haze_color * 1.3, 0.25) * 0.82;
+	vec3 snow_lit = mix(snow_color, snow_color * haze_color * 1.3, 0.25) * 0.93;
 	vec3 snow_shade = snow_color * vec3(0.56, 0.66, 0.88) * 0.78 + sky_color * 0.08;
 	col = mix(col, mix(snow_shade, snow_lit, lit), snow_amt);
 
@@ -243,7 +243,7 @@ void fragment() {
 	// cream card no matter its value. A far range therefore has to arrive
 	// saturated — violet-blue deep enough that its red channel never reaches
 	// the warm part of the curve. The multiplier carries that hue.
-	vec3 air = mix(mix(mist_color, sky_color, 0.55), haze_color, 0.10) * vec3(0.50, 0.66, 1.07);
+	vec3 air = mix(mix(mist_color, sky_color, 0.55), haze_color, 0.06);
 	// A linear haze weight is fine up to the third range, but at the fourth's
 	// 0.66 it erased almost half the mountain's own colour — which is where the
 	// biggest silhouette in the frame lived, and it arrived as a flat pale
@@ -256,8 +256,8 @@ void fragment() {
 	// returns as one tan mountain standing among blue ones. Even the closest
 	// range sits inside a kilometre and a half of air.
 	float haze_w = clamp(
-		0.04 + (1.0 - (1.0 - haze_v) * (1.0 - haze_v)) * 0.62 + weather_haze * (0.45 + haze_v),
-		0.0, 0.62
+		0.03 + haze_v * 0.55 * (1.0 - 0.2 * haze_v) + weather_haze * (0.45 + haze_v),
+		0.0, 0.55
 	);
 	// Air dims as well as veils: a kilometre of path eats the key light before
 	// it scatters it back, so a range never ends up brighter than its own foot.
@@ -269,7 +269,7 @@ void fragment() {
 	// ...and it cools what is left of it. The warm key is scattered out of the
 	// light long before the light is gone, so the residual rock colour shifts
 	// blue with distance on top of the veil the mix lays over it.
-	col *= mix(vec3(0.93, 0.97, 1.05), vec3(0.72, 0.86, 1.18), haze_v);
+	col *= mix(vec3(1.0), vec3(0.90, 0.95, 1.04), haze_v);
 	// The air takes the facet's own light with it. Mixing toward one flat air
 	// colour collapses the lit/shade split as the weight climbs, and at the
 	// far band that is the whole of the mountain's form — the silhouette stays
