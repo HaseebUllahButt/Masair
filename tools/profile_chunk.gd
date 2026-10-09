@@ -4,6 +4,7 @@ extends SceneTree
 ##   godot --headless --path . --script res://tools/profile_chunk.gd
 
 const RoadChunkGD: GDScript = preload("res://scripts/road_chunk.gd")
+const RoadPathGD: GDScript = preload("res://scripts/road_path.gd")
 
 
 func _initialize() -> void:
@@ -11,6 +12,15 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	for arg in OS.get_cmdline_user_args():
+		var kv := arg.trim_prefix("--").split("=", true, 1)
+		if kv.size() == 2 and kv[0] == "seed":
+			var path: Node = get_root().get_node_or_null("RoadPath")
+			if path == null:
+				path = RoadPathGD.new()
+				path.name = "RoadPath"
+				get_root().add_child(path)
+			path.call("set_world_seed", int(kv[1]))
 	for theme in range(4):
 		_run_chunk(24 + theme, theme, "highway")
 	var overlook := int(floor(2800.0 / 40.0))

@@ -729,6 +729,10 @@ func _dress_shoulder_immediate() -> void:
 	_grass_verge()
 	_hedge_verge()
 	_publish_shoulder(from_index)
+	# Liner trees land with the shoulder, after it: anywhere the rider can
+	# already see grass, the side road can already show its trees. They are
+	# tagged after the shoulder pass so they keep their scenic corridor.
+	_build_scenic_stub()
 
 
 func _dress_shoulder_incremental() -> void:
@@ -745,6 +749,10 @@ func _dress_shoulder_incremental() -> void:
 	if not await _keep_streaming():
 		return
 	await _publish_shoulder_incremental(from_index)
+	if not await _keep_streaming():
+		return
+	# Same order as the sync shoulder: liner last so the scenic tag sticks.
+	await _build_scenic_stub_incremental()
 
 
 func _publish_shoulder(from_index: int) -> void:
@@ -854,10 +862,11 @@ func _build_scenic_props_incremental() -> void:
 		return
 	var scenic_marks := _prop_marks()
 	var scenic_from := get_child_count()
-	# Three woodland stations — denser tunnel so the climb does not read as
-	# sparse pop-in once the dress window is ahead of the camera.
-	var first := 2 if bool(get_meta("stub_done", false)) else 0
-	var count := 1 if bool(get_meta("stub_done", false)) else 3
+	# All five woodland stations — the same coverage the synchronous pass
+	# publishes. Chunks that already grew their liner row in the props stub
+	# only run the fill phase here; the rest plant the whole stand. One
+	# station per slice keeps the hitch profile the split bought.
+	var phase := 2 if bool(get_meta("stub_done", false)) else 0
 	# Water sheet first so the basin exists as soon as the rider commits; woodland
 	# and the far skirt can trail by a few frames without a hole in the view.
 	if _on_lake and _owns_platform:
@@ -874,9 +883,9 @@ func _build_scenic_props_incremental() -> void:
 		if not await _set_piece_platform_incremental():
 			return
 	# One woodland station per slice — each plants rows of trees through the
-	# corridor clearance sweep, and all three at once was a ~20 ms lump.
-	for i in count:
-		_build_spur_woodland(first + i, 1)
+	# corridor clearance sweep, and all five at once was a ~20 ms lump.
+	for i in 5:
+		_build_spur_woodland(i, 1, phase)
 		if _slice_spent() and not await _keep_streaming():
 			return
 	if _on_lake and _owns_platform:
@@ -1026,7 +1035,7 @@ func _build_scenic_props() -> void:
 	if _owns_platform:
 		_set_piece_platform()
 	if bool(get_meta("stub_done", false)):
-		_build_spur_woodland(2, 3)
+		_build_spur_woodland(0, 5, 2)
 	else:
 		_build_spur_woodland()
 	_build_viewpoint_landscape()
@@ -1054,13 +1063,14 @@ func ensure_scenic_dress() -> void:
 
 
 func _wants_junction_stub() -> bool:
-	## Woodland at the gore so the exit is not a hole while the unused climb
-	## and lake stay unbuilt.
+	## Woodland liner with the props pass so the lane is never a bare ribbon
+	## waiting on the scenic queue — at the gore it is what the exit looks like
+	## before the rider commits, and for a rider who never commits it is the
+	## only dressing the unused climb ever gets.
 	if not _on_spur or _path == null:
 		return false
 	var z := float(chunk_index) * LENGTH + LENGTH * 0.5
-	var divergence: float = float(_path.spur_divergence(z))
-	return divergence >= 0.08 and divergence < RoadPathGD.CORRIDOR_COMMIT
+	return float(_path.spur_divergence(z)) >= 0.08
 
 
 func _build_scenic_stub() -> void:
@@ -1070,7 +1080,7 @@ func _build_scenic_stub() -> void:
 		return
 	var marks := _prop_marks()
 	var from_index := get_child_count()
-	_build_spur_woodland(0, 2)
+	_build_spur_woodland(0, 5, 1)
 	_commit_props(marks)
 	_tag_new_children(from_index, "scenic")
 	set_meta("stub_done", true)
@@ -1083,7 +1093,7 @@ func _build_scenic_stub_incremental() -> void:
 		return
 	var marks := _prop_marks()
 	var from_index := get_child_count()
-	_build_spur_woodland(0, 2)
+	_build_spur_woodland(0, 5, 1)
 	if not await _keep_streaming():
 		return
 	await _commit_props_incremental(marks)
@@ -1182,32 +1192,74 @@ func _plant_inland_carriageway_incremental() -> void:
 			return
 
 
-func _build_spur_woodland(first_station: int = 0, station_count: int = 5) -> void:
+func _spur_tree(species: int, z: float, lateral: float, height: float, color: Color, escape: float = 0.0) -> void:
+	## Woodland row planting with a hole-fill retry. `_tree` refuses a site that
+	## cannot be slid clear of the corridor — on the spur that used to leave a
+	## bare station every time a plant landed near a band edge. `escape` is the
+	## signed direction that walks the retry away from the corridor: +1 of the
+	## row's own side on the open flank, 0 between the gore's two bands, where
+	## no sideways step can rescue a straddle and the open ground should stay
+	## open anyway.
+	var try_lateral := lateral
+	for _retry in 3:
+		var before: int = _trunks.size() + _crowns.size() + _conifers.size()
+		_tree(species, z, try_lateral, height, color, true)
+		if _trunks.size() + _crowns.size() + _conifers.size() > before:
+			return
+		if escape == 0.0:
+			return
+		try_lateral += escape * 6.0
+
+
+func _build_spur_woodland(first_station: int = 0, station_count: int = 5, phase: int = 0) -> void:
 	## Planting along the climb. The spur geometry is the same everywhere; what
 	## grows beside it follows the biome of this stretch, so a country rise is
 	## not ridden through a pine tunnel.
+	##
+	## `phase` splits the work the streaming passes share. 1 plants only the
+	## near row — the liner the props pass lays down early so the lane is never
+	## bare ribbon waiting on the scenic queue. 2 is the fill the scenic pass
+	## adds once the rider commits — the back row and the undergrowth. 0 is
+	## both at once, for the synchronous setup/tests.
 	var z0: float = float(chunk_index) * LENGTH
 	for station in range(first_station, mini(first_station + station_count, 5)):
 		var z: float = z0 + 3.2 + float(station) * 7.4
 		if z >= z0 + LENGTH:
 			continue
 		var distance: float = absf(z - _vp_centre)
-		var divergence: float = float(_path.spur_divergence(z))
 		var half: float = float(_path.spur_half_width(z))
+		# The lane wants trees from the moment it is a lane. Gating on the
+		# divergence (and on the widened half-width) used to leave the whole
+		# deceleration stretch bald even though its outer verge was already
+		# open ground; the corridor sweep itself keeps the gore and both bands
+		# clear wherever the two roads still run cheek by jowl.
+		if half < 1.6:
+			continue
 		var reveal: float = smoothstep(
 			RoadPathGD.PLATFORM_HALF_LENGTH + 90.0,
 			RoadPathGD.PLATFORM_HALF_LENGTH + 260.0,
 			distance
 		)
-		if divergence < 0.08 or half < 2.8 or reveal < 0.08:
-			continue
 		var towards_summit: float = 1.0 - clampf((distance - 80.0) / 1100.0, 0.0, 1.0)
 		for road_side in [-1.0, 1.0]:
-			# Near row only on most stations. The outer row carries more of the
-			# stand now that crowns may not lean over the spur — a tree slid back
-			# to clear the corridor still wants company beside it, not a gap.
-			for row in 2:
-				if row == 1 and (station % 2 == 1 or _rng.randf() > 0.38):
+			# The reveal suppresses only the view side — the trees that would
+			# stand between the arriving rider and the first sight of the lake.
+			# The inland row faces away from the terrace and keeps the lane
+			# lined all the way to the parking apron.
+			var view_side: bool = road_side == _vp_side
+			if view_side and reveal < 0.08:
+				continue
+			var side_reveal := reveal if view_side else 1.0
+			# The gore between the two bands must stay open — a rejected inner
+			# planting has nowhere to step but onto a carriageway. The outer
+			# flank always has somewhere further out to try.
+			var escape: float = road_side if view_side else 0.0
+			# Near row on every station, the back row on most. The outer row
+			# carries more of the stand now that crowns may not lean over the
+			# spur — a tree slid back to clear the corridor still wants company
+			# beside it, not a gap.
+			for row in range(1 if phase == 2 else 0, 2):
+				if row == 1 and _rng.randf() > 0.6:
 					continue
 				var jitter_z: float = z + _rng.randf_range(-2.0, 2.0)
 				# Sample the spur at the plant point, not the station. The apron
@@ -1221,9 +1273,9 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5) -> voi
 					continue
 				match _vp_theme:
 					Env.MOUNTAIN:
-						var height: float = _rng.randf_range(8.0, 14.0) * lerpf(0.70, 1.0, reveal)
+						var height: float = _rng.randf_range(8.0, 14.0) * lerpf(0.70, 1.0, side_reveal)
 						var species: int = Flora.CONIFER if _rng.randf() < 0.78 + towards_summit * 0.15 else Flora.PINE
-						_tree(species, jitter_z, lateral, height, Color("243830").lerp(Color("4a5640"), _rng.randf() * 0.35), true)
+						_spur_tree(species, jitter_z, lateral, height, Color("243830").lerp(Color("4a5640"), _rng.randf() * 0.35), escape)
 						if _rng.randf() < 0.4:
 							var rock_s := _rng.randf_range(1.2, 2.8)
 							_blob(
@@ -1236,15 +1288,45 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5) -> voi
 								true
 							)
 					_:
-						var height: float = _rng.randf_range(11.0, 17.5) * lerpf(0.70, 1.0, reveal)
+						var height: float = _rng.randf_range(11.0, 17.5) * lerpf(0.70, 1.0, side_reveal)
 						if _vp_theme == Env.FOREST:
 							height *= 1.08
 						var tint: Color = Color("2a4634").lerp(Color("4a6840"), _rng.randf() * 0.42)
-						var conifer_odds := 0.22 + towards_summit * 0.55
+						var species: int
 						if _vp_theme == Env.FOREST:
-							conifer_odds = 0.42 + towards_summit * 0.35
-						var species: int = Flora.CONIFER if _rng.randf() < conifer_odds else Flora.BROADLEAF
-						_tree(species, jitter_z, lateral, height, tint.darkened(float(row) * 0.14), true)
+							# Conifers carry the climb; birch breaks the wall up —
+							# the same stand mix the forest road itself grows.
+							var conifer_odds := 0.42 + towards_summit * 0.35
+							species = Flora.CONIFER if _rng.randf() < conifer_odds else Flora.BIRCH
+						else:
+							# Country climb: hedgerow oaks and beech, the same
+							# broadleaf shape the farmland verges grow.
+							species = Flora.BROADLEAF if _rng.randf() < 0.78 else Flora.BIRCH
+						_spur_tree(species, jitter_z, lateral, height, tint.darkened(float(row) * 0.14), escape)
+			if phase == 1:
+				continue
+			if _vp_theme == Env.COUNTRY:
+				# The country climb is a hedged lane, not a plantation: a low
+				# hawthorn-dark run right at the verge carries the hedgerow the
+				# oaks stand behind. It stations every pass — a hedge that only
+				# shows on some stations reads as scattered bushes.
+				for _h in 2:
+					var hedge_z: float = z + _rng.randf_range(-3.4, 3.4)
+					var hedge_half: float = float(_path.spur_half_width(hedge_z))
+					var hedge_centre: float = _vp_side * float(_path.spur_offset(hedge_z))
+					var hedge_lateral: float = hedge_centre + road_side * (
+						hedge_half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(1.7, 2.9)
+					)
+					if not _on_tarmac(hedge_z, hedge_lateral, 1.2):
+						_blob(
+							hedge_z,
+							hedge_lateral,
+							Vector3(_rng.randf_range(1.7, 2.7), _rng.randf_range(0.9, 1.6), _rng.randf_range(1.5, 2.3)),
+							(_pal["prop_a"] as Color).lerp(_pal["verge"], _rng.randf_range(0.15, 0.55)).darkened(_rng.randf() * 0.18),
+							0.0,
+							true,
+							true
+						)
 			if _rng.randf() > 0.72:
 				continue
 			var under_z: float = z + _rng.randf_range(-2.6, 2.6)
@@ -1256,13 +1338,13 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5) -> voi
 			if _on_tarmac(under_z, under_lateral, 1.4):
 				continue
 			var under_species: int = Flora.CONIFER if _vp_theme == Env.MOUNTAIN else (Flora.BIRCH if _rng.randf() < 0.48 else Flora.BROADLEAF)
-			_tree(
+			_spur_tree(
 				under_species,
 				under_z,
 				under_lateral,
-				_rng.randf_range(4.6, 7.4) * reveal,
+				_rng.randf_range(4.6, 7.4) * side_reveal,
 				Color("4e6844").darkened(_rng.randf() * 0.2),
-				true
+				escape
 			)
 			var bush_z: float = z + _rng.randf_range(-3.0, 3.0)
 			var bush_half: float = float(_path.spur_half_width(bush_z))
@@ -2753,19 +2835,19 @@ func _tree(
 			# functions keep every limb tip and crown edge inside ~0.7·height of
 			# the trunk axis) and reaching below the ground line for the crown
 			# that dips under its own fork. Where the bound clears, no real part
-			# can reach the corridor; where it slides, the wider need carries the
-			# whole tree out past anything a part could ask for — either way the
-			# grow-measure-shift dance below is skipped. Only a bound caught
-			# between two bands (INF) falls through to the per-part verdict: a
-			# slimmer real tree can still fit where the cylinder cannot.
+			# can reach the corridor and the grow-measure-shift dance below is
+			# skipped. But the cylinder charges ~0.95·height of horizontal reach
+			# to every tree — nearly twice a real crown's — so a nonzero bound
+			# was sliding roadside planting another dozen metres off the verge
+			# it was meant to line, and each retry walked it further still.
+			# Only a *clear* bound may skip the per-part verdict now: anything
+			# else is measured against the parts that actually grew, which is
+			# also what lets a slimmer real tree stand where the cylinder could
+			# not.
 			var bound := _foliage_road_push(
 				base + _origin, height * 0.95, base.y + _origin.y - height * 0.2, true
 			)
-			measure = is_inf(bound)
-			if bound != 0.0 and not is_inf(bound):
-				lateral += bound
-				_rng.state = rng_state
-				continue
+			measure = bound != 0.0
 		var frame := Transform3D(Basis(Vector3.UP, _rng.randf_range(0.0, TAU)), base)
 		var marks := {
 			"trunks": _trunks.size(), "crowns": _crowns.size(), "conifers": _conifers.size()
@@ -3087,7 +3169,10 @@ func apply_corridor(on_scenic: bool, committed: bool, drop_unused: bool = false)
 	## occupying RAM and draw lists.
 	if not _on_spur:
 		return
-	var show_highway := not on_scenic or not committed
+	# The main road's roadside stays: its trees and hedges stand in plain view
+	# of the side road a hundred-odd metres away, and culling them made the
+	# woods beside the climb blink out the moment the rider took the exit.
+	var show_highway := true
 	var show_scenic := on_scenic or not committed
 	var flags := (1 if show_highway else 0) | (2 if show_scenic else 0)
 	if flags == _corridor_flags:
