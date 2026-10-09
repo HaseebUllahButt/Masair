@@ -201,14 +201,14 @@ class Capture:
 			streamer.call("reset_world")
 
 	func _prepare_catalog() -> void:
-		## Three seeds whose first biome (and therefore first overlook) is each
+		## One seed whose first biome (and therefore first overlook) is each
 		## rural theme. The permutation is shuffled from the seed, so walking
 		## small integers is enough.
 		var path := get_tree().root.get_node("RoadPath")
-		var labels := {1: "forest", 3: "mountain", 4: "country"}
+		var labels := {1: "forest", 4: "country"}
 		var seeds := {}
 		var probe := 1
-		while seeds.size() < 3 and probe < 20000:
+		while seeds.size() < labels.size() and probe < 20000:
 			path.call("set_world_seed", probe)
 			var theme_id: int = int(path.call("theme_for_chunk", 0))
 			if theme_id in labels and not seeds.has(theme_id):

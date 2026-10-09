@@ -37,12 +37,12 @@ uniform float wet : hint_range(0.0, 1.0) = 0.0;
 // vertex colour decoded to 0.04 linear, and once the grade's contrast had it the
 // lower half of every screenshot was flat black with lane paint floating on it.
 uniform float tone : hint_range(0.5, 3.0) = 1.95;
-// Soft charcoal rather than pure tarmac black, and deliberately warm-leaning:
-// the grade lifts every dark pixel toward lavender, which is wanted on shaded
-// hillsides but turns the largest dark surface in the frame aubergine. A warm
-// counter-tint lands the road back on charcoal while the grade keeps its cast
-// on everything else.
-uniform vec3 tarmac_tint : source_color = vec3(1.015, 1.005, 0.96);
+// Soft charcoal rather than pure tarmac black. Two casts fight on the road:
+// the grade lifts every dark pixel toward lavender, and the day/dusk keys are
+// golden, so a neutral albedo renders as packed dirt. The first counter-tint
+// went warm and the road stayed chocolate; a slight cool lean lands the road
+// on charcoal without letting the lavender back in.
+uniform vec3 tarmac_tint : source_color = vec3(0.98, 1.01, 1.03);
 // Horizon colour, pushed from main.gd with the water's. Even rough tarmac turns
 // into a mirror at a grazing angle: the road ahead picks up the sky and the
 // ribbon runs pale into the distance, which is most of what makes a long road

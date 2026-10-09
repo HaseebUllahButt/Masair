@@ -198,6 +198,10 @@ func mood_speed_mul(mood: int) -> float:
 
 
 func mood_active_cap(mood: int) -> int:
+	# The floor of three is for real difficulties; zero means "no traffic",
+	# which is how the screenshot tool clears the road for detour captures.
+	if max_active <= 0:
+		return 0
 	return maxi(3, int(round(float(max_active) * float(MOOD_ACTIVE_MUL[_mood_index(mood)]))))
 
 
