@@ -944,9 +944,15 @@ func _viewpoint_land_drop(z: float, out: float, centre_z: float) -> float:
 	# surface is the water: a spit at the waterline with the bay closing
 	# over it. Sinking the top alone left the face at road height — the dome.
 	var under := smoothstep(LAKE_SPAN * 0.92, LAKE_SPAN * 1.4, absf(z - centre_z))
-	var crest := lerpf(-headland_rise(z, crest_line), water + 0.5, under)
+	# The drowned tail has to stay well under the sheet: these values are a
+	# drop below the road plane, so *water + x* is what sits x under the
+	# surface. Barely-submerged was still not enough — the ribbon's
+	# metres-wide chords wobble across the level and a near-waterline tail
+	# draws thin slivers trailing the point. A metre and a half down, none
+	# of it can breach.
+	var crest := lerpf(-headland_rise(z, crest_line), water + 1.6, under)
 	if out <= crest_line:
-		return lerpf(-headland_rise(z, out), water + 0.5, under)
+		return lerpf(-headland_rise(z, out), water + 1.6, under)
 	if out <= near:
 		# The face: from the crest down past the waterline. It goes over the edge
 		# steeply and eases into the shore, rather than the other way round —
@@ -971,11 +977,22 @@ func _viewpoint_land_drop(z: float, out: float, centre_z: float) -> float:
 		var tread := floorf(seg)
 		var riser_at := 0.52 + 0.16 * sin(tread * 2.9 + z * 0.017)
 		var riser_len := 0.30 + 0.10 * sin(tread * 1.7 + 4.1)
-		fall = (tread + smoothstep(riser_at, riser_at + riser_len, seg - tread)) / benches
+		var fall_stepped := (tread + smoothstep(riser_at, riser_at + riser_len, seg - tread)) / benches
+		var toe := water + lerpf(0.4, 2.6, under)
 		# The face carries on under the surface rather than stopping at it, so the
 		# waterline lands on the steep part of the slope instead of on the shelf
-		# at the end of it.
-		return lerpf(crest, water + 0.4, fall)
+		# at the end of it. Off the drowned tail the whole profile is under the
+		# sheet, so the toe has to dive with it — a toe left at wading depth is
+		# the stepped profile's noise wiggling in and out of the surface as a
+		# trail of slivers, and that is exactly what the spur overview showed.
+		#
+		# Same disease on the treads themselves: a stepped terrace landing within
+		# a metre or so of the level oscillates across it and draws a band of
+		# thin wafers trailing the point. Ease the stepping out where the slope
+		# meets the water so the shoreline stays one clean crossing.
+		var depth := absf(lerpf(crest, toe, fall_stepped) - water)
+		fall = lerpf(fall_stepped, fall, smoothstep(0.4, 1.5, depth))
+		return lerpf(crest, toe, fall)
 	if out <= far:
 		var s := (out - near) / maxf(far - near, 1.0)
 		return water + 1.6 + LAKE_BED * sin(PI * s)

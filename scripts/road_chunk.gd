@@ -1285,7 +1285,9 @@ func _ground_color(lateral: float, z: float) -> Color:
 		color = color.lerp(_deck_color(z, lateral), _deck_mix(z, lateral))
 		color = color.lerp(_terrace_color(), _terrace_mix(z, lateral))
 	if _on_lake:
-		color = color.lerp(_face_color(), _face_mix(z, lateral))
+		var face := _face_mix(z, lateral)
+		if face > 0.001:
+			color = color.lerp(_face_color(z, lateral), face)
 		color = color.lerp(_shore_color(), _shore_mix(z, lateral))
 		color = color.lerp(_wash_color(), _wash_mix(z, lateral))
 	return color
@@ -1389,16 +1391,50 @@ func _face_mix(z: float, lateral: float) -> float:
 	return band * (0.3 + 0.7 * grain) * (1.0 - float(_path.spur_deck_blend(z, lateral))) * tail
 
 
-func _face_color() -> Color:
+func _face_color(z: float = 0.0, lateral: float = 0.0) -> Color:
 	## Stone, from the same family as the range across the water, so the headland
 	## reads as belonging to the same country as its own skyline. Tinting the
 	## theme's foliage colour toward grey instead just gives greyish grass.
+	##
+	## The face is banded into beds. A single stone tone over thirty metres of
+	## drop is the smooth slab the scarp skin exists to fix, and vertex colour
+	## does at bench height what a relief skin cannot do at a hundred metres:
+	## the country's right-hand wall read as one glowing wedge precisely because
+	## every vertex on it carried the same colour. Beds wander a little along
+	## the shore, each keeps its own weathered tone, and the lower edge of each
+	## darkens where the bed above throws it into shadow.
+	var base := _face_base_color()
+	if not _on_lake or lateral * _vp_side <= 0.0:
+		return base
+	var out := absf(lateral)
+	var top := float(_path.headland_crest(z)) - 6.0
+	var near := float(_path.viewpoint_near_shore(z))
+	if out <= top or out >= near or near - top < 10.0:
+		return base
+	var t := (out - top) / (near - top)
+	var beds := t * 7.0 + 0.7 * sin(z * 0.045)
+	var frac := fposmod(beds, 1.0)
+	var bed_id := int(floorf(beds))
+	var weather := float(posmod(bed_id * 53 + int(floorf(z * 0.13)) * 17, 97)) / 97.0
+	# A sawtooth, not bands: each bed shades from sunlit cap down to shadowed
+	# foot, and the wrap from one bed to the next is a hard step in value.
+	# Seven-metre vertex colour cannot draw a thin seam — it falls between the
+	# samples — but it can draw a jump between two adjacent quads, and a row of
+	# jumps is what reads as a stratum. The foot cools as it darkens: bed shade
+	# is skylight, not less sun, and only a hue shift survives the warm key.
+	var shade := base.darkened(0.52).lerp(Color("454b52"), 0.35)
+	var col := base.darkened(0.05).lerp(shade, frac)
+	col = col.lerp(base.darkened(0.28), weather * 0.4)
+	return col.lightened(0.08 * (1.0 - t))
+
+
+func _face_base_color() -> Color:
 	match theme:
 		Env.MOUNTAIN:
 			return Color("a8adb4")
 		Env.FOREST:
 			return Color("857f6c")
-	return Color("b0a585")
+	return Color("a39a80")
 
 
 func _deck_mix(z: float, lateral: float) -> float:
@@ -2672,10 +2708,10 @@ func _vista_rock_tint() -> Color:
 	## view, and the only object in it not built from the biome palette.
 	match _vp_theme:
 		Env.MOUNTAIN:
-			return Color("5a5148")
+			return Color("4d4f48")
 		Env.FOREST:
 			return Color("3b4438")
-	return Color("6a5b45")
+	return Color("5f5747")
 
 
 func _vista_rock(z: float, lateral: float, scale: float, lift: float = 0.0, in_water: bool = false, freeboard: float = -1.0) -> void:
@@ -5229,7 +5265,10 @@ func _dress_vista_forest() -> void:
 	for _i in 8:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.viewpoint_near_shore(z)) + _rng.randf_range(-6.0, 14.0)
-		if not _face_above_water(z, out, -1.5):
+		# Margin -0.5, not the old -1.5: a rock whose base sits a metre and a
+		# half under the waterline floats brown in the shallows — the dark eggs
+		# offshore in the day frames were these.
+		if not _face_above_water(z, out, -0.5):
 			continue
 		_vista_rock(
 			z, _vp_side * out, _rng.randf_range(2.4, 5.5),
@@ -5456,9 +5495,9 @@ func _face_scarp_palette() -> Dictionary:
 				"seam": Color("3a3833"), "scree": Color("6e685c"),
 			}
 	return {
-		"lip": Color("6b754f"), "soil": Color("7d6d4f"),
-		"rock_hi": Color("d8d2bd"), "rock_lo": Color("968b70"),
-		"seam": Color("6a5d48"), "scree": Color("a2977e"),
+		"lip": Color("6b754f"), "soil": Color("6f6350"),
+		"rock_hi": Color("c9c2ae"), "rock_lo": Color("756e5e"),
+		"seam": Color("4e4a42"), "scree": Color("8e8672"),
 	}
 
 
@@ -5528,12 +5567,12 @@ func _scarp_relief(z: float, i: int, f: float) -> float:
 	var edge := smoothstep(0.0, 0.12, f) * (1.0 - smoothstep(0.86, 1.0, f))
 	var s := i >> 1
 	var bed := float(posmod(hash(Vector2i(s * 37 + 11, int(round(z * 0.5)))), 997)) / 997.0
-	var under := -0.18 * float(i & 1)
-	var jit := 0.12 * sin(z * 1.13 + float(i) * 1.97)
+	var under := -0.45 * float(i & 1)
+	var jit := 0.18 * sin(z * 1.13 + float(i) * 1.97)
 	# Craggier on the nose tail: out there the skin is the silhouette, and a
 	# metre of stratum is invisible — a rocky point wants blocks, not beds.
 	var crag := 1.0 + 1.7 * smoothstep(0.62, 1.3, absf(z - _vp_centre) / RoadPathGD.LAKE_SPAN)
-	return (0.18 + edge * (bed * 0.9 + under + jit)) * crag
+	return (0.22 + edge * (bed * 1.35 + under + jit)) * crag
 
 
 func _scarp_point(prof: Dictionary, z: float, i: int) -> Vector3:
@@ -5566,14 +5605,18 @@ func _scarp_color(pal: Dictionary, z: float, i: int, f: float) -> Color:
 	## a quad edge shared by two strips is coloured once.
 	var s := i >> 1
 	var tone := float(posmod(hash(Vector2i(s * 53 + 5, int(floorf(z * 0.04)))), 991)) / 991.0
-	var rock: Color = (pal["rock_hi"] as Color).lerp(pal["rock_lo"], 0.15 + 0.65 * tone)
-	rock = rock.lerp(pal["seam"], 0.55 * float(i & 1))
+	var rock: Color = (pal["rock_hi"] as Color).lerp(pal["rock_lo"], 0.08 + 0.8 * tone)
+	# The shaded underside of a bed is cooler than the lit cap — it is lit by
+	# the sky, not the sun. Same-hue darkening alone compresses to nothing under
+	# the warm key, which is why the beds used to read as one gold slope.
+	var seam_cool: Color = (pal["seam"] as Color).lerp(Color("3c4148"), 0.4)
+	rock = rock.lerp(seam_cool, 0.68 * float(i & 1))
 	var col: Color = (pal["lip"] as Color).lerp(pal["soil"], smoothstep(0.0, 0.06, f)).lerp(
 		rock, smoothstep(0.04, 0.16, f)
 	)
 	col = col.lerp(pal["scree"], smoothstep(0.8, 1.0, f))
 	var jit := float(posmod(hash(Vector2i(i * 91 + 13, int(round(z * 0.4)))), 997)) / 997.0
-	return col.darkened(jit * 0.13).lightened(0.05 * float(1 - (i & 1)))
+	return col.darkened(jit * 0.17).lightened(0.05 * float(1 - (i & 1)))
 
 
 func _add_face_scarp(b: LowPoly, za: float, zb: float, pal: Dictionary) -> bool:
@@ -5586,6 +5629,20 @@ func _add_face_scarp(b: LowPoly, za: float, zb: float, pal: Dictionary) -> bool:
 	var prof_a := _face_profile(za)
 	var prof_b := _face_profile(zb)
 	if prof_a.is_empty() or prof_b.is_empty():
+		return false
+	# The skin stands a fraction of a metre proud of the chord it is wrapped
+	# around — that is what makes the beds read. Off the drowned tail the chord
+	# itself is at the waterline, so the same stand-off breaches the surface:
+	# a trail of thin wafers and turf blobs floating in open water, the sliver
+	# line the spur overview drew trailing the point. A drowned face needs no
+	# rock skin — where the brow is already at the water, emit nothing.
+	var brow_a: float = prof_a["brow"]
+	var brow_b: float = prof_b["brow"]
+	var brow_a_y: float = (prof_a["pts"] as PackedVector3Array)[0].y + _origin.y
+	var brow_b_y: float = (prof_b["pts"] as PackedVector3Array)[0].y + _origin.y
+	# Both ends, not the higher one: a strip whose far end is barely proud still
+	# draws a wafer at the waterline, which is exactly the sliver being removed.
+	if minf(brow_a_y, brow_b_y) < _vp_water_y + 1.5:
 		return false
 	var rowa: Array[Vector3] = []
 	var rowb: Array[Vector3] = []
@@ -5608,8 +5665,6 @@ func _add_face_scarp(b: LowPoly, za: float, zb: float, pal: Dictionary) -> bool:
 			)
 	# Turf tufts overhanging the brow, hashed into place — the grass lip is
 	# what sells the top of a cliff, and a bare edge reads as a cut cake.
-	var brow_a: float = prof_a["brow"]
-	var brow_b: float = prof_b["brow"]
 	for k in 4:
 		var t := (float(k) + 0.5) / 4.0
 		var kz: float = za + t * (zb - za)
@@ -6214,7 +6269,11 @@ func _build_lake_edge_boulders() -> void:
 		for _i in 5:
 			var z: float = head_z + _rng.randf_range(-9.0, 9.0)
 			var out: float = head_out + _rng.randf_range(-7.0, 7.0)
-			if _height_above_water(z, out) > 3.0:
+			var above := _height_above_water(z, out)
+			# Drowned ground is no shore either: off the sunken tip of the point
+			# the stones come out standing in open water, a reef where there is
+			# no reef — the clump chain the spur overview drew across the lake.
+			if above > 3.0 or above < -0.9:
 				continue
 			# Big enough to read at a hundred and forty metres, small enough to still
 			# be a boulder. At 5.2 the blob is ten metres across — a third the height
@@ -6250,7 +6309,8 @@ func _build_lake_reeds() -> void:
 	for _i in 18:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var out: float = float(_path.viewpoint_near_shore(z)) + _rng.randf_range(-3.0, 8.0)
-		if _height_above_water(z, out) > 1.2:
+		var above := _height_above_water(z, out)
+		if above > 1.2 or above < -0.8:
 			continue
 		var s := _rng.randf_range(0.7, 1.6)
 		_blob(
@@ -6674,7 +6734,7 @@ func _far_bank_ground_tone() -> Array[Color]:
 		Env.FOREST:
 			return [Color("515e48"), Color("212c22")]
 		Env.MOUNTAIN:
-			return [Color("586160"), Color("2a3133")]
+			return [Color("4f5a57"), Color("2a3133")]
 		Env.COUNTRY:
 			return [Color("605e42"), Color("2e3424")]
 	return [Color("434c3d"), Color("242a21")]
@@ -6760,8 +6820,8 @@ func _build_far_bank_ground() -> void:
 			# bottom one or it is still one tone, and a lit face here is a warm
 			# face — a handful of them reads as scree catching the last of the sun,
 			# where a whole apron of them read as salmon laid on a bank.
-			if _rng.randf() < 0.2:
-				col = pale.lightened(_rng.randf() * 0.14)
+			if _rng.randf() < 0.14:
+				col = pale.lightened(_rng.randf() * 0.08)
 			# Big enough to be ground and low enough not to be a skyline: height is
 			# a third of the width, so a member overlaps its neighbours in plan and
 			# the clump closes into one mass instead of a row of separate lumps.
@@ -6987,7 +7047,10 @@ func _face_ledge(z: float, out: float, size: Vector3, color: Color) -> void:
 	var bz := normal.cross(bx).normalized()
 	var frame := Basis(bx, normal, bz).rotated(normal, _rng.randf_range(-0.10, 0.10))
 	var scaled := Basis(frame.x * size.z, frame.y * size.y, frame.z * size.x)
-	_ledges.append(Transform3D(scaled, point + normal * (size.y * 0.36)))
+	# Bedded two-thirds deep: on a convex reach of the face a slab stood proud
+	# at half thickness leaves its ends hanging off the chord, and the gap
+	# under the downhill end is what reads as floating.
+	_ledges.append(Transform3D(scaled, point + normal * (size.y * 0.18)))
 	_ledge_cols.append(color)
 
 
@@ -7016,9 +7079,9 @@ func _build_face_ledges() -> void:
 				z += _rng.randf_range(4.0, 8.0)
 				continue
 			var slab := Vector3(
-				_rng.randf_range(2.6, 4.4),
+				_rng.randf_range(2.4, 3.6),
 				_rng.randf_range(0.55, 1.05),
-				_rng.randf_range(4.5, 9.0)
+				_rng.randf_range(3.4, 6.4)
 			)
 			var tone := Color("8a8072").lerp(Color("6a6258"), _rng.randf())
 			if _vp_theme == Env.MOUNTAIN:
@@ -8081,7 +8144,7 @@ func _build_platform_pergola() -> void:
 	## so the vista bench sits under the canopy's edge, while the posts stay
 	## inside the bench line and out of its z span: a post through the seat is
 	## not shade. All of it stays outboard of the parking.
-	var timber := Color("5f432f")
+	var timber := Color("544839")
 	var stone := Color("8e8270")
 	var bloom := _platform_bloom()
 	var inner := RoadPathGD.PLATFORM_HALF_WIDTH + 1.15
@@ -8118,26 +8181,33 @@ func _build_platform_pergola() -> void:
 	while rz <= z_b + 0.31:
 		_deck_cube(rz, _platform_lateral(centre_out, rz), Vector3(width, 0.18, 0.09), timber, 0.0, HEIGHT + 0.26)
 		rz += 0.55
-	# Blossom along the rafters and hanging racemes under them — the bloom the
-	# biome would actually grow in a trough.
-	for _i in 24:
-		var bz: float = _rng.randf_range(z_a - 0.2, z_b + 0.2)
-		var bo: float = _rng.randf_range(inner - 0.3, outer + 0.3)
-		var s: float = _rng.randf_range(0.5, 0.9)
-		var col: Color = Color("486c44").darkened(_rng.randf() * 0.2)
-		if _rng.randf() < 0.5:
-			col = Color("a993cf").lerp(Color("d8cbe9"), _rng.randf() * 0.4)
-		_deck_blob(bz, _platform_lateral(bo, bz), Vector3(s * 1.4, s * 0.55, s * 1.2), col, HEIGHT + 0.3, true)
-	# Wisteria racemes: short, slim and lilac whatever the trough grows. Long
-	# lozenges in the trough's own colour hung at eye height like fruit — in the
-	# country's yellow they were a ceiling of bananas.
+	# A creeper over the rafters: clumps of small leaf pads, bloom worked into
+	# about half of them. The old pass scattered large flat mounds along the
+	# roofline, which at the bench's eye height read as a row of eggs.
+	for _i in 11:
+		var vz: float = _rng.randf_range(z_a - 0.3, z_b + 0.3)
+		var vo: float = _rng.randf_range(inner - 0.25, outer + 0.25)
+		var blooming := _rng.randf() < 0.45
+		for _k in _rng.randi_range(2, 4):
+			var bz: float = vz + _rng.randf_range(-0.55, 0.55)
+			var bo: float = vo + _rng.randf_range(-0.5, 0.5)
+			var s: float = _rng.randf_range(0.2, 0.36)
+			var col: Color = Color("486c44").darkened(_rng.randf() * 0.2)
+			if blooming and _rng.randf() < 0.35:
+				col = Color("a993cf").lerp(Color("d8cbe9"), _rng.randf() * 0.4)
+			_deck_blob(
+				bz, _platform_lateral(bo, bz),
+				Vector3(s * 1.5, s * 0.5, s * 1.3), col, HEIGHT + 0.26 + _rng.randf() * 0.14, true
+			)
+	# Wisteria racemes: short tapering chains of beads, wide at the rafter and
+	# narrowing to a tip. A single ellipsoid on a string read as an egg however
+	# it was tinted — a raceme is a cone of florets, so that is what each is.
 	var wisteria := Color("a993cf")
-	for _i in 34:
+	for _i in 26:
 		var hz: float = _rng.randf_range(z_a, z_b)
 		var ho: float = _rng.randf_range(inner + 0.2, outer - 0.2)
-		var hl: float = _rng.randf_range(0.22, 0.4)
-		var tint: Color = wisteria.lerp(Color("d8cbe9"), _rng.randf() * 0.5)
-		_deck_blob(hz, _platform_lateral(ho, hz), Vector3(0.14, hl, 0.14), tint, HEIGHT + 0.18 - hl, true)
+		var tint: Color = wisteria.lerp(Color("d8cbe9"), _rng.randf() * 0.55)
+		_deck_raceme(hz, _platform_lateral(ho, hz), HEIGHT + 0.2, tint)
 	# Lanterns hung off the rafters — the glow that reads as "sit here" at dusk.
 	# Emissive glass only; the chunk's two real lights are spent on the walk.
 	for lz in [z_a + 1.6, z_mid, z_b - 1.6]:
@@ -8159,13 +8229,51 @@ func _build_platform_pergola() -> void:
 	_deck_cube(z_mid, trough_lat, Vector3(0.6, 0.42, 1.6), Color("b8ac98"), 0.0, -0.04)
 	_deck_blob(z_mid, trough_lat, Vector3(0.55, 0.4, 1.4), Color("4a6a46"), 0.34, true)
 	for k in 3:
-		_deck_blob(z_mid - 0.5 + float(k) * 0.5, trough_lat, Vector3(0.4, 0.3, 0.4), bloom.lightened(0.05 * float(k)), 0.52, true)
+		_deck_bloom_cluster(z_mid - 0.5 + float(k) * 0.5, trough_lat, bloom.lightened(0.05 * float(k)), 0.52, 3, 0.14)
 	# Pots at both open ends, so the frame's thresholds are planted alike.
 	for pz in [z_a + 0.9, z_b - 0.9]:
 		var pot_lat: float = _platform_lateral(inner + 0.15, pz)
 		_deck_cube(pz, pot_lat, Vector3(0.5, 0.5, 0.5), Color("b8ac98"), 0.0, -0.04)
 		_deck_blob(pz, pot_lat, Vector3(0.46, 0.34, 0.46), Color("4a6a46"), 0.42, true)
-		_deck_blob(pz + 0.06, pot_lat, Vector3(0.3, 0.26, 0.3), bloom.lightened(0.08), 0.6, true)
+		_deck_bloom_cluster(pz, pot_lat, bloom.lightened(0.08), 0.6, 4, 0.16)
+
+
+func _deck_raceme(z: float, lateral: float, top: float, col: Color) -> void:
+	## One hanging raceme: a thread of stem, then beads tapering to a tip —
+	## the cone of florets a wisteria actually hangs in. A lone ellipsoid was
+	## an egg at eye height; a diminishing chain reads as the flower.
+	var length: float = _rng.randf_range(0.34, 0.55)
+	_deck_cube(z, lateral, Vector3(0.03, length + 0.12, 0.03), Color("44543a"), 0.0, top - length)
+	for k in 3:
+		var f := 0.2 + float(k) * 0.4
+		var s: float = lerpf(0.16, 0.085, float(k) / 2.0) * _rng.randf_range(0.9, 1.1)
+		_deck_blob(
+			z + _rng.randf_range(-0.04, 0.04),
+			lateral + _vp_side * _rng.randf_range(-0.04, 0.04),
+			Vector3(s * 1.15, s, s * 1.15),
+			col.lightened(0.06 * float(k)),
+			top - length * f - s * 0.9,
+			true
+		)
+
+
+func _deck_bloom_cluster(
+	z: float, lateral: float, col: Color, lift: float, count: int = 4, spread: float = 0.3
+) -> void:
+	## A tuft of small heads over a leaf mound. One bloom-sized ellipsoid is an
+	## egg from the bench; a handful of beads of mixed sizes is a flower head.
+	## Kept thumbnail-small and near the base hue — pale and fist-sized they
+	## were eggs again whatever else was true.
+	for _i in count:
+		var s := _rng.randf_range(0.075, 0.13)
+		_deck_blob(
+			z + _rng.randf_range(-spread, spread),
+			lateral + _vp_side * _rng.randf_range(-spread * 0.6, spread * 0.6),
+			Vector3(s * 1.2, s, s * 1.2),
+			col.lightened(_rng.randf() * 0.08),
+			lift + _rng.randf_range(-0.02, 0.06),
+			true
+		)
 
 
 func _build_platform_trees() -> void:
@@ -8290,6 +8398,7 @@ func _platform_bloom() -> Color:
 func _build_platform_planting() -> void:
 	# A couple of stone planters at the ends, not a hedge across the view.
 	var centre := _vp_centre
+	var bloom := _platform_bloom()
 	for end in [-1.0, 1.0]:
 		var pz: float = centre + end * 16.5
 		var plat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 1.8, pz)
@@ -8302,35 +8411,39 @@ func _build_platform_planting() -> void:
 			0.38,
 			true
 		)
+		_deck_bloom_cluster(pz, plat, bloom, 0.6, 3, 0.28)
 	# Troughs mid-terrace, flanking the centre, so the walk is a garden edge and
 	# not only a place to stand the bike.
-	var bloom := _platform_bloom()
 	for offset in [-7.5, 7.5]:
 		var pz: float = centre + offset
 		var plat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 1.7, pz)
 		_deck_cube(pz, plat, Vector3(1.3, 0.4, 0.62), Color("b8ac98"), 0.0, -0.04)
 		_deck_blob(pz, plat, Vector3(1.15, 0.4, 0.52), Color("4a6a46"), 0.34, true)
-		_deck_blob(pz + 0.32, plat, Vector3(0.5, 0.3, 0.42), bloom, 0.5, true)
-		_deck_blob(pz - 0.34, plat, Vector3(0.44, 0.26, 0.4), bloom.lightened(0.1), 0.46, true)
+		_deck_bloom_cluster(pz + 0.32, plat, bloom, 0.52, 4, 0.22)
+		_deck_bloom_cluster(pz - 0.34, plat, bloom.lightened(0.1), 0.48, 3, 0.18)
 	# Boulders and scrub on the back of the platform, screening the road.
+	# The stones are dark and bedded a third of their height into the verge —
+	# a smooth pale ball standing proud of the ground reads as an egg, not as
+	# a rock, and the face's own pale stone tone was the worst offender.
 	var reach: float = RoadPathGD.PLATFORM_HALF_LENGTH + 8.0
 	for _i in 11:
 		var z := centre + _rng.randf_range(-reach, reach)
 		var out: float = -RoadPathGD.PLATFORM_HALF_WIDTH - _rng.randf_range(1.0, 4.0)
 		var s := _rng.randf_range(0.7, 2.1)
+		var flat: float = _platform_lateral(out, z)
 		if _rng.randf() < 0.45:
 			_deck_blob(
 				z,
-				_platform_lateral(out, z),
-				Vector3(s * 1.5, s * 0.9, s * 1.4),
-				_face_color().darkened(_rng.randf() * 0.2),
-				-0.08,
+				flat,
+				Vector3(s * 1.8, s * 0.55, s * 1.5),
+				_face_base_color().lerp(Color("35322c"), 0.4).darkened(_rng.randf() * 0.18),
+				-s * 0.26,
 				false
 			)
 		else:
 			_deck_blob(
 				z,
-				_platform_lateral(out, z),
+				flat,
 				Vector3(s * 1.7, s * 0.6, s * 1.5),
 				(_pal["verge"] as Color).darkened(_rng.randf() * 0.28),
 				-0.06,
