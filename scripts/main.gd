@@ -283,8 +283,8 @@ const MOODS := {
 		"contrast": 1.16,
 		"saturation": 1.14,
 		# Day is the reference: the shader default is the hand-tuned charcoal,
-		# and this row only restates it so every mood pushes the same keys.
-		"road_tint": Color(1.02, 1.02, 0.97),
+		
+		"road_tint": Color(0.925,1.035,1.01),
 		"road_sheen": 0.16,
 	},
 	LightingMode.NIGHT:
@@ -738,7 +738,7 @@ static func _overcast(mood: Dictionary, r: float) -> Dictionary:
 	out["fog_density"] = mood["fog_density"] * (1.0 + r * 1.5)
 	# A closed sky is grey: the tarmac counter-tint eases back toward the day
 	# neutral as the weather takes the colour out of the light.
-	out["road_tint"] = (mood["road_tint"] as Color).lerp(Color(1.02, 1.02, 0.97), r * 0.7)
+	out["road_tint"] = (mood["road_tint"] as Color).lerp(Color(0.925,1.035,1.01), r * 0.7)
 	out["fog_aerial"] = lerpf(mood["fog_aerial"], 0.26, r)
 	out["fog_sky"] = lerpf(mood["fog_sky"], 0.2, r)
 	out["fog_sun_scatter"] = mood["fog_sun_scatter"] * (1.0 - r)
