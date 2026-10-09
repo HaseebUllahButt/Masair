@@ -187,8 +187,8 @@ const MOODS := {
 		# and warm, and that warm band is what makes the distance look like air
 		# instead of paint. It also feeds the sky ambient, so it warms the light
 		# on every shaded face in the world at the same time.
-		"zenith_color": Color("12457e"),
-		"mid_color": Color("79a8cc"),
+		"zenith_color": Color("10388c"),
+		"mid_color": Color("5590e0"),
 		"horizon_color": Color("f4d2a0"),
 		"ground_color": Color("505e57"),
 		"band_low": 0.10,
@@ -201,8 +201,8 @@ const MOODS := {
 		"sun_halo_falloff": 18.0,
 		"sun_disc": 1.0,
 		"moon_face": 0.0,
-		"cloud_lit": Color("f1ddbd"),
-		"cloud_dark": Color("718897"),
+		"cloud_lit": Color("f4e6cc"),
+		"cloud_dark": Color("6f88a2"),
 		"cloud_cover": 0.46,
 		"cloud_sharpness": 0.44,
 		"cloud_scale": 1.18,

@@ -4978,10 +4978,14 @@ func _build_decel_lane(hard: LowPoly, z0: float) -> void:
 
 
 ## Gore marking: a solid border down each side, thin chevrons between them.
-const GORE_LINE := 0.15  # half width of the two border lines
-const GORE_BAR := 0.22  # half width of a chevron, measured along the route
-const GORE_PITCH := 4.0  # route metres from one chevron to the next
-const GORE_SLANT := 0.85  # chevron run along the route per metre of gap
+## Widths are set against the saddle view, not the map: road paint on tarmac is
+## only ever seen at a grazing angle, where a nominal 30 cm line foreshortens to
+## a hairline. A real chevron is nearer 50 cm of laid paint — the fat bar is
+## what makes the wedge read as a marking instead of a texture seam.
+const GORE_LINE := 0.21  # half width of the two border lines
+const GORE_BAR := 0.34  # half width of a chevron, measured along the route
+const GORE_PITCH := 3.4  # route metres from one chevron to the next
+const GORE_SLANT := 0.62  # chevron run along the route per metre of gap
 
 
 func _build_gore_hatch(hard: LowPoly, z0: float) -> void:

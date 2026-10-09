@@ -271,11 +271,23 @@ func _process(_delta: float) -> bool:
 	bike.track_z = viewpoint_z
 	bike.lateral = viewpoint_side * float(path.call("spur_offset", viewpoint_z))
 	traffic.call("_process", 0.016)
-	check((traffic.get("_cars") as Array).is_empty(), "traffic despawns while the rider is on the scenic spur")
-	check(bool(traffic.get("_scenic_quiet")), "traffic stays quiet on the scenic spur")
+	check((traffic.get("_cars") as Array).is_empty(), "stale traffic still leaves through the distance window on the scenic spur")
+	# The junction fix: a car still inside the rider's window must not blink
+	# out the moment the rider turns up the side road — the highway is only
+	# metres away there and the pop was glaring. It keeps rolling and leaves
+	# when distance takes it.
+	var near := TrafficCarGD.new() as Node3D
+	traffic.add_child(near)
+	near.call("setup", 0, 1, viewpoint_z + 60.0, 24.0, 0)
+	(traffic.get("_cars") as Array).append(near)
+	traffic.call("_process", 0.016)
+	check((traffic.get("_cars") as Array).size() == 1, "visible traffic keeps rolling while the rider is on the scenic spur")
+	traffic.set("_timer", 0.0)
+	traffic.call("_process", 0.016)
+	check((traffic.get("_cars") as Array).size() == 1, "no new traffic spawns on the scenic spur")
 	bike.lateral = 0.0
 	traffic.call("_process", 0.016)
-	check(not bool(traffic.get("_scenic_quiet")), "traffic resumes on the main road")
+	check((traffic.get("_cars") as Array).size() > 1, "traffic resumes on the main road")
 
 	# Cruise holds speed without the throttle down, and the brake cancels it.
 	bike.speed = 22.0

@@ -33,6 +33,7 @@ func _initialize() -> void:
 	cap.viewpoint = opts.has("viewpoint")
 	cap.seated = opts.has("seated")
 	cap.detour = opts.has("detour")
+	cap.with_traffic = opts.has("traffic")
 	cap.spur = opts.has("spur")
 	cap.notraffic = opts.has("notraffic")
 	cap.overview = String(opts.get("overview", ""))
@@ -42,6 +43,7 @@ func _initialize() -> void:
 	cap.bike = int(opts.get("bike", 0))
 	cap.world_seed = int(opts.get("seed", 0))
 	cap.park_z = float(opts.get("z", -1.0))
+	cap.start_z = float(opts.get("startz", -1.0))
 	cap.shot_name = String(opts.get("name", ""))
 	cap.nohud = opts.has("nohud")
 	cap.catalog = opts.has("catalog")
@@ -83,8 +85,11 @@ class Capture:
 	var detour := false
 	## Park a QA camera on the scenic road at --z instead of the highway.
 	var spur: bool = false
-	## Empty the road of traffic. Implied by --detour.
+	## Empty the road of traffic. Implied by --detour, which only the
+	## junction-corridor QA wants overridden: --traffic rides the fork with the
+	## population intact.
 	var notraffic := false
+	var with_traffic := false
 	var seated := false
 	## Dev overview: a free camera looking at part of the overlook from outside.
 	## Judging a place you can only see from inside its own parking space costs
@@ -119,6 +124,9 @@ class Capture:
 	## Pin the world so a ride and a parked shot are of the same landscape. The
 	## route boots on a clock-time seed, which makes two runs incomparable.
 	var world_seed: int = 0
+	## Riding starts this far along the route — for detour runs that must reach
+	## the junction before an unlucky lorry ends them.
+	var start_z: float = -1.0
 	var tree_ref: SceneTree
 
 	var bench: bool = false
@@ -148,14 +156,24 @@ class Capture:
 			# (gamescope), the measured GPU time below is the honest number.
 			DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 			RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
-		if catalog or notraffic or detour:
+		if catalog or notraffic or (detour and not with_traffic):
 			# The autopilot steers for a line, not around obstacles, so a lorry in
 			# lane two ends every detour run long before the spur opens. Traffic is
-			# not what a detour capture is for.
+			# not what a detour capture is for — unless the capture is *of* the
+			# traffic at the fork, which is what --traffic is for.
 			var traffic := get_tree().root.find_child("TrafficManager", true, false)
 			if traffic:
 				traffic.set("max_active", 0)
 				traffic.call("reset_world")
+		elif detour and with_traffic:
+			# The autopilot still steers for a line through whatever is in it, and
+			# one lorry at the fork mouth ends the run before the corridor commits.
+			# Spawn protection stretched over the whole capture keeps the bike
+			# alive; the cars on the main road keep driving, which is the thing
+			# under test.
+			var rider := get_tree().root.find_child("Player", true, false)
+			if rider:
+				rider.set("_invuln", 1e9)
 		if nohud or catalog:
 			if hud:
 				hud.visible = false
@@ -173,6 +191,17 @@ class Capture:
 		elif park_z >= 0.0:
 			_park_on_road(park_z)
 		elif not menu:
+			if start_z >= 0.0:
+				var path := get_tree().root.get_node("RoadPath")
+				if world_seed == 0:
+					world_seed = 72117
+				_set_seed(world_seed)
+				var player := get_tree().root.find_child("Player", true, false)
+				player.track_z = start_z
+				player.call("_place")
+				var streamer := get_tree().root.find_child("RoadStreamer", true, false)
+				if streamer and streamer.has_method("reset_world"):
+					streamer.call("reset_world")
 			Input.action_press("throttle")
 		if look != "":
 			Input.action_press("look_%s" % look)
@@ -505,7 +534,11 @@ class Capture:
 		var path := "%s/%s%s.png" % [out_dir, stem, suffix] if shot_name != "" else "%s/%s%s_%02d.png" % [out_dir, stem, suffix, _taken]
 		img.save_png(path)
 		_ignore_next_frame = true
-		print("shot ", path)
+		var p := get_tree().root.find_child("Player", true, false)
+		if p:
+			print("shot ", path, " z=%.0f lat=%.1f" % [float(p.track_z), float(p.lateral)])
+		else:
+			print("shot ", path)
 		_taken += 1
 		_busy = false
 		if _taken >= shots:

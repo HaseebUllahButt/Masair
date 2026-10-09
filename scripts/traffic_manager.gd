@@ -29,7 +29,7 @@ var _rng := RandomNumberGenerator.new()
 var _path: Node
 var difficulty: int = 1
 var pack_chance: float = 0.18
-var _scenic_quiet: bool = false
+
 
 ## Traffic weather along the route. Indexed in this order by the mood tables.
 enum Mood { CLEAR, FLOW, PACK, CRAWL, WALL }
@@ -107,11 +107,7 @@ func set_difficulty(level: int) -> void:
 
 
 func reset_world() -> void:
-	_scenic_quiet = false
-	for car in _cars:
-		if is_instance_valid(car):
-			car.free()
-	_cars.clear()
+	_clear_cars()
 	_seed_from_world()
 	_timer = first_spawn_delay
 
@@ -209,11 +205,14 @@ func _process(delta: float) -> void:
 	if _player == null:
 		return
 	if _player_on_scenic():
-		if not _scenic_quiet:
-			_clear_cars()
-			_scenic_quiet = true
+		# Spawning pauses on the detour — there are no lanes for traffic up
+		# there — but the cars already on the carriageway must stay alive: the
+		# gore is only metres wide and the highway is still in frame as the
+		# rider pulls away, so freeing them here blinked every vehicle out at
+		# the commit point. They keep rolling and leave through the ordinary
+		# distance window instead.
+		_cleanup()
 		return
-	_scenic_quiet = false
 	_cleanup()
 	_timer -= delta
 	if _timer > 0.0:
