@@ -52,6 +52,7 @@ func _initialize() -> void:
 	cap.yaw = float(opts.get("yaw", 0.0))
 	cap.pitch = float(opts.get("pitch", 0.0))
 	cap.hide = String(opts.get("hide", ""))
+	cap.pick = opts.has("pick")
 	cap.tree_ref = self
 	root.add_child(cap)
 
@@ -120,6 +121,10 @@ class Capture:
 	## Comma-separated node names to hide — for telling one mesh's silhouette
 	## from another's when a shape cannot be traced back to its builder.
 	var hide: String = ""
+	## Ray-pick diagnostic: instead of a PNG, print which mesh paints each pixel
+	## of a coarse screen grid — for tracing a shape to its builder when hiding
+	## by name has ruled everything out. Skips image output entirely.
+	var pick := false
 	var _catalog_jobs: Array[Dictionary] = []
 	var _cam: Camera3D
 	## Pin the world so a ride and a parked shot are of the same landscape. The
@@ -395,6 +400,14 @@ class Capture:
 				var off: float = float(path.call("spur_offset", centre))
 				subject = path.call("point_at", centre, side * (off + 9.0))
 				eye = path.call("point_at", centre + 14.0, side * (off + 42.0)) + Vector3(0, 3.0, 0)
+			"face":
+				# Dead-on close-up of the headland face under the deck lip —
+				# where the hanging slat curtain shows from `across`.
+				var off_f: float = float(path.call("spur_offset", centre))
+				subject = path.call("point_at", centre - 8.0, side * (off_f + 41.0))
+				subject.y = 8.0
+				eye = path.call("point_at", centre + 4.0, side * (off_f + 95.0))
+				eye.y = 26.0
 			"bay":
 				# Standing on the platform looking back at the parking, kerb and
 				# parapet line — what the rider sees walking to the bench.
@@ -536,6 +549,13 @@ class Capture:
 		# the one that is actually drawn. A single post_draw can race the rig.
 		await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw
+		if pick:
+			_pick_report()
+			_taken += 1
+			_busy = false
+			if _taken >= shots:
+				tree_ref.quit(0)
+			return
 		var img := get_viewport().get_texture().get_image()
 		var stem := shot_name if shot_name != "" else mode
 		var suffix := ""
@@ -557,6 +577,122 @@ class Capture:
 			tree_ref.quit(0)
 		elif catalog:
 			_apply_catalog_job(_taken)
+
+	func _pick_report() -> void:
+		## Screen-space mesh census: cast the current camera's rays on a coarse
+		## grid, hit-test every committed triangle, and print one character per
+		## cell naming the owning node ('.' = void / sky pixel). Followed by the
+		## world hit positions so the region can be mapped back to the world.
+		var cam := get_viewport().get_camera_3d()
+		if cam == null:
+			print("pick: no active camera")
+			return
+		var batches: Array = []
+		_pick_collect(get_tree().root, batches, false)
+		var mm_batches: Array = []
+		_pick_collect(get_tree().root, mm_batches, true)
+		print("pick: %d mesh batches, %d mm batches, cam=%s" % [batches.size(), mm_batches.size(), cam.global_position])
+		var codes := {}
+		var next_code := 65
+		var size := get_viewport().get_visible_rect().size
+		var cols := 96
+		var rows := 40
+		for r in rows:
+			var line := "y%03d " % int(float(r) / float(rows) * size.y)
+			for c in cols:
+				var px := Vector2(
+					(float(c) + 0.5) / float(cols) * size.x,
+					(float(r) + 0.5) / float(rows) * size.y
+				)
+				var hit: Dictionary = _pick_ray(cam, px, batches)
+				var name: String = String(hit.get("name", ""))
+				if not codes.has(name):
+					codes[name] = char(next_code)
+					next_code += 1
+				line += codes[name]
+			print(line)
+		print("legend:")
+		for name in codes:
+			print("  %s = %s" % [codes[name], name if name != "" else "VOID"])
+		# World positions for a few cells, so distances are checkable.
+		for r in [int(rows * 0.55), int(rows * 0.7), int(rows * 0.9)]:
+			for c in [int(cols * 0.35), int(cols * 0.5), int(cols * 0.65)]:
+				var px := Vector2(
+					(float(c) + 0.5) / float(cols) * size.x,
+					(float(r) + 0.5) / float(rows) * size.y
+				)
+				var hit: Dictionary = _pick_ray(cam, px, batches)
+				print(
+					"cell(%d,%d) -> %s" % [c, r, hit]
+				)
+		var all := batches + mm_batches
+		for py in range(60, int(size.y * 0.75), 10):
+			var row := "band y%d |" % py
+			for px in range(int(size.x * 0.30), int(size.x * 0.55), 12):
+				var hit: Dictionary = _pick_ray(cam, Vector2(px, py), all)
+				var name := String(hit.get("name", "void"))
+				row += " %s@%.0f" % [name, float(hit.get("d", -1.0))]
+			print(row)
+
+	func _pick_collect(node: Node, batches: Array, include_mm: bool) -> void:
+		if include_mm and node is MultiMeshInstance3D and node.visible and node.multimesh and node.multimesh.mesh:
+			var mm: MultiMesh = node.multimesh
+			var faces: PackedVector3Array = mm.mesh.get_faces()
+			var aabb := mm.mesh.get_aabb()
+			var owner := String(node.get_parent().name) if node.get_parent() else "?"
+			for i in mm.instance_count:
+				var xf: Transform3D = node.global_transform * mm.get_instance_transform(i)
+				batches.append(
+					{
+						"name": "%s/%s#%d@%.0f,%.0f,%.0f" % [
+							owner, node.name, i, xf.origin.x, xf.origin.y, xf.origin.z
+						],
+						"tris": faces,
+						"aabb": aabb,
+						"xf": xf,
+					}
+				)
+		elif node is MeshInstance3D and node.visible and node.mesh:
+			batches.append(
+				{
+					"name": node.name,
+					"tris": node.mesh.get_faces(),
+					"aabb": node.mesh.get_aabb(),
+					"xf": node.global_transform,
+				}
+			)
+		for child in node.get_children():
+			_pick_collect(child, batches, include_mm)
+
+	func _pick_ray(cam: Camera3D, px: Vector2, batches: Array) -> Dictionary:
+		var origin := cam.project_ray_origin(px)
+		var dir := cam.project_ray_normal(px)
+		var best := {}
+		var best_t := INF
+		for batch in batches:
+			var xf: Transform3D = batch["xf"]
+			if absf(xf.basis.determinant()) < 1e-9:
+				continue
+			var inv := xf.affine_inverse()
+			var lo := inv * origin
+			var ld := inv.basis * dir
+			var box: AABB = batch["aabb"]
+			if not box.intersects_ray(lo, ld):
+				continue
+			var tris: PackedVector3Array = batch["tris"]
+			var i := 0
+			while i < tris.size():
+				var hit: Variant = Geometry3D.ray_intersects_triangle(
+					lo, ld.normalized(), tris[i], tris[i + 1], tris[i + 2]
+				)
+				if hit != null:
+					var world_hit: Vector3 = xf * hit
+					var d: float = origin.distance_to(world_hit)
+					if d < best_t:
+						best_t = d
+						best = {"name": batch["name"], "pos": world_hit, "d": snappedf(d, 0.1)}
+				i += 3
+		return best
 
 	func _report() -> void:
 		var ridden := maxf(_elapsed - warmup, 0.001)
