@@ -199,7 +199,7 @@ enum Field { GRAZED, PASTURE, CROP, MOWN, FALLOW }
 ## read as the same green lollipops going past.
 ## PINE is the timberline tree: a high, wind-shaped crown on a clean stem. It
 ## replaced a leafless snag, which from the saddle read as a burnt forest.
-enum Flora { BROADLEAF, CONIFER, BIRCH, PINE }
+enum Flora { BROADLEAF, CONIFER, BIRCH, PINE, VAULT }
 
 ## Bark colours. Wood is never the same green-brown twice, and a birch stand is
 ## recognisable at 200 m purely from the pale trunks.
@@ -1451,6 +1451,71 @@ func _build_spur_woodland(
 					Color("2a4634").lerp(Color("4a6840"), _rng.randf() * 0.42).darkened(0.06),
 					escape
 				)
+			# And the deep gore: once the shelf is really wide the reach cap
+			# leaves a hundred metres of bare embankment, which is the flat dark
+			# band the s1-z2500 climb shot reads as an unlit void. Scatter the
+			# rest of the shelf — mostly crown masses and stones, cheap at this
+			# range, with a few real trunks — so the inward glance meets a
+			# working hillside, not a wall of paint.
+			if not view_side and float(_path.spur_gap(z)) > 60.0 and _rng.randf() < 0.7:
+				var deep_z: float = z + _rng.randf_range(-3.4, 3.4)
+				var deep_centre: float = _vp_side * float(_path.spur_offset(deep_z))
+				var deep_half: float = float(_path.spur_half_width(deep_z))
+				var deep_gap: float = float(_path.spur_gap(deep_z))
+				var deep_reach: float = _rng.randf_range(50.0, maxf(minf(deep_gap - 16.0, 130.0), 51.0))
+				var deep_lateral: float = deep_centre + road_side * (deep_half + deep_reach)
+				if not _on_tarmac(deep_z, deep_lateral, 2.0):
+					var droll := _rng.randf()
+					if droll < 0.55:
+						var ds := _rng.randf_range(4.0, 8.0)
+						_blob(
+							deep_z,
+							deep_lateral,
+							Vector3(ds * 1.6, ds * _rng.randf_range(0.5, 0.85), ds * 1.3),
+							Color("1c3628").lerp(Color("315e3e"), _rng.randf()).darkened(_rng.randf() * 0.2),
+							0.0,
+							true
+						)
+					elif droll < 0.85:
+						_tree(
+							Flora.BROADLEAF if _vp_theme == Env.COUNTRY else Flora.CONIFER,
+							deep_z,
+							deep_lateral,
+							_rng.randf_range(7.0, 13.0),
+							Color("1a3024").lerp(Color("3a5a44"), _rng.randf())
+						)
+					else:
+						var rs := _rng.randf_range(1.8, 3.6)
+						_blob(
+							deep_z,
+							deep_lateral,
+							Vector3(rs * 1.7, rs * _rng.randf_range(0.7, 1.0), rs * 1.4),
+							Color("6f6d64").darkened(_rng.randf() * 0.22),
+							0.0,
+							false
+						)
+			if _arch_window(z) and _rng.randf() < 0.8:
+				# Cathedral-arch moment: on the window reaches of the upper
+				# climb, plant one high-crowned vault tree a step off the lane
+				# edge. Its underside is grown above FOLIAGE_OVERHANG_HEIGHT —
+				# the only height at which the corridor sweep already lets a
+				# crown lean over tarmac — so overlapping crowns from both
+				# verges read as a canopy closing overhead, ~10 m up.
+				var vault_z: float = z + _rng.randf_range(-2.4, 2.4)
+				var vault_half: float = float(_path.spur_half_width(vault_z))
+				var vault_centre: float = _vp_side * float(_path.spur_offset(vault_z))
+				var vault_lateral: float = vault_centre + road_side * (
+					vault_half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(1.2, 2.0)
+				)
+				if not (view_side and corridor > 0.35) and not _on_tarmac(vault_z, vault_lateral, 1.4):
+					_spur_tree(
+						Flora.VAULT,
+						vault_z,
+						vault_lateral,
+						_rng.randf_range(16.0, 19.0) * crown_scale,
+						Color("2a4634").lerp(Color("4a6840"), _rng.randf() * 0.42).darkened(0.04),
+						escape
+					)
 			if _rng.randf() > 0.5:
 				continue
 			var under_z: float = z + _rng.randf_range(-2.6, 2.6)
@@ -2018,7 +2083,11 @@ func _face_base_color() -> Color:
 		Env.MOUNTAIN:
 			return Color("a8adb4")
 		Env.FOREST:
-			return Color("857f6c")
+			# 857f6c was the whole cream dune: a warm pale grey under the day key
+			# renders as sand across the entire face. Country's fix applies here
+			# too — G ahead of R so the key lands moss, a step deeper for the
+			# forest's shaded-cedar read.
+			return Color("46584a")
 	# a39a80 rendered as orange clay — the sunlit bank face ringing the lake was
 	# the sand strip's biggest offender. Neutral 7d7c72 still went ochre on the
 	# bright hay ground under the warm key — the base has to start green for the
@@ -2125,7 +2194,9 @@ func _shore_color() -> Color:
 		Env.MOUNTAIN:
 			return Color("6a6e68")
 		Env.FOREST:
-			return Color("666a62")
+			# Same damp moss shingle the country band uses — 666a62 was a pale
+			# grey that caught the key and continued the sand ring into forest.
+			return Color("3f4c42")
 	# Country's grey still rendered as wet sand under the day key — the band
 	# sits flat and takes the full warm light. Dark moss-green shingle instead.
 	return Color("414a40")
@@ -2165,7 +2236,7 @@ func _wash_color() -> Color:
 		Env.MOUNTAIN:
 			return Color("7e7c72")
 		Env.FOREST:
-			return Color("7a766a")
+			return Color("4d5849")
 	# Same problem a step further up the bank: 807b6e sun-dries straight to
 	# straw. A green-grey gravel reads as the damp pasture edge it is.
 	return Color("525b4c")
@@ -2796,6 +2867,20 @@ func _band_hit(z: float, slat: float, need: float) -> bool:
 	)
 
 
+func _arch_window(z: float) -> bool:
+	## Where vault trees may plant: sparse ~32 m reaches of the upper climb,
+	## deterministic so neighbouring chunks plant the same stand. Never near
+	## the platform (the seated corridor keeps its full clear skyline) and only
+	## on the spur. The corridor rule itself never relaxes — a vault crown is
+	## grown so its underside clears FOLIAGE_OVERHANG_HEIGHT by design.
+	if not _on_spur:
+		return false
+	var d := absf(z - _vp_centre)
+	if d < 260.0 or d > RoadPathGD.SPUR_HALF_SPAN * 0.58:
+		return false
+	return posmod(int(z / 96.0), 3) == 0
+
+
 func _foliage_road_push(world_pos: Vector3, reach: float, bottom_y: float, sways: bool = true) -> float:
 	## How far to slide a plant along the road's lateral axis so none of it dips
 	## into the corridor: 0.0 when it already clears, a signed lateral delta to
@@ -3312,6 +3397,8 @@ func _tree(
 				_grow_birch(frame, height, color)
 			Flora.PINE:
 				_grow_pine(frame, height, color)
+			Flora.VAULT:
+				_grow_vault(frame, height, color)
 			_:
 				_grow_broadleaf(frame, height, color)
 		if not corridor_near or not measure:
@@ -3435,6 +3522,26 @@ func _grow_pine(frame: Transform3D, height: float, color: Color) -> void:
 	var bough := top + Vector3(cos(a) * reach, -crown_h * _rng.randf_range(0.35, 0.5), sin(a) * reach)
 	_limb(frame, top - Vector3(0, crown_h * 0.45, 0), bough, thickness * 0.45, bark.darkened(0.1))
 	_canopy(frame, bough - Vector3(0, crown_h * 0.15, 0), width * 0.55, crown_h * 0.5, color.darkened(0.08))
+
+
+func _grow_vault(frame: Transform3D, height: float, color: Color) -> void:
+	## The arch tree: a tall clean stem carrying one broad, flat crown mass
+	## whose underside is grown to sit above FOLIAGE_OVERHANG_HEIGHT — the only
+	## height at which the corridor sweep already lets foliage cross the spur
+	## band. No low boughs: anything under the floor would walk the whole tree
+	## back off the lane, so the shape is a pollarded vault, not a weeper.
+	var bark: Color = BARK.lerp(BARK_PALM, 0.35).lightened(_rng.randf() * 0.1)
+	var stem_h: float = height * _rng.randf_range(0.64, 0.70)
+	var thickness: float = height * _rng.randf_range(0.05, 0.065)
+	var lean := Vector3(_rng.randf_range(-0.05, 0.05), 0.0, _rng.randf_range(-0.05, 0.05)) * height
+	var top := lean + Vector3(0, stem_h, 0)
+	_limb(frame, Vector3.ZERO, top, thickness, bark)
+	var width: float = height * _rng.randf_range(0.95, 1.15)
+	var crown_h: float = (height - stem_h) * _rng.randf_range(1.05, 1.25)
+	# Underside = stem_h - crown_h * 0.08 ≈ 0.60-0.66 of the height; for the
+	# 16-19 m planting range that lands 9.7-11.5 m up — over the lane the way
+	# a pollarded lime crowns a cathedral close, never inside the corridor.
+	_canopy(frame, top - Vector3(0, crown_h * 0.08, 0), width, crown_h, color)
 
 
 func _glow_light(z: float, lateral: float, lift: float, color: Color, radius: float, energy: float) -> void:
@@ -3591,7 +3698,8 @@ func _asset_prop(
 	scale: float,
 	footprint_radius: float,
 	lift: float = 0.0,
-	face_road: bool = false
+	face_road: bool = false,
+	dress_mat: Material = null
 ) -> void:
 	## Imported props use the same road-footprint guard as generated scenery. A
 	## few instances per chunk add authored silhouettes without turning streaming
@@ -3611,6 +3719,8 @@ func _asset_prop(
 	else:
 		instance.rotation.y = _rng.randf_range(0.0, TAU)
 	instance.scale = Vector3.ONE * scale
+	if dress_mat != null:
+		_dress_imported_rock(instance, dress_mat)
 	add_child(instance)
 	_asset_count += 1
 
@@ -4938,7 +5048,16 @@ func _forest_verge(z0: float, side: float, pace: Callable = Callable()) -> void:
 		if _rng.randf() < 0.5:
 			var rock: PackedScene = _rock_scene(_rng.randf() < 0.5)
 			if rock:
-				_asset_prop(rock, z, lx, s * 2.1, s * 1.1)
+				# Untinted, the Kenney boulders land as orange litter on the
+				# verge — the tan blobs the summit shots kept catching. Dress
+				# them in the biome's own stone like `_vista_rock` does.
+				_asset_prop(
+					rock, z, lx, s * 2.1, s * 1.1,
+					0.0, false,
+					_vista_rock_material(
+						Color("3b4438").darkened(_rng.randf() * 0.2)
+					)
+				)
 			else:
 				_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
 		else:
@@ -5510,7 +5629,9 @@ func _scenery_country(streamed: bool = false) -> void:
 		if _field_kind_at(int(cside), absf(clx), cz) != Field.MOWN and _rng.randf() < 0.72:
 			continue
 		var bales: int = _rng.randi_range(2, 4)
-		var bale_color: Color = (_pal["prop_c"] as Color).lightened(_rng.randf_range(0.0, 0.1))
+		# No lightening: the pale end of the jitter is exactly where a bale
+		# stops being hay and starts being a dune.
+		var bale_color: Color = (_pal["prop_c"] as Color).darkened(_rng.randf_range(0.0, 0.1))
 		for _j in bales:
 			var z := cz + _rng.randf_range(-4.0, 4.0)
 			var lx: float = clx + _rng.randf_range(-4.0, 4.0)
@@ -6594,8 +6715,11 @@ func _build_basin_roadside(streamed: bool = false) -> void:
 		for _i in _rng.randi_range(2, 5):
 			var z := cz + _rng.randf_range(-9.0, 9.0)
 			var lx: float = cx + _vp_side * _rng.randf_range(-8.0, 8.0)
+			# Ground to the drawn chord, not the analytic surface — the copse
+			# trees and their skirts were the floaters on the s1 face.
+			var lift := _face_ground_lift(z, absf(lx))
 			if _vp_theme == Env.COUNTRY:
-				_tree(Flora.BROADLEAF, z, lx, _rng.randf_range(5.5, 10.5), tint)
+				_tree(Flora.BROADLEAF, z, lx, _rng.randf_range(5.5, 10.5), tint, false, lift)
 			else:
 				var roll := _rng.randf()
 				_tree(
@@ -6607,19 +6731,23 @@ func _build_basin_roadside(streamed: bool = false) -> void:
 					z,
 					lx,
 					_rng.randf_range(6.5, 13.0),
-					tint
+					tint,
+					false,
+					lift
 				)
 			if streamed and _slice_spent() and not await _keep_streaming():
 				return
 		# The clump's skirt — a stand with no undergrowth is lollipops on a lawn.
 		for _i in _rng.randi_range(2, 4):
 			var s := _rng.randf_range(1.2, 2.6)
+			var bz := cz + _rng.randf_range(-8.0, 8.0)
+			var bx: float = cx + _vp_side * _rng.randf_range(-7.0, 7.0)
 			_blob(
-				cz + _rng.randf_range(-8.0, 8.0),
-				cx + _vp_side * _rng.randf_range(-7.0, 7.0),
+				bz,
+				bx,
 				Vector3(s * 1.6, s * _rng.randf_range(0.5, 0.8), s * 1.4),
 				tint.darkened(_rng.randf_range(0.15, 0.35)),
-				0.0,
+				_face_ground_lift(bz, absf(bx)),
 				true
 			)
 	# The shore fringe: reeds and low bushes where the drowned tails flatten to
@@ -6639,7 +6767,9 @@ func _build_basin_roadside(streamed: bool = false) -> void:
 			_vp_side * out,
 			Vector3(s * 1.8, s * _rng.randf_range(0.4, 0.7), s * 1.6),
 			(_pal["verge"] as Color).lerp(deep, 0.45).darkened(_rng.randf() * 0.2),
-			0.0,
+			# The fringe bushes at the drowned tail's edge were the floaters on
+			# the island lip — ground to the drawn chord like the rest of the face.
+			_face_ground_lift(z, out),
 			true
 		)
 	# The opposite verge keeps its trees too — a few deeper specimens put trunks
@@ -7125,8 +7255,53 @@ func _dress_vista_forest(streamed: bool = false) -> void:
 			continue
 		_vista_rock(
 			z, _vp_side * out, _rng.randf_range(2.4, 5.5),
-			_rng.randf_range(-0.4, 0.8) + _face_ground_lift(z, out)
+			# Bed-biased: positive jitter is what left boulders hovering on the
+			# s1 face overviews.
+			_rng.randf_range(-0.6, 0.25) + _face_ground_lift(z, out)
 		)
+	# Mid-face scatter: the apron between the spur lane and the gorge lip was
+	# bare face colour all the way down — the flat dark band the s1 climb shots
+	# read as an unlit void. Sparse scrub and stones on the drawn chord give
+	# the slope scale without crowding the skyline or the sightline.
+	for _i in 18:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		if not _face_dressing_ok(z):
+			continue
+		var prof := _face_profile(z)
+		var out: float = _profile_out(prof, _rng.randf_range(0.1, 0.68))
+		var lateral := _vp_side * out
+		if (
+			_on_tarmac(z, lateral, 3.0)
+			or not _face_above_water(z, out, 1.5)
+			or float(_path.spur_deck_blend(z, lateral)) > 0.1
+		):
+			continue
+		var lift := _face_ground_lift(z, out)
+		var roll := _rng.randf()
+		if roll < 0.4:
+			_tree(
+				Flora.CONIFER,
+				z,
+				lateral,
+				_rng.randf_range(4.5, 9.0),
+				Color("1a3024").lerp(Color("2c4a38"), _rng.randf()),
+				true,
+				lift
+			)
+		elif roll < 0.78:
+			var s: float = _rng.randf_range(1.2, 2.6)
+			_blob(
+				z,
+				lateral,
+				Vector3(s * 1.7, s * _rng.randf_range(0.7, 1.0), s * 1.4),
+				Color("1c3628").lerp(Color("315e3e"), _rng.randf()).darkened(_rng.randf() * 0.15),
+				lift,
+				true
+			)
+		else:
+			_vista_rock(z, lateral, _rng.randf_range(1.6, 3.6), _rng.randf_range(-0.5, 0.1) + lift)
 	# A near cedar rank gives the forest overlook a readable frame instead of a
 	# bare hillside. It is deliberately sparse: trunks, water and a clear gap.
 	for _i in 10:
@@ -7166,7 +7341,7 @@ func _dress_vista_mountain(streamed: bool = false) -> void:
 			continue
 		_vista_rock(
 			z, _vp_side * out, _rng.randf_range(2.4, 8.5),
-			_rng.randf_range(-0.5, 0.5) + _face_ground_lift(z, out)
+			_rng.randf_range(-0.6, 0.25) + _face_ground_lift(z, out)
 		)
 	for _i in 14:
 		if streamed and _slice_spent() and not await _keep_streaming():
@@ -7410,10 +7585,14 @@ func _face_scarp_palette() -> Dictionary:
 				"seam": Color("454c54"), "scree": Color("6e6a5e"),
 			}
 		Env.FOREST:
+			# The old warm set was the seed-1 cream dune: 96938a sky-fill over the
+			# whole skin rendered as smooth sand under the day key. Mossed like
+			# the country set but a step deeper — shaded stone under a cedar
+			# canopy, with a wet moss toe at the waterline.
 			return {
-				"lip": Color("45543e"), "soil": Color("57503f"),
-				"rock_hi": Color("96938a"), "rock_lo": Color("5e5a52"),
-				"seam": Color("4a4640"), "scree": Color("6e685c"),
+				"lip": Color("37452e"), "soil": Color("434a3c"),
+				"rock_hi": Color("71806d"), "rock_lo": Color("42503e"),
+				"seam": Color("2f382e"), "scree": Color("4d584a"),
 			}
 	# Greyed from the old warm chalk set: under the day key the soil band and
 	# the shaded beds rendered as solid ochre, ringing the lake in what read
@@ -8775,7 +8954,10 @@ func _shore_band_tone() -> Array[Color]:
 	## shoreline that already has three of them would read as a decal.
 	match _vp_theme:
 		Env.FOREST:
-			return [Color("4e5a4a"), Color("9aa088")]
+			# 9aa088 was the forest half of the pale dash row — a pale sage slab
+			# that rendered cream at the waterline. Wet moss + grey-green
+			# shingle, the same ladder the country strip uses.
+			return [Color("37443a"), Color("59664f")]
 		Env.MOUNTAIN:
 			return [Color("5a5f62"), Color("a8aeb0")]
 	# b6a888 rendered as a pale ochre rim right at the bank's lit lip — the last
@@ -9262,7 +9444,11 @@ func _face_ground_lift(z: float, out: float) -> float:
 	## on a convex spot beds in rather than floats.
 	var chord_y := _face_chord_point(z, out).y + _origin.y
 	var ground_y := _terrain_surface_at(z, _vp_side * out).y
-	return clampf(chord_y - ground_y, -0.4, 9.0)
+	# The lower bound used to be -0.4: where the drawn chord sags *below* the
+	# analytic surface (the concave reaches of the face), a prop capped there
+	# hovered visibly over the mesh — the floating specks the s1 overviews
+	# caught. Let it bed down to the drawn surface instead.
+	return clampf(chord_y - ground_y, -1.8, 9.0)
 
 
 func _face_above_water(z: float, out: float, margin: float) -> bool:
@@ -9352,7 +9538,9 @@ func _build_face_ledges(streamed: bool = false) -> void:
 			if _vp_theme == Env.MOUNTAIN:
 				tone = Color("8a9096").lerp(Color("5c6268"), _rng.randf())
 			elif _vp_theme == Env.FOREST:
-				tone = Color("8d8271").lerp(Color("655c4e"), _rng.randf())
+				# Warm tan like the old country tone — read as sandstone slabs
+				# on the forest face. Mossy grey-green instead.
+				tone = Color("707761").lerp(Color("4c5340"), _rng.randf())
 			elif _vp_theme == Env.COUNTRY:
 				# Cooled a step — 9a8c74 is the warm tan that kept reading as
 				# sandstone slabs on a grassed headland under the day key.
@@ -11544,7 +11732,9 @@ static func palette(t: int) -> Dictionary:
 				# so the same light lands on it as silvery wood.
 				"rail": Color("53595c"),
 				"prop_a": Color("315e3e"),
-				"prop_b": Color("70462e"),
+				# 70462e rendered as orange-rust litter anywhere it landed —
+				# dark earth-moss instead.
+				"prop_b": Color("4a4c38"),
 				"prop_c": Color("234b3b"),
 				"accent": Color("d7a84f"),
 				"glow": Color(2.2, 2.4, 1.5),
@@ -11592,7 +11782,9 @@ static func palette(t: int) -> Dictionary:
 				"rail": Color("5f635a"),
 				"prop_a": Color("3d6031"),  # hedgerow green
 				"prop_b": Color("a74e32"),  # brick and rust
-				"prop_c": Color("d8b96a"),  # cut hay — the bales keep the one straw note
+				# d8b96a lightened bloomed to cream — a dune field where the QA
+				# wanted hay. Deeper gold keeps the one straw note as straw.
+				"prop_c": Color("a68a45"),  # cut hay — the bales keep the one straw note
 				"accent": Color("ead4a2"),
 				"glow": Color(2.6, 2.2, 1.5),
 			}
