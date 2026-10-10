@@ -59,6 +59,13 @@ func _count_trees_on_tarmac(chunk: Node3D, path: Node, index: int) -> int:
 		var at: Vector3 = path.call("center_at", best_z)
 		var right: Vector3 = (path.call("frame_flat_at", best_z) as Basis).x
 		var lateral: float = (world - at).dot(right)
+		# A trunk can only stand on the carriageway where it actually stands:
+		# the vista dressing plants far-bank trees hundreds of metres along the
+		# route, and those project to a small lateral inside this chunk's
+		# window without being anywhere near the road itself.
+		var flat: Vector3 = at + right * lateral
+		if Vector2(world.x - flat.x, world.z - flat.z).length() > 40.0:
+			continue
 		if bool(chunk.call("_on_tarmac", best_z, lateral, 0.8)):
 			on_road += 1
 	return on_road

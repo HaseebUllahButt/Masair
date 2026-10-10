@@ -735,7 +735,11 @@ func _take_nearest_props() -> Node3D:
 		var index := int(chunk.get("chunk_index"))
 		if index < bounds.x or index > bounds.y:
 			continue
-		var d: float = float(index - current) if index >= current else 0.5 + float(current - index)
+		# Ahead always beats behind: the camera looks where the bike is going,
+		# so at speed — when the queue is starved — every slot spent dressing
+		# the stretch just passed is a bare stretch arriving in the rider's
+		# face. Behind chunks still dress once nothing ahead is queued.
+		var d: float = float(index - current) if index >= current else 100.0 + float(current - index)
 		if d < best_d:
 			best_d = d
 			best_i = i
@@ -787,7 +791,11 @@ func _take_nearest_scenic() -> Node3D:
 		var index := int(chunk.get("chunk_index"))
 		if index < bounds.x or index > bounds.y:
 			continue
-		var d: float = float(index - current) if index >= current else 0.5 + float(current - index)
+		# Ahead always beats behind: the camera looks where the bike is going,
+		# so at speed — when the queue is starved — every slot spent dressing
+		# the stretch just passed is a bare stretch arriving in the rider's
+		# face. Behind chunks still dress once nothing ahead is queued.
+		var d: float = float(index - current) if index >= current else 100.0 + float(current - index)
 		if d < best_d:
 			best_d = d
 			best_i = i
@@ -841,7 +849,11 @@ func _take_nearest_highway() -> Node3D:
 		var index := int(chunk.get("chunk_index"))
 		if index < current - 1 or index > dress_max:
 			continue
-		var d: float = float(index - current) if index >= current else 0.5 + float(current - index)
+		# Ahead always beats behind: the camera looks where the bike is going,
+		# so at speed — when the queue is starved — every slot spent dressing
+		# the stretch just passed is a bare stretch arriving in the rider's
+		# face. Behind chunks still dress once nothing ahead is queued.
+		var d: float = float(index - current) if index >= current else 100.0 + float(current - index)
 		if d < best_d:
 			best_d = d
 			best_i = i
