@@ -147,19 +147,29 @@ void fragment() {
 	METALLIC = 0.0;
 	// Dry: no specular at all. The road is broad and nearly flat, so any
 	// highlight on it becomes a shaft pointing straight at the camera. Wet: that
-	// shaft is the point, and it is strongest where the water pools.
+	// shaft is the point, but only where the water actually stands.
 	//
-	// 0.30, not a mirror finish. Taken much lower the road reflects the overcast
-	// sky evenly enough to come out *brighter* than dry tarmac, the lane markings
-	// stop reading, and the bike's own headlight burns a hard white hole in the
-	// road two metres ahead of the wheel.
-	ROUGHNESS = mix(base_roughness, 0.30, soaked);
-	SPECULAR = soaked * 0.45;
+	// Rain lays two kinds of water on tarmac: a thin film over the lane, and
+	// standing water in the wheel ruts where the aggregate is polished smooth.
+	// The film stays rough — its share of the sky is a soft sheen, not a
+	// reflection. The ruts are the mirror: two tight, near-glossy strips per
+	// lane, so a low sun draws thin glare lines down the road instead of
+	// washing the whole carriageway. A lane-wide gloss was the first attempt —
+	// at 0.30 everywhere a 20° sun turned the right lane into a warm smear a
+	// hundred metres long.
+	//
+	// 0.15 in the ruts, not a mirror finish: taken lower, a wet road reflects
+	// the sky coherently enough to come out *brighter* than dry tarmac, the
+	// lane markings stop reading, and the bike's own headlight burns a hard
+	// white hole in the road two metres ahead of the wheel.
+	ROUGHNESS = mix(base_roughness, mix(0.40, 0.15, track), soaked);
+	SPECULAR = soaked * mix(0.20, 0.50, track);
 
 	// Schlick at the view angle alone. Polished tracks carry more of it; a wet
-	// road carries a great deal more.
+	// road a little more — the ruts' real reflection above does the showing
+	// off now, so the broad wash stays a sheen rather than doubling.
 	float facing = clamp(dot(NORMAL, VIEW), 0.0, 1.0);
 	float fresnel = pow(1.0 - facing, 5.0);
-	float gloss = sheen_strength * (1.0 + track * 0.5) * (1.0 + wet * 1.6);
+	float gloss = sheen_strength * (1.0 + track * 0.5) * (1.0 + wet * 0.5);
 	EMISSION = sky_sheen * fresnel * gloss * (1.0 + grain * 0.6);
 }
