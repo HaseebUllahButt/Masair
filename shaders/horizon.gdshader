@@ -308,7 +308,7 @@ void fragment() {
 	// returns as one tan mountain standing among blue ones. Even the closest
 	// range sits inside a kilometre and a half of air.
 	float haze_w = clamp(
-		0.03 + haze_v * 0.55 * (1.0 - 0.2 * haze_v) + 0.40 * haze_v * haze_v * day_gate
+		0.03 + haze_v * 0.55 * (1.0 - 0.2 * haze_v) + 0.15 * haze_v * haze_v * day_gate
 			+ weather_haze * (0.45 + haze_v),
 		0.0, 0.55
 	);
@@ -338,7 +338,7 @@ void fragment() {
 	// rearward of the rider. Fourteen percent keeps the tallest band's two
 	// faces legible through the air.
 	col = mix(col, air * mix(
-		mix(0.80, mix(0.88, 0.97, smoothstep(0.50, 0.70, haze_v)), day_gate),
+		mix(0.80, mix(0.85, 0.90, smoothstep(0.50, 0.70, haze_v)), day_gate),
 		1.10, lit), haze_w);
 	// Soften the ring into the air at the extreme edges of a wide lens, but
 	// keep the mountains when the rider looks aside.
