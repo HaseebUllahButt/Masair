@@ -58,6 +58,7 @@ var _cached_viewpoint_centre_for: Dictionary = {}
 var _cached_spur_deck_blend: Dictionary = {}
 var _cached_spur_lift: Dictionary = {}
 var _cached_terrain_drop: Dictionary = {}
+var _cached_ground_at: Dictionary = {}
 
 
 func _ready() -> void:
@@ -169,6 +170,7 @@ func set_world_seed(value: int) -> void:
 	world_seed = value
 	_water_y_cache.clear()
 	_cached_terrain_drop.clear()
+	_cached_ground_at.clear()
 	_cached_spur_lift.clear()
 	_cached_spur_deck_blend.clear()
 	_cached_height_at.clear()
@@ -1249,8 +1251,17 @@ func point_at(z: float, lateral: float = 0.0) -> Vector3:
 
 ## Ground point beside the road, on the terrain rather than the tarmac.
 func ground_at(z: float, lateral: float) -> Vector3:
+	## Pure function of (z, lateral), and the single most-called query in prop
+	## placement — every footprint fit and every surface sample ends here.
+	var key := Vector2(z, lateral)
+	if _cached_ground_at.has(key):
+		return _cached_ground_at[key]
 	var f := frame_flat_at(z)
-	return center_at(z) + f.x * lateral + f.y * (bank_offset(z, lateral) + spur_lift(z, lateral) - terrain_drop(lateral, z))
+	var point: Vector3 = center_at(z) + f.x * lateral + f.y * (bank_offset(z, lateral) + spur_lift(z, lateral) - terrain_drop(lateral, z))
+	if _cached_ground_at.size() >= ROUTE_CACHE_LIMIT * 2:
+		_cached_ground_at.clear()
+	_cached_ground_at[key] = point
+	return point
 
 
 ## Extra shaping used by the verge ribbon. Kept here as well as in the mesh
