@@ -92,6 +92,13 @@ void fragment() {
 	// into moire at speed.
 	float grain = vnoise(vec2(lateral * 18.0, along * 6.0)) - 0.5;
 
+	// Age: slow patches where one resurfacing gives way to another, and the
+	// grime line where the verge sheds onto the tarmac. Both quiet — the paint
+	// and the wheel tracks stay the loudest marks on the road.
+	float age = vnoise(vec2(lateral * 0.4, along * 0.021)) - 0.5;
+	float edge_grime = smoothstep(half_width - 2.4, half_width - 0.2, abs(lateral))
+		* (0.55 + 0.45 * vnoise(vec2(along * 0.045, lateral * 0.5)));
+
 	// Water darkens tarmac and fills the ruts first, so the tracks go from
 	// slightly darker than the lane to a great deal darker.
 	float soaked = wet * (0.55 + track * 0.45);
@@ -101,6 +108,8 @@ void fragment() {
 	// brightest large surface in the frame instead of the darkest.
 	ALBEDO = to_linear(COLOR.rgb) * tone * tarmac_tint
 		* (1.0 + grain * grain_strength * (1.0 - wet * 0.7))
+		* (1.0 + age * 0.05)
+		* mix(vec3(1.0), vec3(0.94, 0.95, 0.97), edge_grime * 0.85)
 		* (1.0 - track * track_darkening)
 		* (1.0 - soaked * 0.55);
 	METALLIC = 0.0;
