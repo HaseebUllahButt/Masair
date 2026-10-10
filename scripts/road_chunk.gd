@@ -1374,9 +1374,18 @@ func _ground_normal(z: float, lateral: float, drop: float) -> Vector3:
 # ---------------------------------------------------------------- road ribbon
 
 
+var _ground_colors: Dictionary = {}
+
+
 func _ground_color(lateral: float, z: float) -> Color:
 	## Smooth function of position, sampled per vertex — a per-quad colour would
 	## stop index() merging vertices and smooth shading would never kick in.
+	## Ribbon vertices are shared by the quads on either side, so the country
+	## parcel lookup underneath runs at least twice per sample without this cache.
+	var key := Vector2(lateral, z)
+	var cached: Variant = _ground_colors.get(key)
+	if cached != null:
+		return cached
 	var mix: float = 0.5 + 0.5 * sin(lateral * 0.055 + z * 0.038) * sin(lateral * 0.017 - z * 0.021)
 	# A second, slower grain so the midfield is patchwork instead of one wash —
 	# the blank tan plane past the first trees in the rider's peripheral view.
@@ -1413,6 +1422,7 @@ func _ground_color(lateral: float, z: float) -> Color:
 			color = color.lerp(_face_color(z, lateral), face)
 		color = color.lerp(_shore_color(), _shore_mix(z, lateral))
 		color = color.lerp(_wash_color(), _wash_mix(z, lateral))
+	_ground_colors[key] = color
 	return color
 
 
@@ -1446,48 +1456,100 @@ func _field_edge_at(edge_i: int, z: float, side_i: int) -> float:
 	) * FIELD_WAVE[edge_i]
 
 
+var _field_edge_rows: Dictionary = {}  # Vector2(z, side) -> PackedFloat64Array
+var _field_phases: Dictionary = {}  # Vector2i(side_i, band) -> float
+var _field_cells: Dictionary = {}  # Vector3i(side_i, band, cell) -> [kind, hedged, lift, period]
+var _field_runs: Dictionary = {}  # Vector3i(side_i, edge_i, zseg) -> bool
+
+
+func _field_edges_at(z: float, side_i: int) -> PackedFloat64Array:
+	## All six depth boundaries for one cross-section. A ribbon row's vertices
+	## share z, so this runs six sine waves per row instead of per vertex.
+	var key := Vector2(z, side_i)
+	var cached: Variant = _field_edge_rows.get(key)
+	if cached != null:
+		return cached
+	var edges := PackedFloat64Array()
+	edges.resize(FIELD_EDGES.size())
+	for i in FIELD_EDGES.size():
+		edges[i] = _field_edge_at(i, z, side_i)
+	_field_edge_rows[key] = edges
+	return edges
+
+
 func _field_phase(side_i: int, band: int) -> float:
 	## Each depth band slides its own parcel grid, so the field ends on opposite
 	## sides of the road never line up into avenues.
-	return (
+	var key := Vector2i(side_i, band)
+	var cached: Variant = _field_phases.get(key)
+	if cached != null:
+		return cached
+	var phase := (
 		float(posmod(hash(Vector2i(side_i * 733 + band * 131, int(_path.world_seed))), 1000))
 		* 0.001
 		* FIELD_LENGTHS[band]
 	)
+	_field_phases[key] = phase
+	return phase
+
+
+func _field_cell(side_i: int, band: int, cell: int) -> Array:
+	## [kind, road-end hedged, tone lift, crop row period] for one parcel —
+	## every vertex in the cell asks the same four hashed questions.
+	var key := Vector3i(side_i, band, cell)
+	var cached: Variant = _field_cells.get(key)
+	if cached != null:
+		return cached
+	var h := float(
+		posmod(hash(Vector3i(side_i * 131 + band * 37, cell, int(_path.world_seed))), 1000)
+	) * 0.001
+	var kind := Field.FALLOW
+	if h < 0.34:
+		kind = Field.GRAZED
+	elif h < 0.68:
+		kind = Field.PASTURE
+	elif h < 0.86:
+		kind = Field.CROP
+	elif h < 0.95:
+		kind = Field.MOWN
+	var info := [
+		kind,
+		posmod(
+			hash(Vector3i(side_i * 197 + band * 41, cell, int(_path.world_seed) ^ 0x5a37)), 100
+		)
+		< 62,
+		(float(posmod(hash(Vector3i(side_i * 17 + band * 5, cell, int(_path.world_seed))), 100)) - 50.0) * 0.0009,
+		13.0 + float(posmod(hash(Vector2i(cell, band * 7 + side_i)), 100)) * 0.14,
+	]
+	_field_cells[key] = info
+	return info
 
 
 func _field_kind(side_i: int, band: int, cell: int) -> int:
 	## What one parcel is growing, hashed off the world seed so the same map
 	## answers the ground colour and the prop planting identically.
-	var h := float(
-		posmod(hash(Vector3i(side_i * 131 + band * 37, cell, int(_path.world_seed))), 1000)
-	) * 0.001
-	if h < 0.34:
-		return Field.GRAZED
-	if h < 0.66:
-		return Field.PASTURE
-	if h < 0.84:
-		return Field.CROP
-	if h < 0.94:
-		return Field.MOWN
-	return Field.FALLOW
+	return _field_cell(side_i, band, cell)[0]
 
 
 func _field_hedged(side_i: int, band: int, cell: int) -> bool:
 	## Whether a parcel's road-end boundary grows a hedge — roughly three in
 	## five; the rest stay open grass with only a ditch line painted.
-	return posmod(
-		hash(Vector3i(side_i * 197 + band * 41, cell, int(_path.world_seed) ^ 0x5a37)), 100
-	) < 62
+	return _field_cell(side_i, band, cell)[1]
 
 
 func _field_hedge_run(side_i: int, edge_i: int, zseg: int) -> bool:
 	## Whether one FIELD_RUN stretch of a depth boundary stands grown. Keyed the
 	## same way the ground colour asks, so a dark boundary line always has its
 	## hedge on it and a gap stays pale.
-	return posmod(
+	var key := Vector3i(side_i, edge_i, zseg)
+	var cached: Variant = _field_runs.get(key)
+	if cached != null:
+		return cached
+	var run := posmod(
 		hash(Vector3i(side_i * 89 + edge_i * 29, zseg, int(_path.world_seed) ^ 0x2e51)), 100
 	) < 46
+	_field_runs[key] = run
+	return run
 
 
 func _field_kind_at(side_i: int, out: float, z: float) -> int:
@@ -1516,10 +1578,12 @@ func _field_tone(kind: int, grain: float) -> Color:
 		Field.MOWN:
 			# Fresh-cut grass — the palest parcel on the sheet, but a sage green:
 			# the straw colour lives on the bales, not on the ground.
-			return Color("6e8a4a").lerp(Color("7d9553"), grain)
+			return Color("5e8148").lerp(Color("6d8e50"), grain)
 		_:
-			# Ploughed earth: damp loam, the darkest parcel on the sheet.
-			return Color("4f4d38").lerp(Color("5b5742"), grain)
+			# Ploughed earth: damp loam, the darkest parcel on the sheet. Kept
+			# green-grey on the red channel's wrong side — a warm brown bakes to
+			# gold under the low sun and the whole parcel reads as sand.
+			return Color("414931").lerp(Color("4c553c"), grain)
 
 
 func _country_field_tint(lateral: float, z: float, base: Color, grain: float) -> Color:
@@ -1530,13 +1594,14 @@ func _country_field_tint(lateral: float, z: float, base: Color, grain: float) ->
 	if out < 15.5 or out > FIELD_EDGES[FIELD_EDGES.size() - 1]:
 		return base
 	var side_i := 1 if lateral > 0.0 else -1
+	var edges := _field_edges_at(z, side_i)
 	var band := 0
-	while band < FIELD_EDGES.size() and out >= _field_edge_at(band, z, side_i):
+	while band < edges.size() and out >= edges[band]:
 		band += 1
-	if band >= FIELD_EDGES.size():
+	if band >= edges.size():
 		return base
-	var edge_out := _field_edge_at(band, z, side_i)
-	var edge_in := 15.5 if band == 0 else _field_edge_at(band - 1, z, side_i)
+	var edge_out := edges[band]
+	var edge_in := 15.5 if band == 0 else edges[band - 1]
 	# Shearing z by a slow wave of `out` tilts every field end a little off the
 	# perpendicular — parcels that skew rather than stamp a grid.
 	var shear := sin(out * 0.05 + float(band) * 1.7) * (2.0 + float(band) * 1.6)
@@ -1545,13 +1610,12 @@ func _country_field_tint(lateral: float, z: float, base: Color, grain: float) ->
 	var cell := int(floor((z + shear + phase) / len_i))
 	var cell_a := float(cell) * len_i - phase - shear
 	var cell_b := cell_a + len_i
-	var kind := _field_kind(side_i, band, cell)
+	var info := _field_cell(side_i, band, cell)
+	var kind: int = int(info[0])
 	var tone := _field_tone(kind, grain)
 	# Per-parcel lift, so two neighbouring pastures never sit the same green.
 	# Modest: at ±0.08 the palest parcels washed to cream under the day key.
-	tone = tone.lightened(
-		(float(posmod(hash(Vector3i(side_i * 17 + band * 5, cell, int(_path.world_seed))), 100)) - 50.0) * 0.0009
-	)
+	tone = tone.lightened(float(info[2]))
 	# Boundary shadow: a hedge casts a dark line on its own side of a parcel
 	# edge — a grown one deeper, an open ditch a bare hint. The z ends belong
 	# to whichever cell opens there; the depth edges break into FIELD_RUN
@@ -1560,15 +1624,10 @@ func _country_field_tint(lateral: float, z: float, base: Color, grain: float) ->
 	var d_a := z - cell_a
 	var d_b := cell_b - z
 	if d_a < d_b:
-		if _field_hedged(side_i, band, cell):
-			shade = (1.0 - smoothstep(0.4, 4.5, d_a)) * 0.17
-		else:
-			shade = (1.0 - smoothstep(0.4, 4.5, d_a)) * 0.05
+		shade = (1.0 - smoothstep(0.4, 4.5, d_a)) * (0.17 if bool(info[1]) else 0.05)
 	else:
-		if _field_hedged(side_i, band, cell + 1):
-			shade = (1.0 - smoothstep(0.4, 4.5, d_b)) * 0.17
-		else:
-			shade = (1.0 - smoothstep(0.4, 4.5, d_b)) * 0.05
+		var hedged_b: bool = bool((_field_cell(side_i, band, cell + 1))[1])
+		shade = (1.0 - smoothstep(0.4, 4.5, d_b)) * (0.17 if hedged_b else 0.05)
 	var zseg := int(floor(z / FIELD_RUN))
 	if out - edge_in < edge_out - out:
 		var hedged := band > 0 and _field_hedge_run(side_i, band - 1, zseg)
@@ -1581,8 +1640,7 @@ func _country_field_tint(lateral: float, z: float, base: Color, grain: float) ->
 	if kind == Field.CROP:
 		var row_vis := 1.0 - smoothstep(80.0, 150.0, out)
 		if row_vis > 0.0:
-			var period := 13.0 + float(posmod(hash(Vector2i(cell, band * 7 + side_i)), 100)) * 0.14
-			tone = tone.darkened((0.5 + 0.5 * sin(z * TAU / period)) * 0.11 * row_vis)
+			tone = tone.darkened((0.5 + 0.5 * sin(z * TAU / float(info[3]))) * 0.11 * row_vis)
 	# Farther parcels keep their shapes but breathe toward the meadow wash —
 	# aerial softening, so the distance is hazy farmland, not a checkerboard.
 	tone = tone.lerp(base.lightened(0.03), smoothstep(150.0, 290.0, out) * 0.5)
@@ -4914,7 +4972,7 @@ func _scenery_country() -> void:
 							zz,
 							lat,
 							Vector3(1.7, _rng.randf_range(1.4, 2.3), _rng.randf_range(2.4, 3.3)),
-							(_pal["prop_a"] as Color).darkened(_rng.randf() * 0.24).lerp(
+							(_pal["prop_a"] as Color).darkened(0.04 + _rng.randf() * 0.26).lerp(
 								_pal["verge"], _rng.randf() * 0.16
 							),
 							0.0,
@@ -4928,7 +4986,7 @@ func _scenery_country() -> void:
 								zz,
 								lat + side * _rng.randf_range(0.8, 1.6),
 								_rng.randf_range(9.0, 13.5),
-								(_pal["prop_a"] as Color).darkened(_rng.randf() * 0.15)
+								(_pal["prop_a"] as Color).darkened(0.04 + _rng.randf() * 0.16)
 							)
 						zz += _rng.randf_range(2.6, 3.4)
 				zs += FIELD_RUN
@@ -4939,21 +4997,21 @@ func _scenery_country() -> void:
 		for _i in 6:
 			var z := z0 + _rng.randf_range(0.0, LENGTH)
 			var lx: float = side * (HALF_WIDTH + 8.0 + _rng.randf_range(0.0, 74.0))
-			var tint: Color = (_pal["prop_a"] as Color).darkened(_rng.randf() * 0.24)
+			var tint: Color = (_pal["prop_a"] as Color).darkened(0.05 + _rng.randf() * 0.24)
 			var species_roll := _rng.randf()
 			if species_roll < 0.62:
 				_tree(Flora.BROADLEAF, z, lx, _rng.randf_range(6.0, 11.0), tint)
 			elif species_roll < 0.88:
 				_tree(Flora.CONIFER, z, lx, _rng.randf_range(7.0, 12.0), tint.darkened(0.12))
 			else:
-				_tree(Flora.BIRCH, z, lx, _rng.randf_range(5.0, 8.0), tint.lightened(0.08))
+				_tree(Flora.BIRCH, z, lx, _rng.randf_range(5.0, 8.0), tint.darkened(0.02))
 		if _rng.randf() < 0.55:
 			_tree(
 				Flora.BROADLEAF,
 				z0 + _rng.randf_range(0.0, LENGTH),
 				side * (HALF_WIDTH + 26.0 + _rng.randf_range(0.0, 50.0)),
 				_rng.randf_range(11.0, 15.0),
-				(_pal["prop_a"] as Color).darkened(_rng.randf() * 0.15)
+				(_pal["prop_a"] as Color).darkened(0.04 + _rng.randf() * 0.17)
 			)
 
 	# Copses and spinneys cresting the midfield — a tight stand reads on a swell
@@ -4965,7 +5023,7 @@ func _scenery_country() -> void:
 			continue
 		var cz2 := z0 + _rng.randf_range(5.0, LENGTH - 5.0)
 		var clx2: float = side * (HALF_WIDTH + _rng.randf_range(50.0, 125.0))
-		var stand_col: Color = (_pal["prop_a"] as Color).darkened(_rng.randf_range(0.05, 0.2))
+		var stand_col: Color = (_pal["prop_a"] as Color).darkened(_rng.randf_range(0.1, 0.26))
 		var reach := _rng.randf_range(5.0, 10.0)
 		for _t in _rng.randi_range(4, 8):
 			var a2 := _rng.randf_range(0.0, TAU)
@@ -4975,7 +5033,7 @@ func _scenery_country() -> void:
 				cz2 + cos(a2) * rr,
 				clx2 + sin(a2) * rr * 0.8,
 				_rng.randf_range(7.0, 12.5),
-				stand_col.lightened(_rng.randf() * 0.12)
+				stand_col.lightened(_rng.randf() * 0.06)
 			)
 
 	# A low down swelling through the field plain now and then: the terrain
@@ -5003,7 +5061,7 @@ func _scenery_country() -> void:
 					dz2 + _rng.randf_range(-12.0, 12.0),
 					dlx + _rng.randf_range(-8.0, 8.0),
 					_rng.randf_range(6.0, 10.0),
-					(_pal["prop_a"] as Color).darkened(_rng.randf() * 0.16)
+					(_pal["prop_a"] as Color).darkened(0.04 + _rng.randf() * 0.16)
 				)
 
 	# Grass out across the fields themselves, thinning with distance — the verge
@@ -5127,8 +5185,11 @@ func _boundary_rail(z_a: float, z_b: float, lateral: float) -> void:
 		_cube(fz, lateral, Vector3(0.12, 1.15, 0.12), _pal["rail"])
 		if fseg % 2 == 0:
 			var zend: float = minf(fz + 8.0, z_b)
-			_terrain_beam(fz, zend, lateral, 0.09, 0.09, _pal["rail"], 0.92)
-			_terrain_beam(fz, zend, lateral, 0.09, 0.09, _pal["rail"], 0.58)
+			# The rails face up into the key — a bare palette colour blooms to
+			# cream, so the beams run a step under the posts.
+			var beam: Color = (_pal["rail"] as Color).darkened(0.12)
+			_terrain_beam(fz, zend, lateral, 0.09, 0.09, beam, 0.92)
+			_terrain_beam(fz, zend, lateral, 0.09, 0.09, beam, 0.58)
 		fz += 4.0
 		fseg += 1
 
@@ -5137,7 +5198,7 @@ func _boundary_stone(z_a: float, z_b: float, lateral: float) -> void:
 	## A run of dry-stone wall: a course beam and a wider coping course per bay.
 	## Kept low — about hip height — so the fields still read over the top, and
 	## slightly darker than the rail timber so the swap reads at a glance.
-	var stone: Color = (_pal["rail"] as Color).lerp(Color("67695f"), 0.5).darkened(0.04)
+	var stone: Color = (_pal["rail"] as Color).lerp(Color("565c50"), 0.55).darkened(0.05)
 	var fz := z_a
 	var fseg := 0
 	while fz < z_b - 0.01:
@@ -5442,7 +5503,7 @@ func _landmark_wall() -> void:
 	var z0 := float(chunk_index) * LENGTH
 	var side: float = _landmark_side(z0)
 	var base_lat: float = side * _rng.randf_range(88.0, 132.0)
-	var stone := Color("7b786b").darkened(0.08)
+	var stone := Color("6c6f62").darkened(0.08)
 	var cap := stone.lightened(0.12)
 	var built := false
 	for i in 8:
@@ -10342,16 +10403,16 @@ static func palette(t: int) -> Dictionary:
 				"stripe": Color("efe6bc"),
 				# A thin cool gravel at the tarmac edge — sandy grit under a golden
 				# key was the tan ribbon the rider read as the verge itself.
-				"shoulder": Color("626a5f"),
-				"curb": Color("5f665c"),
+				"shoulder": Color("586553"),
+				"curb": Color("556050"),
 				"verge": Color("4f7a31"),  # lush verge grass
 				# Two pasture greens: meadow against grazed-down turf, far enough
 				# apart in value to read as patchwork without a gold in sight.
 				"ground": Color("5b8339"),  # open meadow
 				"ground_alt": Color("43642e"),  # grazed pasture
-				# Silvered post-and-rail timber: the pale bleached oak lit up cream
-				# under the day key and read as another sand stripe.
-				"rail": Color("73766d"),
+				# Weathered fence timber, dark enough that the toon-lit top face
+				# stays grey-brown instead of blooming to cream under the key.
+				"rail": Color("5f635a"),
 				"prop_a": Color("3d6031"),  # hedgerow green
 				"prop_b": Color("a74e32"),  # brick and rust
 				"prop_c": Color("d8b96a"),  # cut hay — the bales keep the one straw note
