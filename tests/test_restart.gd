@@ -221,7 +221,15 @@ func _process(_delta: float) -> bool:
 		var sky_material: ShaderMaterial = environment.sky.sky_material as ShaderMaterial
 		check(environment.sky.process_mode == Sky.PROCESS_MODE_INCREMENTAL, "sky radiance updates incrementally without a full-frame hitch")
 		var day_fog: float = environment.fog_density
-		check(not sun.shadow_enabled, "directional shadow mesh artefacts stay disabled")
+		# Real shadows are on, but the artefact the old check guarded is the wide
+		# cascade, not the map itself: the sun must stay a single short ortho box
+		# around the rider so a texel spans centimetres, not decimetres.
+		check(sun.shadow_enabled, "sun shadows are enabled for near-field grounding")
+		check(
+			sun.directional_shadow_mode == DirectionalLight3D.SHADOW_ORTHOGONAL
+				and sun.directional_shadow_max_distance <= 110.0,
+			"directional shadow stays a short ortho box, never a horizon-wide cascade"
+		)
 		var ride_audio := main.get_node("RideAudio")
 		var continuous_voices := 0
 		for child in ride_audio.get_children():

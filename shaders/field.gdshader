@@ -37,9 +37,9 @@ uniform float mottle_strength : hint_range(0.0, 0.3) = 0.10;
 // pasture used to arrive at full chroma beside woods that had already faded.
 // Luminance is held while colour walks toward the mood's air colour — fields
 // keep their shape and lose their saturation before they lose their value.
-uniform float aerial_strength : hint_range(0.0, 1.0) = 0.45;
+uniform float aerial_strength : hint_range(0.0, 1.0) = 0.55;
 uniform float aerial_near = 140.0;
-uniform float aerial_far = 560.0;
+uniform float aerial_far = 540.0;
 uniform vec3 aerial_tint : source_color = vec3(0.61, 0.66, 0.72);
 
 varying vec3 world_pos;

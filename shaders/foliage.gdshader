@@ -66,9 +66,9 @@ uniform float gust_sheen : hint_range(0.0, 0.5) = 0.22;
 // chroma walks toward the mood's air colour (pushed to aerial_tint each mood
 // change — day sage, dusk mauve, night navy) the way real air steals colour
 // before it steals value.
-uniform float aerial_strength : hint_range(0.0, 1.0) = 0.55;
+uniform float aerial_strength : hint_range(0.0, 1.0) = 0.70;
 uniform float aerial_near = 150.0;
-uniform float aerial_far = 580.0;
+uniform float aerial_far = 560.0;
 uniform vec3 aerial_tint : source_color = vec3(0.61, 0.66, 0.72);
 
 varying float crown_h;
