@@ -163,6 +163,18 @@ void fragment() {
 	// as tan dunes rearward of the rider. The green-grey belongs to the foot
 	// band; by a third of the way up the face the rock is slate.
 	vec3 rock = mix(foot_color, crest_color, smoothstep(0.18, 0.60, lift_v));
+	// "Day" in this material is a cool key over a bright horizon — dusk's key
+	// is warm and night's horizon is dark, so their looks pass untouched.
+	float day_gate = clamp((key_tint.b - key_tint.r) * 8.0, 0.0, 1.0)
+		* smoothstep(0.45, 0.75, dot(haze_color, vec3(0.3333)));
+	// Granite is grey before it is blue. The slate chroma in the crest is an
+	// aerial-perspective device and belongs to the back bands; on the near and
+	// mid rings it stacked with the cool key and the LUT's blue anchor into
+	// ultramarine. Desaturating the albedo toward its own luma keeps the value
+	// ladder and the facet split but takes the hue to grey-green slate — the
+	// blue a ridge shows from here on is the air in front of it, not the rock.
+	vec3 rock_grey = vec3(dot(rock, vec3(0.299, 0.587, 0.114)));
+	rock = mix(rock, rock_grey, day_gate * (1.0 - mix(0.5, 1.0, smoothstep(0.40, 0.68, haze_v))));
 	// Keep the two sides of every form distinctly coloured: sunlit rock picks up
 	// a restrained warm cast, while the away-facing side takes the cool sky dome
 	// rather than collapsing into black. This gives the low-poly range shape at
@@ -186,7 +198,7 @@ void fragment() {
 	// Now the tint is spent by the second ring and the far faces go cool-slate,
 	// which is the aerial step the reviewer keeps asking for. The near ring
 	// keeps its warm kiss: five percent of the climb is barely moved.
-	vec3 sun_tint = mix(key_tint, vec3(0.80, 0.88, 1.06), clamp(haze_v * 1.35, 0.0, 0.92));
+	vec3 sun_tint = mix(key_tint, vec3(0.83, 0.90, 1.05), clamp(haze_v * 1.35, 0.0, 0.92));
 	vec3 col = rock * lum * mix(shade_tint, sun_tint, lit);
 	// Ambient, on both sides of the terminator.
 	//
@@ -296,7 +308,8 @@ void fragment() {
 	// returns as one tan mountain standing among blue ones. Even the closest
 	// range sits inside a kilometre and a half of air.
 	float haze_w = clamp(
-		0.03 + haze_v * 0.55 * (1.0 - 0.2 * haze_v) + weather_haze * (0.45 + haze_v),
+		0.03 + haze_v * 0.55 * (1.0 - 0.2 * haze_v) + 0.40 * haze_v * haze_v * day_gate
+			+ weather_haze * (0.45 + haze_v),
 		0.0, 0.55
 	);
 	// Air dims as well as veils: a kilometre of path eats the key light before
@@ -309,7 +322,8 @@ void fragment() {
 	// ...and it cools what is left of it. The warm key is scattered out of the
 	// light long before the light is gone, so the residual rock colour shifts
 	// blue with distance on top of the veil the mix lays over it.
-	col *= mix(vec3(1.0), vec3(0.90, 0.95, 1.04), haze_v);
+	col *= mix(vec3(1.0), vec3(0.90, 0.95, 1.04),
+		haze_v * mix(1.0, smoothstep(0.35, 0.65, haze_v), day_gate));
 	// The air takes the facet's own light with it. Mixing toward one flat air
 	// colour collapses the lit/shade split as the weight climbs, and at the
 	// far band that is the whole of the mountain's form — the silhouette stays
@@ -323,7 +337,9 @@ void fragment() {
 	// far range eight percent of lit/shade difference — a flat pale card
 	// rearward of the rider. Fourteen percent keeps the tallest band's two
 	// faces legible through the air.
-	col = mix(col, air * mix(0.80, 1.10, lit), haze_w);
+	col = mix(col, air * mix(
+		mix(0.80, mix(0.88, 0.97, smoothstep(0.50, 0.70, haze_v)), day_gate),
+		1.10, lit), haze_w);
 	// Soften the ring into the air at the extreme edges of a wide lens, but
 	// keep the mountains when the rider looks aside.
 	vec3 cam = INV_VIEW_MATRIX[3].xyz;
@@ -337,19 +353,31 @@ void fragment() {
 	}
 	float side = 1.0 - smoothstep(0.12, 0.78, ahead);
 	col = mix(col, air, side * 0.0);
-	// Grade compensation. The film grade lifts red ~30% and holds blue down
-	// through the whole midtone band — measured: a neutral-warm 0.45 face
-	// comes back as (0.80,0.72,0.53), which is why every slate rock the shader
-	// produced returned as a tan dune. The range is only slate on screen if it
-	// *arrives* blue enough to survive that warp, so the last step undoes the
-	// midtone split for this material alone: red down, blue up, green held.
-	// Weighted to the mids — the deep shades are already cooled by the grade's
-	// lifted lavender toe and need no help (pushing blue there is exactly the
-	// "navy cut-out" complaint), and a bright cap under it stays sunlit snow.
-	// The forest band keeps most of its green: at full correction the woods
-	// swung from olive to cyan, which reads as painted water, not woodland.
+	// Granite is never blue-dominant: even in shade a rock face reads grey or
+	// grey-green, and the channel that leads is green, not blue. Hard-capping
+	// blue at the green channel's level is the guarantee the near and mid
+	// rings cannot go ultramarine no matter what the LUT does downstream —
+	// measured: comp-off input at B/R ~1.5 still returned screen B/R ~1.8.
+	// The far bands keep real headroom: a kilometre of air genuinely does put
+	// blue over a ridge, so the cap opens up with haze and only the back
+	// ranges get to keep their aerial veil uncut. Day only — dusk's rose and
+	// night's moonlit faces take the same uniform path and must not be
+	// touched.
+	float bcap = mix(1.02, 1.38, smoothstep(0.42, 0.70, haze_v));
+	col.b = mix(col.b, min(col.b, col.g * bcap), day_gate);
+	// Grade compensation, far bands only. The film grade lifts red ~30% and
+	// holds blue down through the whole midtone band — a neutral 0.45 face
+	// comes back as (0.80,0.72,0.53) — so the distant ranges still arrive a
+	// touch blue to survive that warp and render as the stepped dusty-slate
+	// aerial the reviewer graded right. Near and mid need none: their rock is
+	// grey on the way in, and any push here is what cartoon-blued them.
+	// Weighted to the mids — the deep shades are already cooled by the
+	// grade's lifted lavender toe and need no help, and a bright cap under it
+	// stays sunlit snow. The forest band keeps most of its green.
 	float cl = dot(col, vec3(0.2126, 0.7152, 0.0722));
-	float cw = smoothstep(0.10, 0.50, cl) * (1.0 - forest * 0.7);
-	vec3 comp = mix(vec3(1.0), vec3(0.85, 0.97, 1.38), cw);
+	float cw = smoothstep(0.10, 0.50, cl) * (1.0 - forest * 0.7)
+		* mix(1.0, smoothstep(0.48, 0.68, haze_v), day_gate);
+	vec3 compv = mix(vec3(0.85, 0.97, 1.38), vec3(0.92, 0.99, 1.13), day_gate);
+	vec3 comp = mix(vec3(1.0), compv, cw);
 	ALBEDO = col * comp;
 }
