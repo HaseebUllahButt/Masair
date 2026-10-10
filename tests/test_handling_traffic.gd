@@ -120,9 +120,12 @@ func _process(_delta: float) -> bool:
 	follower.set_physics_process(false)
 	lead.set_physics_process(false)
 	var vehicle_mesh := follower.get_node("VehicleMesh") as MeshInstance3D
+	# Vehicles cast into the near ortho box now — the screen-door artefact that
+	# kept traffic out of the pass belonged to the kilometre-wide map, not to
+	# casting itself. The contact patch still does the soft centre grounding.
 	check(
-		vehicle_mesh.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
-		"traffic never enters the artifact-prone directional shadow pass"
+		vehicle_mesh.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_ON,
+		"traffic casts into the short-range directional shadow box"
 	)
 	check(vehicle_mesh.visibility_range_end <= 380.0, "distant traffic leaves the far fog without a draw")
 	var contact_shadow := follower.get_node_or_null("ContactShadow") as MeshInstance3D

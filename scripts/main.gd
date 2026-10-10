@@ -101,7 +101,11 @@ const MOODS := {
 		# frame's overall brightness where it was while spending the extra
 		# energy on *range* in the midtones instead of on overall level — which
 		# is the one thing this lookoff was missing.
-		"light_energy": 5.5,
+		#
+		# Halved when the sun's shadow came on: in this renderer a shadowed
+		# directional lands roughly twice the light of a shadowless one at the
+		# same energy, so all three moods' keys re-centre on the old exposure.
+		"light_energy": 3.1,
 		"light_angle": Vector3(-15.0, 14.0, 0.0),
 		"angular_distance": 0.8,
 		# The warning at the top of this table is about exactly this row. A violet
@@ -235,7 +239,14 @@ const MOODS := {
 		# 3.0 -> 3.3, with the ambient paid back out of the same row below: more
 		# of the frame's light now arrives from a direction, which is what puts a
 		# lit side on every crown, wall and hillside in a game with no shadow map.
-		"light_energy": 3.3,
+		# 3.3 was tuned against a shadowless sun; with the shadow path the same
+		# energy lands about twice as bright. Halved to hold the day's exposure,
+		# with a little extra off so the road keeps reading charcoal rather
+		# than sunlit dust.
+		# 1.55 -> 1.75: the first halving left lit crowns a step dull — the
+		# shadow map needs a lit side to cut a shadow from, and the extra key
+		# is what makes the sun-facing halves read as sunlit.
+		"light_energy": 1.75,
 		# Lower than midday. A sun near the zenith lights the tops of everything
 		# and leaves the sides equal, which is the worst case for a world with no
 		# shadows: raking it gives every box, tree and hillside a lit side and a
@@ -306,7 +317,7 @@ const MOODS := {
 		# day key and grade: less red and a touch more green, not more blue,
 		# which only turned the road violet.
 		"road_tint": Color(0.925,1.035,1.01),
-		"road_sheen": 0.16,
+		"road_sheen": 0.20,
 	},
 	LightingMode.NIGHT:
 	{
@@ -348,7 +359,7 @@ const MOODS := {
 		# Moonlit surfaces stay below daylight. The former strong fill made the
 		# pale terrace brighter at night and kept the woodland saturated green.
 		"light_color": Color("9ec8de"),
-		"light_energy": 0.80,
+		"light_energy": 0.68,
 		"fill_color": Color("4d6d9a"),
 		"fill_energy": 0.35,
 		"ambient": 0.36,
@@ -590,10 +601,25 @@ func _build_environment() -> void:
 	# The sky shader draws its own disc, so the light has to be published to the
 	# sky rather than kept light-only.
 	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
-	# The filtered directional shadow map visibly resolves into a dotted mesh on
-	# the flat road. Keep directional light and authored face shading, but skip the
-	# extra shadow render passes entirely; this is cleaner and substantially cheaper.
-	sun.shadow_enabled = false
+	# Real sun shadows, held on a short leash. An earlier attempt left the map at
+	# its defaults — a hundred-metre ortho stretched to cover the horizon, so
+	# every texel spanned decimetres and the filtered sample broke into a dotted
+	# mesh on the flat tarmac. The fix is range, not resolution: one orthographic
+	# box around the rider, ~17 texels to the metre, pancake deep enough to hold
+	# the verge's height range and nothing else. Past the box the authored face
+	# shading and the fog carry the picture, which they were already doing.
+	sun.shadow_enabled = true
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+	# 80 m, not 100: the ortho width is what the map's texels span, so a tighter
+	# box is a sharper edge on every crown and post it holds — ~25 texels to the
+	# metre at 2048. Past it the authored face shading and fog were already
+	# carrying the picture.
+	sun.directional_shadow_max_distance = 80.0
+	sun.directional_shadow_pancake_size = 90.0
+	sun.shadow_bias = 0.05
+	sun.shadow_normal_bias = 1.2
+	sun.shadow_opacity = 0.88
+	sun.shadow_blur = 1.5
 
 	_build_fill_light()
 	_apply_lighting()
@@ -942,8 +968,8 @@ func _build_pollen() -> void:
 	process.initial_velocity_min = 0.15
 	process.initial_velocity_max = 0.6
 	process.gravity = Vector3(0.0, -0.10, 0.0)
-	process.scale_min = 0.5
-	process.scale_max = 1.5
+	process.scale_min = 0.45
+	process.scale_max = 1.0
 
 	# A soft generated disc — bright core rolling off to nothing, the bokeh
 	# shape a real speck makes against the light. No texture import needed.
@@ -964,12 +990,12 @@ func _build_pollen() -> void:
 	_pollen_mat.albedo_color = POLLEN_DEFAULT
 
 	var quad := QuadMesh.new()
-	quad.size = Vector2(0.10, 0.10)
+	quad.size = Vector2(0.085, 0.085)
 	quad.material = _pollen_mat
 
 	_pollen_fx = GPUParticles3D.new()
 	_pollen_fx.name = "Pollen"
-	_pollen_fx.amount = 120
+	_pollen_fx.amount = 80
 	_pollen_fx.lifetime = 7.0
 	_pollen_fx.explosiveness = 0.0
 	_pollen_fx.local_coords = false
@@ -1082,6 +1108,11 @@ func _apply_lighting() -> void:
 	var road_mat := LowPoly.road_material()
 	road_mat.set_shader_parameter("tarmac_tint", mood["road_tint"])
 	road_mat.set_shader_parameter("sheen_strength", mood["road_sheen"])
+	# The shaders' own aerial fade (thin fog would never reach the mid-ground):
+	# both take the mood's air colour so the woods and the pasture cool toward
+	# the same sky that the engine fog converges the far distance to.
+	LowPoly.foliage_material().set_shader_parameter("aerial_tint", mood["fog_color"])
+	LowPoly.field_material().set_shader_parameter("aerial_tint", mood["fog_color"])
 	var horizon := get_node_or_null("HorizonMountains")
 	if horizon and horizon.has_method("apply_mood"):
 		horizon.call("apply_mood", mood)

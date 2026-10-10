@@ -770,7 +770,7 @@ func _publish_shoulder(from_index: int) -> void:
 	_commit_mm(_grass, _grass_cols, grass_tuft(), LowPoly.foliage_material(), "Grass", false)
 	_grass.clear()
 	_grass_cols.clear()
-	_commit_mm(_leaves, _leaf_cols, unit_sphere(), LowPoly.foliage_material(), "Foliage", false)
+	_commit_mm(_leaves, _leaf_cols, unit_sphere(), LowPoly.foliage_material(), "Foliage", true)
 	_leaves.clear()
 	_leaf_cols.clear()
 	_shoulder_published(from_index)
@@ -794,7 +794,7 @@ func _publish_shoulder_incremental(from_index: int) -> void:
 	_grass_cols.clear()
 	if not await _keep_streaming():
 		return
-	_commit_mm(_leaves, _leaf_cols, unit_sphere(), LowPoly.foliage_material(), "Foliage", false)
+	_commit_mm(_leaves, _leaf_cols, unit_sphere(), LowPoly.foliage_material(), "Foliage", true)
 	_leaves.clear()
 	_leaf_cols.clear()
 	_shoulder_published(from_index)
@@ -2319,7 +2319,7 @@ func _build_markings(b: LowPoly, z0: float, streamed: bool = false) -> void:
 				_p(za, lx + 0.11, -LIFT),
 				_p(zb, lx + 0.11, -LIFT),
 				_p(zb, lx - 0.11, -LIFT),
-				stripe
+				_worn_stripe(stripe, za)
 			)
 			if i % 4 == 3 and streamed and _slice_spent() and not await _keep_streaming():
 				return
@@ -2334,6 +2334,7 @@ func _build_markings(b: LowPoly, z0: float, streamed: bool = false) -> void:
 	var marks := 0
 	while z < z0 + LENGTH - 0.001:
 		if fposmod(z + dz * 0.5, DASH_PERIOD) < DASH_ON:
+			var worn := _worn_stripe(stripe, z + dz * 0.5)
 			for lane in range(1, lanes):
 				var lx: float = (_path.lane_x(lane - 1) + _path.lane_x(lane)) * 0.5
 				b.add_quad(
@@ -2341,7 +2342,7 @@ func _build_markings(b: LowPoly, z0: float, streamed: bool = false) -> void:
 					_p(z, lx + 0.09, -LIFT),
 					_p(z + dz, lx + 0.09, -LIFT),
 					_p(z + dz, lx - 0.09, -LIFT),
-					stripe
+					worn
 				)
 		z += dz
 		marks += 1
@@ -2349,6 +2350,16 @@ func _build_markings(b: LowPoly, z0: float, streamed: bool = false) -> void:
 		# stripe pass in one slice. Streamed builds get a boundary mid-run.
 		if marks % 4 == 0 and streamed and _slice_spent() and not await _keep_streaming():
 			return
+
+
+func _worn_stripe(stripe: Color, z: float) -> Color:
+	## Paint wears in stretches, not per metre — sun and plough take it off in
+	## runs of tens of metres, and a per-quad speckle would read as noise rather
+	## than age. Two slow overlapping sines give that drift; the swing stays
+	## small enough that the freshest paint still reads as one line with the
+	## faded runs.
+	var wear := 0.90 + 0.07 * sin(z * 0.109 + 3.1) * sin(z * 0.031 + 1.4)
+	return Color(stripe.r * wear, stripe.g * wear, stripe.b * wear)
 
 
 # ------------------------------------------------------------------ prop API
@@ -3442,19 +3453,23 @@ func _commit_mm_range(
 
 
 func _commit_props(from: Dictionary = {}) -> void:
+	# Shadow casting is on for anything big enough to shade the road: crowns and
+	# conifers carry their sway into the shadow pass for free, which is what
+	# makes the low sun read as wind as well as light. Grass stays off — a
+	# thousand blade-shadows a metre tall is noise, not shade.
 	_commit_mm_range(_cubes, _cube_cols, int(from.get("cubes", 0)), unit_cube(), LowPoly.solid_material(), "Cubes", true)
-	_commit_mm_range(_leaf_cubes, _leaf_cube_cols, int(from.get("leaf_cubes", 0)), unit_cube(), LowPoly.foliage_material(), "Hedges", false)
+	_commit_mm_range(_leaf_cubes, _leaf_cube_cols, int(from.get("leaf_cubes", 0)), unit_cube(), LowPoly.foliage_material(), "Hedges", true)
 	_commit_mm_range(_arch, _arch_cols, int(from.get("arch", 0)), unit_box_sharp(), LowPoly.solid_material(), "Architecture", true)
 	_commit_mm_range(_prisms, _prism_cols, int(from.get("prisms", 0)), unit_cone(), LowPoly.solid_material(), "Cones", true)
-	_commit_mm_range(_blobs, _blob_cols, int(from.get("blobs", 0)), unit_sphere(), LowPoly.solid_material(), "Rocks", false)
-	_commit_mm_range(_leaves, _leaf_cols, int(from.get("leaves", 0)), unit_sphere(), LowPoly.foliage_material(), "Foliage", false)
+	_commit_mm_range(_blobs, _blob_cols, int(from.get("blobs", 0)), unit_sphere(), LowPoly.solid_material(), "Rocks", true)
+	_commit_mm_range(_leaves, _leaf_cols, int(from.get("leaves", 0)), unit_sphere(), LowPoly.foliage_material(), "Foliage", true)
 	_commit_mm_range(_trunks, _trunk_cols, int(from.get("trunks", 0)), unit_trunk(), LowPoly.solid_material(), "Trunks", true)
-	_commit_mm_range(_crowns, _crown_cols, int(from.get("crowns", 0)), unit_crown(), LowPoly.foliage_material(), "Crowns", false)
-	_commit_mm_range(_conifers, _conifer_cols, int(from.get("conifers", 0)), unit_conifer(), LowPoly.foliage_material(), "Conifers", false)
+	_commit_mm_range(_crowns, _crown_cols, int(from.get("crowns", 0)), unit_crown(), LowPoly.foliage_material(), "Crowns", true)
+	_commit_mm_range(_conifers, _conifer_cols, int(from.get("conifers", 0)), unit_conifer(), LowPoly.foliage_material(), "Conifers", true)
 	_commit_mm_range(_ridges, _ridge_cols, int(from.get("ridges", 0)), unit_ridge(), LowPoly.solid_material(), "Ridges", false)
 	_commit_mm_range(_ledges, _ledge_cols, int(from.get("ledges", 0)), unit_box_sharp(), LowPoly.solid_material(), "FaceLedges", false)
 	_commit_mm_range(_grass, _grass_cols, int(from.get("grass", 0)), grass_tuft(), LowPoly.foliage_material(), "Grass", false)
-	_commit_mm_range(_hay, _hay_cols, int(from.get("hay", 0)), unit_hay_bale(), LowPoly.solid_material(), "HayBales", false)
+	_commit_mm_range(_hay, _hay_cols, int(from.get("hay", 0)), unit_hay_bale(), LowPoly.solid_material(), "HayBales", true)
 	_commit_mm_range(_lamps, _lamp_cols, int(from.get("lamps", 0)), unit_cube(), LowPoly.glow_material(), "Lamps", false)
 
 
@@ -3469,7 +3484,7 @@ func _commit_props_incremental(from: Dictionary = {}) -> void:
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
 	if int(from.get("leaf_cubes", 0)) < _leaf_cubes.size():
-		_commit_mm_range(_leaf_cubes, _leaf_cube_cols, int(from.get("leaf_cubes", 0)), unit_cube(), LowPoly.foliage_material(), "Hedges", false)
+		_commit_mm_range(_leaf_cubes, _leaf_cube_cols, int(from.get("leaf_cubes", 0)), unit_cube(), LowPoly.foliage_material(), "Hedges", true)
 		published += 1
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
@@ -3484,12 +3499,12 @@ func _commit_props_incremental(from: Dictionary = {}) -> void:
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
 	if int(from.get("blobs", 0)) < _blobs.size():
-		_commit_mm_range(_blobs, _blob_cols, int(from.get("blobs", 0)), unit_sphere(), LowPoly.solid_material(), "Rocks", false)
+		_commit_mm_range(_blobs, _blob_cols, int(from.get("blobs", 0)), unit_sphere(), LowPoly.solid_material(), "Rocks", true)
 		published += 1
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
 	if int(from.get("leaves", 0)) < _leaves.size():
-		_commit_mm_range(_leaves, _leaf_cols, int(from.get("leaves", 0)), unit_sphere(), LowPoly.foliage_material(), "Foliage", false)
+		_commit_mm_range(_leaves, _leaf_cols, int(from.get("leaves", 0)), unit_sphere(), LowPoly.foliage_material(), "Foliage", true)
 		published += 1
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
@@ -3499,12 +3514,12 @@ func _commit_props_incremental(from: Dictionary = {}) -> void:
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
 	if int(from.get("crowns", 0)) < _crowns.size():
-		_commit_mm_range(_crowns, _crown_cols, int(from.get("crowns", 0)), unit_crown(), LowPoly.foliage_material(), "Crowns", false)
+		_commit_mm_range(_crowns, _crown_cols, int(from.get("crowns", 0)), unit_crown(), LowPoly.foliage_material(), "Crowns", true)
 		published += 1
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
 	if int(from.get("conifers", 0)) < _conifers.size():
-		_commit_mm_range(_conifers, _conifer_cols, int(from.get("conifers", 0)), unit_conifer(), LowPoly.foliage_material(), "Conifers", false)
+		_commit_mm_range(_conifers, _conifer_cols, int(from.get("conifers", 0)), unit_conifer(), LowPoly.foliage_material(), "Conifers", true)
 		published += 1
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
@@ -3524,7 +3539,7 @@ func _commit_props_incremental(from: Dictionary = {}) -> void:
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
 	if int(from.get("hay", 0)) < _hay.size():
-		_commit_mm_range(_hay, _hay_cols, int(from.get("hay", 0)), unit_hay_bale(), LowPoly.solid_material(), "HayBales", false)
+		_commit_mm_range(_hay, _hay_cols, int(from.get("hay", 0)), unit_hay_bale(), LowPoly.solid_material(), "HayBales", true)
 		published += 1
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
