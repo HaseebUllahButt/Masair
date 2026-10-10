@@ -838,6 +838,10 @@ func _build_highway_props_incremental() -> void:
 	await _build_ordinary_theme_scenery_incremental()
 	if not await _keep_streaming():
 		return
+	if _on_spur:
+		await _build_basin_roadside(true)
+		if not await _keep_streaming():
+			return
 	await _build_distant_scenery_incremental()
 	if not await _keep_streaming():
 		return
@@ -1009,6 +1013,7 @@ func _build_highway_props() -> void:
 	# keeps the seat's view open; skipping the theme pass outright was what left
 	# a kilometre of roadside beside every basin reading as a mown green plain.
 	_build_ordinary_theme_scenery()
+	_build_basin_roadside()
 	_build_distant_scenery()
 	_build_approach_signs()
 	if _on_spur:
@@ -1118,6 +1123,7 @@ func _build_theme_scenery() -> void:
 	if _on_spur:
 		_build_spur_woodland()
 	_build_ordinary_theme_scenery()
+	_build_basin_roadside()
 
 
 func _build_ordinary_theme_scenery() -> void:
@@ -5869,6 +5875,111 @@ func _build_highway_spur_screen(streamed: bool = false) -> void:
 		if _vp_theme == Env.FOREST:
 			species = Flora.CONIFER if _rng.randf() < 0.3 else Flora.BROADLEAF
 		_tree(species, z, inner, height, Color("2a4634").lerp(Color("4a6840"), _rng.randf() * 0.35), true)
+
+
+func _build_basin_roadside(streamed: bool = false) -> void:
+	## The main-road side of an overlook stretch. The theme scatter stops at the
+	## same depth it uses on every chunk, and on this shelf that leaves a lawn
+	## eighty metres deep between the verge and the headland — the bare plain
+	## the whole stretch read as. Copses and shrubs carry the biome's look out
+	## across the shelf, the drowned tails and the shore fringe. Nothing here
+	## bypasses the ordinary rules: the seat's reserve, both tarmacs and the
+	## waterline are still `_footprint_is_clear` and `_height_above_water`, so
+	## dressing stops exactly where the corridor and the lake begin.
+	if not _on_spur or _vp_side == 0.0:
+		return
+	var z0: float = float(chunk_index) * LENGTH
+	var woody: Color = _pal["prop_a"]
+	var deep: Color = _pal["prop_c"]
+	# View-side copses: small stands of the basin biome's trees stepping down
+	# the shelf toward the water — a real valley side is never one lawn.
+	for _clump in 5:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
+		var cz := z0 + _rng.randf_range(0.0, LENGTH)
+		var shore: float = float(_path.viewpoint_near_shore(cz))
+		var out := _rng.randf_range(HALF_WIDTH + 16.0, maxf(shore - 6.0, HALF_WIDTH + 26.0))
+		var cx: float = _vp_side * out
+		if _height_above_water(cz, out) < 2.0:
+			continue
+		var tint: Color = woody.lerp(deep, _rng.randf() * 0.6).darkened(_rng.randf() * 0.2)
+		if _vp_theme == Env.COUNTRY and _rng.randf() < 0.3:
+			# A hedge line out on the pasture shelf — the country side reads as
+			# worked fields, not a plantation.
+			var hz := cz - _rng.randf_range(0.0, 14.0)
+			var hx: float = cx + _rng.randf_range(-6.0, 6.0) * _vp_side
+			for seg in _rng.randi_range(4, 8):
+				_leaf_cube(
+					hz + float(seg) * _rng.randf_range(2.4, 3.2),
+					hx,
+					Vector3(2.6, _rng.randf_range(1.4, 2.2), 1.5),
+					tint.darkened(_rng.randf() * 0.25),
+					0.0,
+					0.0,
+					false,
+					false
+				)
+			continue
+		for _i in _rng.randi_range(2, 5):
+			var z := cz + _rng.randf_range(-9.0, 9.0)
+			var lx: float = cx + _vp_side * _rng.randf_range(-8.0, 8.0)
+			if _vp_theme == Env.COUNTRY:
+				_tree(Flora.BROADLEAF, z, lx, _rng.randf_range(5.5, 10.5), tint)
+			else:
+				var roll := _rng.randf()
+				_tree(
+					(
+						Flora.CONIFER
+						if roll < 0.55
+						else (Flora.PINE if roll < 0.75 else Flora.BROADLEAF)
+					),
+					z,
+					lx,
+					_rng.randf_range(6.5, 13.0),
+					tint
+				)
+			if streamed and _slice_spent() and not await _keep_streaming():
+				return
+		# The clump's skirt — a stand with no undergrowth is lollipops on a lawn.
+		for _i in _rng.randi_range(2, 4):
+			var s := _rng.randf_range(1.2, 2.6)
+			_blob(
+				cz + _rng.randf_range(-8.0, 8.0),
+				cx + _vp_side * _rng.randf_range(-7.0, 7.0),
+				Vector3(s * 1.6, s * _rng.randf_range(0.5, 0.8), s * 1.4),
+				tint.darkened(_rng.randf_range(0.15, 0.35)),
+				0.0,
+				true
+			)
+	# The shore fringe: reeds and low bushes where the drowned tails flatten to
+	# the water, so the shelf's far edge reads as a shoreline and not a mown
+	# strip. Inside the basin span the reserve refuses these by itself.
+	for _i in 8:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var shore: float = float(_path.viewpoint_near_shore(z))
+		var out: float = shore + _rng.randf_range(-14.0, 2.0)
+		if _height_above_water(z, out) < 0.7:
+			continue
+		var s := _rng.randf_range(0.8, 1.8)
+		_blob(
+			z,
+			_vp_side * out,
+			Vector3(s * 1.8, s * _rng.randf_range(0.4, 0.7), s * 1.6),
+			(_pal["verge"] as Color).lerp(deep, 0.45).darkened(_rng.randf() * 0.2),
+			0.0,
+			true
+		)
+	# The opposite verge keeps its trees too — a few deeper specimens put trunks
+	# on the inland hillside rather than letting the wood stop at the usual line.
+	for _i in 3:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
+		var z := z0 + _rng.randf_range(0.0, LENGTH)
+		var lx: float = -_vp_side * (HALF_WIDTH + _rng.randf_range(80.0, 160.0))
+		var species := Flora.BROADLEAF if _vp_theme == Env.COUNTRY else Flora.CONIFER
+		_tree(species, z, lx, _rng.randf_range(8.0, 14.0), deep.darkened(_rng.randf() * 0.15))
 
 
 func _build_approach_signs() -> void:
