@@ -109,7 +109,7 @@ void fragment() {
 		// they stripe into curtains. The middle bands were nearly as flattened
 		// before, which is what turned each mid-ring massif into a single pale
 		// slab: every facet shared one lit value.
-		float flatten_eff = azimuth_flatten * (1.0 - 0.55 * smoothstep(0.15, 0.60, haze_v));
+		float flatten_eff = azimuth_flatten * (1.0 - 0.72 * smoothstep(0.10, 0.55, haze_v));
 		n = normalize(mix(n, vec3(flat_dir.x, n.y, flat_dir.y), flatten_eff));
 	}
 	vec3 sun = normalize(sun_dir);
@@ -143,7 +143,11 @@ void fragment() {
 	// side. Note this is the *internal* spread only — the whole frame's
 	// light-to-dark ratio also has to survive tonemapping and the grade LUT
 	// above it, and at dusk the air is what finally sets that.
-	float lum = mix(0.57, 1.04, lit);
+	// 0.57 -> 0.62: a shaded rock face still landed inside the LUT's blue
+	// shadow anchor and the grade's toe lift, which is what the reviewer reads
+	// as "near-black navy". The lit/shade spread stays above 1.6:1 even before
+	// the tint split below does its half of the work.
+	float lum = mix(0.62, 1.04, lit);
 	lum += 0.16 * dome * dome;
 	lum *= mix(0.90, 1.08, grit_v);
 	lum *= mix(0.88 + 0.08 * light_soft, 1.08, relief);
@@ -157,14 +161,22 @@ void fragment() {
 	// The shade tint is nearly neutral now: the grade already cools the frame's
 	// darks, and a blue multiplier here *and* there is what kept crushing shaded
 	// faces into the "near-black navy" the reviewer kept sending back.
-	vec3 shade_tint = vec3(0.85, 0.89, 1.00);
+	// (0.85,0.89,1.00) -> (0.90,0.93,1.01): same rule, one notch brighter —
+	// neutral slate in shade, not a blue cut-out.
+	vec3 shade_tint = vec3(0.90, 0.93, 1.01);
 	// Cooled and pulled back: at 1.10 warm a lit face went over 1.0 and ACES
 	// returned it as cream — half the "sand dune" problem was the sun tint.
 	// The other half is that air cools the light itself: a warm key scattered
 	// over a kilometre arrives blue-shifted, so the lit tint walks toward cool
 	// sky with the layer's haze. A warm sun tint reaching the mid rings
 	// unspent is what the grade kept returning as cream card.
-	vec3 sun_tint = mix(key_tint, vec3(0.80, 0.88, 1.06), haze_v * 0.75);
+	// haze_v * 0.75 -> 1.35: at 0.75 the second ring still carried three
+	// quarters of the warm tint, so every sun-facing face rearward of the
+	// rider rendered as pale tan — the washed "grey" that was actually cream.
+	// Now the tint is spent by the second ring and the far faces go cool-slate,
+	// which is the aerial step the reviewer keeps asking for. The near ring
+	// keeps its warm kiss: five percent of the climb is barely moved.
+	vec3 sun_tint = mix(key_tint, vec3(0.80, 0.88, 1.06), clamp(haze_v * 1.35, 0.0, 0.92));
 	vec3 col = rock * lum * mix(shade_tint, sun_tint, lit);
 	// Ambient, on both sides of the terminator.
 	//
@@ -183,7 +195,7 @@ void fragment() {
 	// woods below so the forested foot lifts with the rock instead of staying
 	// a black band under it.
 	vec3 amb = haze_color * (0.006 + 0.012 * dome) * mix(0.45, 1.0, lit)
-		+ sky_color * dome * 0.115 * (1.0 - lit);
+		+ sky_color * (dome * 0.14 + 0.04) * (1.0 - lit);
 	col += amb;
 
 	// Treeline, ragged, by height alone. Gating it on the facet normal switched
@@ -279,7 +291,7 @@ void fragment() {
 	// grade's warm highlights returned every slate-blue panel as cream card.
 	// Kept shallow: the far band has to stay *lighter* than the mid one for
 	// the depth ladder to read, so the path eats a fifth, not a third.
-	col *= 1.0 - 0.10 * haze_v;
+	col *= 1.0 - 0.14 * haze_v;
 	// ...and it cools what is left of it. The warm key is scattered out of the
 	// light long before the light is gone, so the residual rock colour shifts
 	// blue with distance on top of the veil the mix lays over it.
@@ -293,7 +305,11 @@ void fragment() {
 	// The floor is not symmetric: a shaded far face is lit by the sky itself,
 	// not by nothing, so its air only falls to four-fifths — a shaded band
 	// that went to near-black was the "navy cut-out" complaint all over again.
-	col = mix(col, air * mix(0.88, 1.04, lit), haze_w);
+	// (0.88,1.04) -> (0.80,1.10): at a third of a veil the old spread left the
+	// far range eight percent of lit/shade difference — a flat pale card
+	// rearward of the rider. Fourteen percent keeps the tallest band's two
+	// faces legible through the air.
+	col = mix(col, air * mix(0.80, 1.10, lit), haze_w);
 	// Soften the ring into the air at the extreme edges of a wide lens, but
 	// keep the mountains when the rider looks aside.
 	vec3 cam = INV_VIEW_MATRIX[3].xyz;

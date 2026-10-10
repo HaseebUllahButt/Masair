@@ -21,7 +21,13 @@ const RANGE_SHADER: Shader = preload("res://shaders/horizon.gdshader")
 ## panel-to-panel turn out of its light, and `slope_rock` bares steep ground
 ## (see the shader for all three).
 const RING := {
-	"treeline": 170.0, "woods": Color("34573f"), "snow_bias": -0.10, "light_soft": 0.3, "azimuth_flatten": 0.85
+	## 170 -> 240. The treeline is metres above the ring's own foot (-160), so
+	## 170 left only the bottom third of the 900 m back layer wooded — the far
+	## range read as bare pale rock to the skyline, which fed the "washed grey"
+	## complaint. 240 puts real forest on the foot of every layer: the foothill
+	## ring woods almost to its crests, the back range keeps a green skirt under
+	## the rock, the way the treeline actually behaves on a tall face.
+	"treeline": 240.0, "woods": Color("34573f"), "snow_bias": -0.10, "light_soft": 0.3, "azimuth_flatten": 0.85
 }
 ## Keyed by RoadChunk.Env.
 const OVERLOOK := {
