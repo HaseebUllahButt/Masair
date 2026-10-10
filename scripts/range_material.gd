@@ -151,7 +151,17 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	var key_norm := Color(key.r / kl, key.g / kl, key.b / kl)
 	var cool: Color = key_norm.lerp(Color(0.82, 0.90, 1.06), 0.45)
 	var cool_weight := clampf((key.b - key.r) * 3.0, 0.0, 1.0)
-	mat.set_shader_parameter("key_tint", Color(1.03, 0.97, 0.85).lerp(cool, cool_weight))
+	# The old constant (1.03,0.97,0.85) laid a full warm cast on every lit
+	# face, and the grade's warm mids returned a neutral-warm rock as tan —
+	# the "sand dunes" the reviewer kept rejecting. Daylight granite takes
+	# almost no warm cast: a kilometre and a half of air scatters the warm
+	# out of the key long before it reaches the ridge, so a lit face at
+	# noon is slate, not caramel. The cast is reserved for a genuinely low
+	# sun — dusk's ff9e62 is red-deep enough that alpenglow is real, and its
+	# (r-b) of 0.62 sits clear of day's 0.40. Night's cool path is unchanged.
+	var warm_depth := smoothstep(0.45, 0.60, key.r - key.b)
+	var lit_cast := Color(0.93, 0.965, 1.045).lerp(Color(1.03, 0.97, 0.85), warm_depth)
+	mat.set_shader_parameter("key_tint", lit_cast.lerp(cool, cool_weight))
 	## Light, because the haze it lays on is the mist colour and the mist is
 	## pale: at 0.75 every range in the rain glowed off-white against a slate sky.
 	mat.set_shader_parameter("weather_haze", 0.35 * float(_mood.get("rain", 0.0)))
