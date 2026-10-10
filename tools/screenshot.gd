@@ -53,7 +53,10 @@ func _initialize() -> void:
 	cap.pitch = float(opts.get("pitch", 0.0))
 	cap.hide = String(opts.get("hide", ""))
 	cap.pick = opts.has("pick")
+	cap.hitch = opts.has("hitch")
 	cap.tree_ref = self
+	if cap.hitch:
+		RoadChunkGD.set("hitch_trace", true)
 	root.add_child(cap)
 
 
@@ -125,6 +128,10 @@ class Capture:
 	## of a coarse screen grid — for tracing a shape to its builder when hiding
 	## by name has ruled everything out. Skips image output entirely.
 	var pick := false
+	## Per-frame hitch log: any frame over 20 ms prints its wall cost, where the
+	## bike was, and the streamer's job/queue state, so a spike can be blamed on
+	## a build stage instead of guessed at.
+	var hitch := false
 	var _catalog_jobs: Array[Dictionary] = []
 	var _cam: Camera3D
 	## Pin the world so a ride and a parked shot are of the same landscape. The
@@ -487,6 +494,18 @@ class Capture:
 			if delta > 0.033:
 				_slow += 1
 				_last_slow = _elapsed
+			if hitch and delta > 0.020:
+				var p := get_tree().root.find_child("Player", true, false)
+				var s := get_tree().root.find_child("RoadStreamer", true, false)
+				print(
+					"hitch: frame %.1f ms at t=%.1f z=%.0f lat=%.1f | %s"
+					% [
+						delta * 1000.0, _elapsed,
+						float(p.track_z) if p else -1.0,
+						float(p.lateral) if p else 0.0,
+						s.call("debug_state") if s and s.has_method("debug_state") else "?",
+					]
+				)
 		if _busy or _taken >= shots:
 			return
 		if catalog:

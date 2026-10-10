@@ -914,8 +914,8 @@ func _build_scenic_props_incremental() -> void:
 	# One woodland station per slice — each plants rows of trees through the
 	# corridor clearance sweep, and all five at once was a ~20 ms lump.
 	for i in 5:
-		_build_spur_woodland(i, 1, phase)
-		if _slice_spent() and not await _keep_streaming():
+		await _build_spur_woodland(i, 1, phase, _keep_streaming)
+		if not is_inside_tree():
 			return
 	if _on_lake and _owns_platform:
 		# The platform chunk owns the complete basin; nearby chunks only carry the spur. Dressing can stay near
@@ -949,7 +949,7 @@ func _build_scenic_props_incremental() -> void:
 			_build_vista_landmarks()
 			if not await _keep_streaming():
 				return
-	_build_spur_furniture()
+	await _build_spur_furniture(true)
 	if not await _keep_streaming():
 		return
 	await _commit_props_incremental(scenic_marks)
@@ -1127,9 +1127,12 @@ func _build_scenic_stub_incremental() -> void:
 		return
 	var marks := _prop_marks()
 	var from_index := get_child_count()
-	_build_spur_woodland(0, 5, 1)
-	if not await _keep_streaming():
-		return
+	# One liner station per slice — all five at once ran every tree's corridor
+	# sweep in a single 15–30 ms lump on every chunk of the climb.
+	for i in 5:
+		await _build_spur_woodland(i, 1, 1, _keep_streaming)
+		if not is_inside_tree():
+			return
 	await _commit_props_incremental(marks)
 	_tag_new_children(from_index, "scenic")
 	set_meta("stub_done", true)
@@ -1249,7 +1252,9 @@ func _spur_tree(species: int, z: float, lateral: float, height: float, color: Co
 		try_lateral += escape * 6.0
 
 
-func _build_spur_woodland(first_station: int = 0, station_count: int = 5, phase: int = 0) -> void:
+func _build_spur_woodland(
+	first_station: int = 0, station_count: int = 5, phase: int = 0, pace: Callable = Callable()
+) -> void:
 	## Planting along the climb. The spur geometry is the same everywhere; what
 	## grows beside it follows the biome of this stretch, so a country rise is
 	## not ridden through a pine tunnel.
@@ -1371,6 +1376,8 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5, phase:
 							Color("2e4c36").lerp(Color("52704a"), _rng.randf() * 0.4),
 							escape
 						)
+				if pace.is_valid() and _slice_spent() and not await pace.call():
+					return
 			# Turf and tussock right at the lane edge, every side and every
 			# phase — the narrow green verge the painted embankment used to
 			# leave as a bare apron. It stays low and out of the foliage sweep,
@@ -1516,6 +1523,8 @@ func _build_spur_woodland(first_station: int = 0, station_count: int = 5, phase:
 						false,
 						true
 					)
+			if pace.is_valid() and _slice_spent() and not await pace.call():
+				return
 
 
 func _p(z: float, lateral: float, drop: float) -> Vector3:
@@ -6465,7 +6474,7 @@ func _build_platform_bays(hard: LowPoly, z0: float, streamed: bool = false) -> v
 			return
 
 
-func _build_spur_furniture() -> void:
+func _build_spur_furniture(streamed: bool = false) -> void:
 	## Marker posts along the inner edge of the climb. The barrier on the drop
 	## side is ribbon geometry — see _build_spur_barrier() — because a fence made
 	## of boxes spaced along the route cannot follow a road that leaves it.
@@ -6481,6 +6490,8 @@ func _build_spur_furniture() -> void:
 			_deck_cube(z, inner, Vector3(0.1, 0.95, 0.1), rail.lightened(0.2), _spur_yaw(z), 0.0)
 			_deck_lamp(z, inner, Vector3(0.1, 0.09, 0.05), REFLECTOR, 0.8)
 		z += 3.0
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 
 func _build_highway_spur_screen(streamed: bool = false) -> void:
@@ -6994,7 +7005,7 @@ func _dress_nose_tip_incremental() -> void:
 					z, _vp_side * out, _rng.randf_range(2.0, 6.5), _rng.randf_range(-0.4, 0.4) + _face_ground_lift(z, out)
 				)
 			n += 1
-			if n % 5 == 0 and _slice_spent() and not await _keep_streaming():
+			if n % 2 == 0 and _slice_spent() and not await _keep_streaming():
 				return
 		if not await _keep_streaming():
 			return
@@ -10255,28 +10266,30 @@ func _set_piece_platform() -> void:
 
 func _set_piece_platform_incremental() -> bool:
 	var rng := _platform_rng()
-	_platform_step(rng, _build_belvedere)
+	# Each heavy step is sliced inside itself too — a whole belvedere or
+	# pergola between yields was a 30–55 ms frame while the rider climbed.
+	await _platform_step(rng, _build_belvedere.bind(true))
 	if not await _keep_streaming():
 		return false
-	_platform_step(rng, _build_platform_seating)
+	await _platform_step(rng, _build_platform_seating.bind(true))
 	if not await _keep_streaming():
 		return false
-	_platform_step(rng, _build_platform_gate)
+	await _platform_step(rng, _build_platform_gate.bind(true))
 	if not await _keep_streaming():
 		return false
 	# The walk's three lanterns each instantiate a packed scene and its bollard
 	# light, and the pergola is a dozen timber members through the clearance
 	# sweep — one step for both was a 50 ms lump on arrival.
-	_platform_step(rng, _build_platform_lanterns)
+	await _platform_step(rng, _build_platform_lanterns.bind(true))
 	if not await _keep_streaming():
 		return false
-	_platform_step(rng, _build_platform_pergola)
+	await _platform_step(rng, _build_platform_pergola.bind(true))
 	if not await _keep_streaming():
 		return false
-	_platform_step(rng, _build_platform_trees)
+	await _platform_step(rng, _build_platform_trees.bind(true))
 	if not await _keep_streaming():
 		return false
-	_platform_step(rng, _build_platform_planting)
+	await _platform_step(rng, _build_platform_planting.bind(true))
 	return await _keep_streaming()
 
 
@@ -10291,11 +10304,12 @@ func _platform_rng() -> RandomNumberGenerator:
 
 
 func _platform_step(rng: RandomNumberGenerator, step: Callable) -> void:
-	## One synchronous platform step on the platform's generator. Swapped only
-	## across a call that never awaits, so nothing else can draw from it.
+	## One platform step on the platform's generator. The swap now spans the
+	## step's own awaits — a streamed step keeps drawing from this sequence
+	## after a frame yield, so the platform is identical however it is sliced.
 	var world_rng := _rng
 	_rng = rng
-	step.call()
+	await step.call()
 	_rng = world_rng
 
 
@@ -10309,7 +10323,7 @@ func _build_platform_furniture() -> void:
 	_build_platform_walk()
 
 
-func _build_platform_seating() -> void:
+func _build_platform_seating(streamed: bool = false) -> void:
 	var centre := _vp_centre
 	var side := _vp_side
 	# Out on the terrace, clear of anything the bike can reach.
@@ -10320,13 +10334,15 @@ func _build_platform_seating() -> void:
 	# a world-up offset above a pitched deck.
 	for offset in RoadPathGD.PLATFORM_BENCH_Z:
 		_viewpoint_bench(centre + float(offset), side, RoadPathGD.PLATFORM_BENCH_OUT)
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 	_viewpoint_board(centre + 14.0, side, RoadPathGD.PLATFORM_HALF_WIDTH + 1.6, timber)
 	# The kit's balcony carries its own coin viewer out over the drop.
 	if _lookout_scene(LOOKOUT_BALCONY) == null:
 		_viewpoint_telescope(centre - 0.2, side, edge - 1.4)
 
 
-func _build_platform_gate() -> void:
+func _build_platform_gate(streamed: bool = false) -> void:
 	var centre := _vp_centre
 	var timber := Color("6d4f38")
 	# Painted bays and the brown board at the way in, when the kit has them.
@@ -10334,6 +10350,8 @@ func _build_platform_gate() -> void:
 	if bays:
 		for at in [-8.0, 8.0]:
 			_place_lookout(bays, centre + at, RoadPathGD.PLATFORM_HALF_WIDTH, BAYS_LIFT, "LookoutBays_%d" % int(at))
+			if streamed and _slice_spent() and not await _keep_streaming():
+				return
 	var stop: PackedScene = _lookout_scene(LOOKOUT_STOP)
 	if stop:
 		# One at the way in, and one a long stopping distance before it, so the
@@ -10342,6 +10360,8 @@ func _build_platform_gate() -> void:
 			var stop_z: float = centre - float(pair[0])
 			var verge: float = float(_path.spur_half_width(stop_z)) + RoadPathGD.SPUR_SHOULDER + 1.4
 			_place_lookout(stop, stop_z, -verge, 0.0, str(pair[1]))
+			if streamed and _slice_spent() and not await _keep_streaming():
+				return
 	var bin_z := centre + 17.5
 	var bin_lat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 1.4, bin_z)
 	_deck_cube(bin_z, bin_lat, Vector3(0.62, 0.92, 0.62), timber.darkened(0.2), 0.0, -0.04)
@@ -10353,7 +10373,7 @@ func _build_platform_walk() -> void:
 	_build_platform_pergola()
 
 
-func _build_platform_lanterns() -> void:
+func _build_platform_lanterns(streamed: bool = false) -> void:
 	var centre := _vp_centre
 	# Promenade lanterns along the parking side of the walk: tall enough to read
 	# as street furniture from the road, behind the benches so the seated view
@@ -10361,6 +10381,8 @@ func _build_platform_lanterns() -> void:
 	# cap); the middle one keeps its emissive glass.
 	for offset in [-12.0, 0.0, 12.0]:
 		_viewpoint_lantern(centre + offset, RoadPathGD.PLATFORM_HALF_WIDTH + 1.05, absf(offset) > 1.0)
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 
 func _viewpoint_lantern(z: float, out: float, lit: bool) -> void:
@@ -10375,7 +10397,7 @@ func _viewpoint_lantern(z: float, out: float, lit: bool) -> void:
 	if lit:
 		_deck_light(z, lateral, 0.81, Color("ffd399"), 5.0, 0.55)
 
-func _build_platform_pergola() -> void:
+func _build_platform_pergola(streamed: bool = false) -> void:
 	## A timber pergola over the walk beside the seated bench, with benches of
 	## its own and blossom over the rafters. It is the silhouette that makes the
 	## terrace a destination from the parking: an open frame, not a roof, so the
@@ -10424,6 +10446,8 @@ func _build_platform_pergola() -> void:
 	while rz <= z_b + 0.31:
 		_deck_cube(rz, _platform_lateral(centre_out, rz), Vector3(width, 0.18, 0.09), timber, 0.0, HEIGHT + 0.26)
 		rz += 0.55
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 	# A creeper over the rafters: clumps of small leaf pads, bloom worked into
 	# about half of them. The old pass scattered large flat mounds along the
 	# roofline, which at the bench's eye height read as a row of eggs.
@@ -10442,6 +10466,8 @@ func _build_platform_pergola() -> void:
 				bz, _platform_lateral(bo, bz),
 				Vector3(s * 1.5, s * 0.5, s * 1.3), col, HEIGHT + 0.26 + _rng.randf() * 0.14, true
 			)
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 	# Wisteria racemes: short tapering chains of beads, wide at the rafter and
 	# narrowing to a tip. A single ellipsoid on a string read as an egg however
 	# it was tinted — a raceme is a cone of florets, so that is what each is.
@@ -10451,12 +10477,16 @@ func _build_platform_pergola() -> void:
 		var ho: float = _rng.randf_range(inner + 0.2, outer - 0.2)
 		var tint: Color = wisteria.lerp(Color("d8cbe9"), _rng.randf() * 0.55)
 		_deck_raceme(hz, _platform_lateral(ho, hz), HEIGHT + 0.2, tint)
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 	# Lanterns hung off the rafters — the glow that reads as "sit here" at dusk.
 	# Emissive glass only; the chunk's two real lights are spent on the walk.
 	for lz in [z_a + 1.6, z_mid, z_b - 1.6]:
 		var llat: float = _platform_lateral(centre_out, lz)
 		_deck_cube(lz, llat, Vector3(0.04, 0.3, 0.04), Color("2a2e31"), 0.0, HEIGHT - 0.14)
 		_deck_lamp(lz, llat, Vector3(0.2, 0.26, 0.2), LAMP_WARM, HEIGHT - 0.44)
+	if streamed and _slice_spent() and not await _keep_streaming():
+		return
 	# Two benches under the canopy, facing the water between the posts — with
 	# the vista bench at the canopy's edge that makes three seats in the shade.
 	for bench_z in [z_a + 2.0, z_b - 2.2]:
@@ -10519,7 +10549,7 @@ func _deck_bloom_cluster(
 		)
 
 
-func _build_platform_trees() -> void:
+func _build_platform_trees(streamed: bool = false) -> void:
 	# Pines along the back of the platform, screening the carriageway.
 	# Mountain is a screen of wind-shaped pine; forest and country keep the
 	# wooded backstop.
@@ -10543,6 +10573,8 @@ func _build_platform_trees() -> void:
 			Color("2b4c35").lerp(Color("45683f"), _rng.randf()),
 			true
 		)
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 	# Two sentinel trees at the terrace ends — the silhouette that says this
 	# is a belvedere and not a lay-by. They stand on the road side: planted
 	# past the parapet they parked a dark canopy across the seated view.
@@ -10568,6 +10600,8 @@ func _build_platform_trees() -> void:
 				Color("2f4d36"),
 				true
 			)
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 
 func _lookout_tree(packed: PackedScene, z: float, lateral: float, height: float, node_name: String) -> void:
@@ -10638,7 +10672,7 @@ func _platform_bloom() -> Color:
 	return Color("c8a83c")
 
 
-func _build_platform_planting() -> void:
+func _build_platform_planting(streamed: bool = false) -> void:
 	# A couple of stone planters at the ends, not a hedge across the view.
 	var centre := _vp_centre
 	var bloom := _platform_bloom()
@@ -10655,6 +10689,8 @@ func _build_platform_planting() -> void:
 			true
 		)
 		_deck_bloom_cluster(pz, plat, bloom, 0.6, 3, 0.28)
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 	# Troughs mid-terrace, flanking the centre, so the walk is a garden edge and
 	# not only a place to stand the bike.
 	for offset in [-7.5, 7.5]:
@@ -10692,9 +10728,11 @@ func _build_platform_planting() -> void:
 				-0.06,
 				true
 			)
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 
-func _build_belvedere() -> void:
+func _build_belvedere(streamed: bool = false) -> void:
 	## A limestone terrace with a wall under it. The old platform was a paper
 	## shelf: furniture sat on a grass band and the lake showed through under
 	## the legs. This is a built place — paving, a parapet you can lean on, and
@@ -10723,8 +10761,12 @@ func _build_belvedere() -> void:
 			_belvedere_pave(b, z, next, limestone.lerp(shadow, 0.34))
 		_belvedere_wall(b, z, next, limestone, mortar, shadow)
 		z = next
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 	if authored:
-		_belvedere_deck_pave(b)
+		await _belvedere_deck_pave(b, streamed)
+		if streamed and not is_inside_tree():
+			return
 	_belvedere_ends(b, limestone, shadow)
 	var mesh: MeshInstance3D = b.commit_to(self, "PlatformKerbs")
 	if mesh:
@@ -10734,8 +10776,10 @@ func _build_belvedere() -> void:
 			# — without the headland's own sky fill they render as a black slab
 			# under the lip and the landed plinth still reads as hanging.
 			mesh.layers = HEADLAND_FILL_LAYER
+	if streamed and _slice_spent() and not await _keep_streaming():
+		return
 	if authored:
-		_build_authored_terrace(deck, rail)
+		await _build_authored_terrace(deck, rail, streamed)
 		return
 	# Short stone piers at the corners, so the parapet has something to end on.
 	for end in [-1.0, 1.0]:
@@ -10752,10 +10796,12 @@ func _build_belvedere() -> void:
 		_deck_cube(pier_z, lat, Vector3(0.72, 0.13, 0.72), limestone.lightened(0.10), 0.0, 1.02)
 		# Stepped finial, so each pier ends in a shape and not a slab.
 		pier_z += 7.7
-	_build_belvedere_railing()
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
+	await _build_belvedere_railing(streamed)
 
 
-func _build_authored_terrace(deck: PackedScene, rail: PackedScene) -> void:
+func _build_authored_terrace(deck: PackedScene, rail: PackedScene, streamed: bool = false) -> void:
 	## The kit's deck and rail in four-metre segments, each squared to the road
 	## at its own station so the run follows the platform round its curve the way
 	## the procedural flags did. The deck's skirt and the rail's shared end posts
@@ -10772,8 +10818,12 @@ func _build_authored_terrace(deck: PackedScene, rail: PackedScene) -> void:
 		if balcony == null or absf(offset) > TERRACE_PITCH * 0.75:
 			rail_zs.append(_vp_centre + offset)
 		offset += TERRACE_PITCH
-	_place_lookout_run(deck, deck_zs, RoadPathGD.PLATFORM_HALF_WIDTH, TERRACE_FLOOR, "LookoutDeck")
-	_place_lookout_run(rail, rail_zs, rail_out, TERRACE_FLOOR, "LookoutRail")
+	await _place_lookout_run(deck, deck_zs, RoadPathGD.PLATFORM_HALF_WIDTH, TERRACE_FLOOR, "LookoutDeck", streamed)
+	if streamed and not is_inside_tree():
+		return
+	if streamed and _slice_spent() and not await _keep_streaming():
+		return
+	await _place_lookout_run(rail, rail_zs, rail_out, TERRACE_FLOOR, "LookoutRail", streamed)
 	if balcony:
 		_place_lookout(balcony, _vp_centre, rail_out, TERRACE_FLOOR, "LookoutBalcony")
 	# A pier at each end of the run, so the rail stops on something.
@@ -10781,9 +10831,11 @@ func _build_authored_terrace(deck: PackedScene, rail: PackedScene) -> void:
 	if pier:
 		for end in [-1.0, 1.0]:
 			_place_lookout(pier, _vp_centre + end * (half + 1.0), rail_out, TERRACE_FLOOR, "LookoutPier_%d" % int(end))
+			if streamed and _slice_spent() and not await _keep_streaming():
+				return
 
 
-func _place_lookout_run(packed: PackedScene, zs: Array[float], out: float, lift: float, node_name: String) -> void:
+func _place_lookout_run(packed: PackedScene, zs: Array[float], out: float, lift: float, node_name: String, streamed: bool = false) -> void:
 	## A run of identical kit modules as one MultiMesh, so twelve deck segments
 	## are one draw rather than twelve. A module that is not a single mesh falls
 	## back to one scene instance per station.
@@ -10795,6 +10847,8 @@ func _place_lookout_run(packed: PackedScene, zs: Array[float], out: float, lift:
 		proto.free()
 		for z in zs:
 			_place_lookout(packed, z, out, lift, "%s_%d" % [node_name, int(z - _vp_centre)])
+			if streamed and _slice_spent() and not await _keep_streaming():
+				return
 		return
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -10841,7 +10895,7 @@ func _terrace_floor_at(z: float, lateral: float) -> float:
 	return _terrace_floor
 
 
-func _build_belvedere_railing() -> void:
+func _build_belvedere_railing(streamed: bool = false) -> void:
 	## Wrought iron between the piers. A bare cap reads as a kerb from the
 	## parking; balusters give the parapet a rhythm and the terrace a human scale
 	## against the water. Top rail stays under 0.97 m: the seated eye sits half a
@@ -10867,6 +10921,8 @@ func _build_belvedere_railing() -> void:
 			else:
 				_deck_cube(bz, blat, Vector3(0.024, 0.4, 0.024), iron, 0.0, 0.54)
 		z += SEG
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 
 
 func _belvedere_pave(b: LowPoly, za: float, zb: float, color: Color) -> void:
@@ -10902,7 +10958,7 @@ func _belvedere_pave(b: LowPoly, za: float, zb: float, color: Color) -> void:
 	)
 
 
-func _belvedere_deck_pave(b: LowPoly) -> void:
+func _belvedere_deck_pave(b: LowPoly, streamed: bool = false) -> void:
 	## Flags over the kit deck's top sheet. The authored slab is one flat tone
 	## and at bench height it read as a poured apron — a blank pale plane under
 	## the pergola. What goes down instead is a mortar bed a finger under the
@@ -10975,6 +11031,8 @@ func _belvedere_deck_pave(b: LowPoly) -> void:
 					col.darkened(0.10)
 				)
 			fz += FLAG + JOINT
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
 	# Kerb line: a narrow cap a knuckle proud along the rail foot, so the
 	# pavement ends on an edge, not a fade.
 	var k0: float = _platform_lateral(outer - 0.34, z0)
