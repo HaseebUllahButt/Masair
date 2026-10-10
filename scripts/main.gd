@@ -907,7 +907,7 @@ func _build_rain() -> void:
 	_rain_process = ParticleProcessMaterial.new()
 	var process := _rain_process
 	process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
-	process.emission_box_extents = Vector3(17.0, 7.0, 34.0)
+	process.emission_box_extents = Vector3(17.0, 2.2, 34.0)
 	process.direction = Vector3(0.0, -1.0, 0.0)
 	process.spread = 3.0
 	process.initial_velocity_min = 15.0
@@ -929,8 +929,16 @@ func _build_rain() -> void:
 	# direction the camera is looking down anyway. Billboarding on top of align_y
 	# fights it and spins the streaks about their own length.
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	material.albedo_color = Color(0.80, 0.87, 0.96, 0.34)
+	material.albedo_color = Color(0.80, 0.87, 0.96, 0.18)
 	material.disable_receive_shadows = true
+	# A drop reads as rain only near the lens — past a couple of car lengths the
+	# 26 mm streak is a sub-pixel dash hanging in the sky, and at dusk those lone
+	# dashes showed as a column of broken marks against the magenta band. Real
+	# rain doesn't go away at distance, it stops resolving: fade the drops out
+	# so the far ones dissolve into the haze the weather already lays down.
+	material.distance_fade = BaseMaterial3D.DISTANCE_FADE_PIXEL_ALPHA
+	material.distance_fade_min_distance = 6.0
+	material.distance_fade_max_distance = 14.0
 
 	var quad := QuadMesh.new()
 	quad.size = Vector2(0.026, 0.55)
@@ -938,7 +946,9 @@ func _build_rain() -> void:
 
 	_rain_fx = GPUParticles3D.new()
 	_rain_fx.name = "Rain"
-	_rain_fx.amount = 560
+	# A third of the budget used to sit high overhead where no rider looks;
+	# the emitter band is lower now, so spend those particles near the lens.
+	_rain_fx.amount = 900
 	_rain_fx.lifetime = 1.3
 	_rain_fx.explosiveness = 0.0
 	_rain_fx.local_coords = false
@@ -947,7 +957,7 @@ func _build_rain() -> void:
 	_rain_fx.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	# Ahead and above: the box has to be where the bike is about to be, or at
 	# 50 m/s it outruns its own weather.
-	_rain_fx.position = Vector3(0.0, 8.0, 18.0)
+	_rain_fx.position = Vector3(0.0, 2.4, 18.0)
 	_rain_fx.emitting = false
 	player.add_child(_rain_fx)
 
