@@ -39,6 +39,12 @@ const LOOKOUT_DECK := "res://scenes/lookout_deck.tscn"
 const LOOKOUT_RAIL := "res://scenes/lookout_rail.tscn"
 const LOOKOUT_BALCONY := "res://scenes/lookout_balcony.tscn"
 const LOOKOUT_PIER := "res://scenes/lookout_pier.tscn"
+## Visuals layer reserved for the headland skin's own sky fill. The skin is the
+## only surface on it: the day key leaves a face this steep in open shade, and
+## the fix is light, not brighter paint — a weak cool directional aimed over
+## the lake lifts the strata the albedo already draws, without touching the
+## water, the range or the bank behind it.
+const HEADLAND_FILL_LAYER := 1 << 19
 const LOOKOUT_STOP := "res://scenes/lookout_stop.tscn"
 const LOOKOUT_BAYS := "res://scenes/lookout_bays.tscn"
 const LOOKOUT_TREE := "res://scenes/lookout_tree.tscn"
@@ -911,6 +917,9 @@ func _build_scenic_props_incremental() -> void:
 			await _build_headland_face_incremental()
 			if not await _keep_streaming():
 				return
+			# The fill has to exist even when the skin emitted nothing —
+			# terrain and ledges on this chunk already wear its layer.
+			_headland_fill()
 			if not await _build_lake_edges_incremental():
 				return
 			await _build_view_frame_incremental()
@@ -2217,6 +2226,11 @@ func _commit_terrain_ribbon(soft: LowPoly, node_name: String) -> void:
 		terrain_mesh.material_override = LowPoly.field_material()
 		# Flat ground casting onto itself buys nothing and costs a shadow pass.
 		terrain_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if _on_lake:
+			# The shaded face of the nose is this ribbon, not the scarp skin —
+			# hiding ViewpointHeadland left the black slab untouched. It joins
+			# the fill's cull mask so the headland's own sky light can reach it.
+			terrain_mesh.layers = HEADLAND_FILL_LAYER
 
 
 func _clear_ribbon_samples() -> void:
@@ -3568,6 +3582,10 @@ func _commit_mm(
 		mmi.visibility_range_end = 200.0 if node_name == "Architecture" else 160.0
 	if not shadows or _on_lake:
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if node_name == "FaceLedges":
+		# Ledges sit on the same shaded face as the skin and terrain; without
+		# the fill they stay jet against the lifted rock behind them.
+		mmi.layers = HEADLAND_FILL_LAYER
 	LowPoly.cheap_draw(mmi)
 	add_child(mmi)
 
@@ -6155,6 +6173,10 @@ func _build_viewpoint_landscape() -> void:
 	_build_far_shore()
 	_build_far_cliffs()
 	_build_headland_face()
+	# Even on a spur whose face drowned entirely, terrain and ledges still
+	# wear the fill layer — the light has to exist whether the skin emitted or
+	# not, and `_headland_fill` is itself a no-op off the owning chunk.
+	_headland_fill()
 	_build_lake_edges()
 	_build_view_frame()
 	_dress_vista()
@@ -6325,12 +6347,16 @@ func _build_view_frame_specs(layout: Array, ranked: Array, first: int, count: in
 		# flat black shapes at the bottom of the country frame. One lighter
 		# crown, offset toward the sun, puts the edge back.
 		if _rng.randf() < 0.7:
+			# Keep the light blob inside the crown's footprint: the old offsets
+			# walked it a tree-width off the trunk, and on the face reads — where
+			# the camera is low and the crown is thin — it hung in the air as a
+			# pale boulder over the apron.
 			_blob(
-				z + hand * _rng.randf_range(1.5, 5.0),
-				lateral + _vp_side * _rng.randf_range(1.0, 3.5),
-				Vector3(height * 0.3, height * 0.16, height * 0.28),
-				tint.lightened(0.34),
-				height * 0.86 + _face_ground_lift(z, absf(lateral)),
+				z + hand * _rng.randf_range(0.4, 1.8),
+				lateral + _vp_side * _rng.randf_range(0.5, 1.8),
+				Vector3(height * 0.26, height * 0.15, height * 0.24),
+				tint.lightened(0.32),
+				height * 0.80 + _face_ground_lift(z, absf(lateral)),
 				true,
 				true
 			)
@@ -6764,6 +6790,8 @@ func _build_headland_face() -> void:
 		mesh.material_override = LowPoly.terrain_material()
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		mesh.visibility_range_end = 0.0
+		mesh.layers = HEADLAND_FILL_LAYER
+		_headland_fill()
 
 
 func _build_headland_face_incremental() -> void:
@@ -6789,6 +6817,36 @@ func _build_headland_face_incremental() -> void:
 		mesh.material_override = LowPoly.terrain_material()
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		mesh.visibility_range_end = 0.0
+		mesh.layers = HEADLAND_FILL_LAYER
+		_headland_fill()
+
+
+func _headland_fill() -> void:
+	## The face's own skylight: a weak cool directional restricted to layer 20.
+	## Everything the shade side needs — beds, seams, talus tone — is already
+	## painted into the vertices; the day ambient is simply too weak to show
+	## it, which is what collapsed the whole face into one black slab. The fill
+	## arrives the way skylight actually lands on a cliff: mostly level, from
+	## over the water, so the steep face catches the bulk of it and the flat
+	## pasture beside the platform only gets the little it would.
+	##
+	## One light per overlook: only the platform-owning chunk adds it, and its
+	## cull mask then reaches every lake chunk's skin, terrain and ledges in
+	## view — a light per lake chunk would stack on the shared face.
+	if not _owns_platform or get_node_or_null("HeadlandFill") != null:
+		return
+	var fill := DirectionalLight3D.new()
+	fill.name = "HeadlandFill"
+	fill.shadow_enabled = false
+	fill.light_cull_mask = HEADLAND_FILL_LAYER
+	fill.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY
+	fill.light_color = Color("8fa8bd")
+	fill.light_energy = 1.0
+	var dir := (
+		_vista_basis.x * -_vp_side * 0.9 + _vista_basis.z * 0.14 + Vector3(0.0, -0.3, 0.0)
+	).normalized()
+	fill.basis = Basis.looking_at(dir)
+	add_child(fill)
 
 
 func _face_scarp_palette() -> Dictionary:
@@ -10155,6 +10213,11 @@ func _build_belvedere() -> void:
 	var mesh: MeshInstance3D = b.commit_to(self, "PlatformKerbs")
 	if mesh:
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if _on_lake:
+			# The wall's shadow faces are the darkest shape in the across view
+			# — without the headland's own sky fill they render as a black slab
+			# under the lip and the landed plinth still reads as hanging.
+			mesh.layers = HEADLAND_FILL_LAYER
 	if authored:
 		_build_authored_terrace(deck, rail)
 		return
@@ -10331,12 +10394,19 @@ func _belvedere_deck_pave(b: LowPoly) -> void:
 	## per flag, and a darker soldier course against the parapet. All of it
 	## sits a few centimetres proud of the deck top, so nothing shares a plane
 	## with the sheet it covers.
+	##
+	## Value is the whole battle here. Under the day key the flags' old midstone
+	## overexposed to a single cream wash that hid even the joints; the stone is
+	## a step deeper and cooler now, the joints a finger wider, and the border
+	## course lands as a proper dark kerb line — the same reading the walk had
+	## in the parapet shots, kept calm.
 	var inner := RoadPathGD.PLATFORM_HALF_WIDTH + 0.30
 	var outer := RoadPathGD.PLATFORM_HALF_WIDTH + TERRACE_RAIL_OUT - 0.10
 	var z0 := _vp_centre - RoadPathGD.PLATFORM_HALF_LENGTH + 0.45
 	var z1 := _vp_centre + RoadPathGD.PLATFORM_HALF_LENGTH - 0.45
-	var mortar := Color("48423a")
-	var stone := Color("7e786a")
+	var mortar := Color("3b372f")
+	var stone := Color("6b675b")
+	var kerb := Color("4a463e")
 	var m_i0 := _platform_lateral(inner, z0)
 	var m_o0 := _platform_lateral(outer, z0)
 	var m_i1 := _platform_lateral(inner, z1)
@@ -10349,7 +10419,7 @@ func _belvedere_deck_pave(b: LowPoly) -> void:
 	# Three courses, the outer one a darker border against the rail foot. The
 	# middle course runs half a flag off so the joints stagger like laid work.
 	const FLAG := 1.34
-	const JOINT := 0.12
+	const JOINT := 0.15
 	for ci in 3:
 		var c_in := inner + float(ci) * 2.02
 		var c_out := inner + 1.92 + float(ci) * 2.02 if ci < 2 else outer
@@ -10362,15 +10432,89 @@ func _belvedere_deck_pave(b: LowPoly) -> void:
 			var b0: float = _platform_lateral(c_out, fe)
 			var b1: float = _platform_lateral(c_in, fe)
 			var jit := float(posmod(hash(Vector2i(int(round(fz * 2.0)), ci * 61 + 7)), 997)) / 997.0
-			var col := stone.lightened(jit * 0.09 - 0.03)
+			var wear := float(posmod(hash(Vector2i(int(round(fz * 3.0)) + 41, ci * 29 + 5)), 991)) / 991.0
+			var col := stone.lightened(jit * 0.10 - 0.035)
+			# The odd flag is a different stone entirely or ground down dark —
+			# the scattered tone steps are what read as laid work instead of
+			# vinyl sheet.
+			if wear < 0.14:
+				col = col.darkened(0.13)
+			elif wear > 0.9:
+				col = col.lightened(0.07)
 			if border:
-				col = col.darkened(0.09)
+				col = kerb.lightened(jit * 0.08)
 			b.add_quad(
 				_p(fz, minf(a0, a1), -0.15), _p(fz, maxf(a0, a1), -0.15),
 				_p(fe, maxf(b0, b1), -0.15), _p(fe, minf(b0, b1), -0.15),
 				col
 			)
+			# Worn edge: a thin weathered line down one side of some flags —
+			# a finger of shadow where the arris has gone.
+			if wear >= 0.14 and wear < 0.34:
+				var w0: float = _platform_lateral(c_in + 0.07, fz)
+				var w1: float = _platform_lateral(c_in + 0.07, fe)
+				b.add_quad(
+					_p(fz, minf(a0, w0), -0.152), _p(fz, maxf(a0, w0), -0.152),
+					_p(fe, maxf(b1, w1), -0.152), _p(fe, minf(b1, w1), -0.152),
+					col.darkened(0.10)
+				)
 			fz += FLAG + JOINT
+	# Kerb line: a narrow cap a knuckle proud along the rail foot, so the
+	# pavement ends on an edge, not a fade.
+	var k0: float = _platform_lateral(outer - 0.34, z0)
+	var k1: float = _platform_lateral(outer - 0.34, z1)
+	b.add_quad(
+		_p(z0, minf(k0, m_o0), -0.175), _p(z0, maxf(k0, m_o0), -0.175),
+		_p(z1, maxf(k1, m_o1), -0.175), _p(z1, minf(k1, m_o1), -0.175),
+		kerb
+	)
+	# The balcony's floor is the same kit sheet — a bare eight-by-three metre
+	# slab at the one place the view pulls the eye to. Run the same flagging
+	# over it, with the kerb carried round its outer lip.
+	var bc0 := _vp_centre - 4.05
+	var bc1 := _vp_centre + 4.05
+	var b_in := RoadPathGD.PLATFORM_HALF_WIDTH + TERRACE_RAIL_OUT - 0.42
+	var b_out := RoadPathGD.PLATFORM_HALF_WIDTH + TERRACE_RAIL_OUT + 3.18
+	var bi0 := _platform_lateral(b_in, bc0)
+	var bo0 := _platform_lateral(b_out, bc0)
+	var bi1 := _platform_lateral(b_in, bc1)
+	var bo1 := _platform_lateral(b_out, bc1)
+	b.add_quad(
+		_p(bc0, minf(bi0, bo0), -0.135), _p(bc0, maxf(bi0, bo0), -0.135),
+		_p(bc1, maxf(bi1, bo1), -0.135), _p(bc1, minf(bi1, bo1), -0.135),
+		mortar
+	)
+	var pz := bc0
+	while pz < bc1 - 0.25:
+		var pe: float = minf(pz + FLAG, bc1 - 0.12)
+		var a0: float = _platform_lateral(b_in + 0.08, pz)
+		var a1: float = _platform_lateral(b_out - 0.42, pz)
+		var a0e: float = _platform_lateral(b_in + 0.08, pe)
+		var a1e: float = _platform_lateral(b_out - 0.42, pe)
+		var jit := float(posmod(hash(Vector2i(int(round(pz * 2.0)) + 11, 53)), 997)) / 997.0
+		var wear := float(posmod(hash(Vector2i(int(round(pz * 3.0)) + 71, 23)), 991)) / 991.0
+		var col := stone.lightened(jit * 0.10 - 0.035)
+		if wear < 0.14:
+			col = col.darkened(0.13)
+		elif wear > 0.9:
+			col = col.lightened(0.07)
+		b.add_quad(
+			_p(pz, minf(a0, a1), -0.15), _p(pz, maxf(a0, a1), -0.15),
+			_p(pe, maxf(a0e, a1e), -0.15), _p(pe, minf(a0e, a1e), -0.15),
+			col
+		)
+		pz += FLAG + JOINT
+	# Its lip takes the border stone, so the balcony reads as the same laid
+	# work running out to its edge.
+	var l0: float = _platform_lateral(b_out - 0.34, bc0)
+	var l1: float = _platform_lateral(b_out - 0.34, bc1)
+	var e0: float = _platform_lateral(b_out, bc0)
+	var e1: float = _platform_lateral(b_out, bc1)
+	b.add_quad(
+		_p(bc0, minf(l0, e0), -0.15), _p(bc0, maxf(l0, e0), -0.15),
+		_p(bc1, maxf(l1, e1), -0.15), _p(bc1, minf(l1, e1), -0.15),
+		kerb
+	)
 
 
 func _belvedere_wall(b: LowPoly, za: float, zb: float, limestone: Color, mortar: Color, shadow: Color) -> void:
@@ -10405,10 +10549,50 @@ func _belvedere_wall(b: LowPoly, za: float, zb: float, limestone: Color, mortar:
 	_wall_face(b, za, zb, lip_a, lip_b, 0.0, -cap, mortar)
 	_wall_face(b, za, zb, face_a, face_b, -cap, 2.4, limestone)
 	_wall_face(b, za, zb, face_a, face_b, 2.4, WALL, shadow)
-	# Underside, so the shelf has a bottom when seen from the drop.
+	# Where the headland chord keeps falling past the made ground, three metres
+	# of skirt ends in the air — from the water each segment was a board
+	# hanging off the lip, the slat curtain the across shots kept finding. Run
+	# the face on down to the drawn chord so the masonry lands. It is not the
+	# parapet's black underside band though: a plinth this tall is masonry in
+	# open shade, painted a step off the limestone so the face reads as stone
+	# and not as the same near-black slab it was meant to fix.
+	var toe_a := _belvedere_toe(za, face_a)
+	var toe_b := _belvedere_toe(zb, face_b)
+	if toe_a > WALL + 0.05 or toe_b > WALL + 0.05:
+		var plinth := limestone.lerp(shadow, 0.45)
+		b.add_quad(
+			_p(za, face_a, WALL), _p(zb, face_b, WALL), _p(zb, face_b, toe_b), _p(za, face_a, toe_a), plinth
+		)
+		b.add_quad(
+			_p(za, face_a, toe_a), _p(zb, face_b, toe_b), _p(zb, face_b, WALL), _p(za, face_a, WALL), plinth.darkened(0.08)
+		)
+		# A course line part-way down gives the drop masonry scale — one long
+		# unjointed curtain is what read as a board curtain in the first place.
+		var mid_a: float = WALL + (toe_a - WALL) * 0.45
+		var mid_b: float = WALL + (toe_b - WALL) * 0.45
+		b.add_quad(
+			_p(za, face_a, mid_a), _p(zb, face_b, mid_b), _p(zb, face_b, mid_b + 0.4), _p(za, face_a, mid_a + 0.4),
+			plinth.darkened(0.14)
+		)
+	# Underside, so the shelf has a bottom when seen from the drop. Where the
+	# plinth runs it into the slope the same quad reads as a footing course.
 	b.add_quad(
 		_p(za, in_a, WALL), _p(zb, in_b, WALL), _p(zb, out_b, WALL), _p(za, out_a, WALL), shadow.darkened(0.15)
 	)
+
+
+func _belvedere_toe(z: float, face_lat: float) -> float:
+	## How far below deck level the parapet's shadow face may run before it
+	## lands on the drawn face — measured on the chord the skin is built from,
+	## since the wall has to meet the surface the eye sees, not the made ground
+	## under the deck. Off the headland profile the platform stands on that
+	## ground and the stock three metres is all it needs.
+	var prof := _face_profile(z)
+	if prof.is_empty() or not _face_is_face(prof):
+		return 3.0
+	var deck_y: float = _p(z, face_lat, 0.0).y + _origin.y
+	var chord_y: float = _face_chord_point(z, absf(face_lat)).y + _origin.y
+	return clampf(deck_y - chord_y + 0.5, 3.0, 30.0)
 
 
 func _wall_face(
@@ -10437,7 +10621,8 @@ func _belvedere_ends(b: LowPoly, limestone: Color, shadow: Color) -> void:
 		var a := minf(la, lb)
 		var c := maxf(la, lb)
 		var top: float = _terrace_floor if _terrace_floor > 0.0 else 0.52
-		b.add_quad(_p(z, a, -top), _p(z, c, -top), _p(z, c, 3.0), _p(z, a, 3.0), limestone.lerp(shadow, 0.35))
+		var toe := _belvedere_toe(z, c)
+		b.add_quad(_p(z, a, -top), _p(z, c, -top), _p(z, c, toe), _p(z, a, toe), limestone.lerp(shadow, 0.35))
 
 
 func _kerb_run(b: LowPoly, za: float, zb: float, out: float, width: float, height: float, color: Color) -> void:
