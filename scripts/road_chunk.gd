@@ -3834,7 +3834,7 @@ func _commit_mm(
 		mmi.visibility_range_end = 300.0
 	else:
 		mmi.visibility_range_end = 200.0 if node_name == "Architecture" else 160.0
-	if not shadows or _on_lake:
+	if not shadows or _on_lake or _shadow_pruned(node_name):
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	if node_name == "FaceLedges":
 		# Ledges sit on the same shaded face as the skin and terrain; without
@@ -3842,6 +3842,21 @@ func _commit_mm(
 		mmi.layers = HEADLAND_FILL_LAYER
 	LowPoly.cheap_draw(mmi)
 	add_child(mmi)
+
+
+static var _shadow_prune: PackedStringArray = []
+
+
+static func _shadow_pruned(node_name: String) -> bool:
+	## Perf-sweep hook: SPLENDOR_SHADOW_NOCAST="Cones,HayBales" drops those
+	## buckets from the sun's shadow pass, nothing else. Parsed once.
+	if _shadow_prune.is_empty():
+		var raw := OS.get_environment("SPLENDOR_SHADOW_NOCAST")
+		if raw.is_empty():
+			_shadow_prune = PackedStringArray(["__none__"])
+		else:
+			_shadow_prune = raw.split(",")
+	return node_name in _shadow_prune
 
 
 # ------------------------------------------------------------ shared furniture
@@ -6976,7 +6991,6 @@ func _dress_nose_tip_incremental() -> void:
 	## Same pieces in the same order as `_dress_nose_tip`; each candidate runs
 	## the water and deck checks, so both sides at once was a mid-ride lump.
 	for side: float in [-1.0, 1.0]:
-		var n := 0
 		for _i in 10:
 			var z: float = _vp_centre + side * _rng.randf_range(
 				RoadPathGD.LAKE_SPAN * 0.7, RoadPathGD.LAKE_SPAN * 1.45
@@ -7004,8 +7018,7 @@ func _dress_nose_tip_incremental() -> void:
 				_vista_rock(
 					z, _vp_side * out, _rng.randf_range(2.0, 6.5), _rng.randf_range(-0.4, 0.4) + _face_ground_lift(z, out)
 				)
-			n += 1
-			if n % 2 == 0 and _slice_spent() and not await _keep_streaming():
+			if _slice_spent() and not await _keep_streaming():
 				return
 		if not await _keep_streaming():
 			return

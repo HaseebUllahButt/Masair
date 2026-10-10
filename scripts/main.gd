@@ -614,12 +614,31 @@ func _build_environment() -> void:
 	# box is a sharper edge on every crown and post it holds — ~25 texels to the
 	# metre at 2048. Past it the authored face shading and fog were already
 	# carrying the picture.
-	sun.directional_shadow_max_distance = 80.0
+	# 40 m box on a 512 map: ~13 texels to the metre, the same density the old
+	# 80 m box had at 2048 — but the shadow pass on this iGPU costs ~30 fps and
+	# nearly all of it is the second render pass and the 2048² fill, not the
+	# casters (pruning whole prop buckets moved nothing). Half the map at half
+	# the reach buys back ~10 fps for a cutoff that sits in mid-fog anyway.
+	sun.directional_shadow_max_distance = 40.0
 	sun.directional_shadow_pancake_size = 90.0
 	sun.shadow_bias = 0.05
 	sun.shadow_normal_bias = 1.2
 	sun.shadow_opacity = 0.88
 	sun.shadow_blur = 1.5
+	RenderingServer.directional_shadow_atlas_set_size(512, false)
+	# Perf-sweep hooks for tools: unset in normal play. Lets perfab/screenshot
+	# try a box size, atlas size or blur without a code edit between runs.
+	if OS.has_environment("SPLENDOR_SHADOW_OFF"):
+		sun.shadow_enabled = false
+	if OS.has_environment("SPLENDOR_SHADOW_DIST"):
+		sun.directional_shadow_max_distance = float(OS.get_environment("SPLENDOR_SHADOW_DIST"))
+	if OS.has_environment("SPLENDOR_SHADOW_BLUR"):
+		sun.shadow_blur = float(OS.get_environment("SPLENDOR_SHADOW_BLUR"))
+	if OS.has_environment("SPLENDOR_SHADOW_SIZE"):
+		RenderingServer.directional_shadow_atlas_set_size(
+			int(OS.get_environment("SPLENDOR_SHADOW_SIZE")),
+			OS.has_environment("SPLENDOR_SHADOW_16BIT")
+		)
 
 	_build_fill_light()
 	_apply_lighting()
