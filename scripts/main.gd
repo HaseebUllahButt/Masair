@@ -614,11 +614,14 @@ func _build_environment() -> void:
 	# box is a sharper edge on every crown and post it holds — ~25 texels to the
 	# metre at 2048. Past it the authored face shading and fog were already
 	# carrying the picture.
-	# 40 m box on a 512 map: ~13 texels to the metre, the same density the old
-	# 80 m box had at 2048 — but the shadow pass on this iGPU costs ~30 fps and
-	# nearly all of it is the second render pass and the 2048² fill, not the
-	# casters (pruning whole prop buckets moved nothing). Half the map at half
-	# the reach buys back ~10 fps for a cutoff that sits in mid-fog anyway.
+	# 40 m box on a 512 map: ~13 texels to the metre — half the density the old
+	# 80 m box had at 2048, so near-field edges read softer under the same blur.
+	# The shadow pass on this iGPU costs ~30 fps and nearly all of it is the
+	# second render pass and the 2048² fill, not the casters (pruning whole prop
+	# buckets moved nothing). Half the map at half the reach buys back ~10 fps;
+	# what the cutoff loses is the 40–80 m crown shadows that used to stretch
+	# across the carriageway — visible if you A/B stills, subtle at speed, and
+	# the verge contact shadows that actually ground props are all inside 40 m.
 	sun.directional_shadow_max_distance = 40.0
 	sun.directional_shadow_pancake_size = 90.0
 	sun.shadow_bias = 0.05
