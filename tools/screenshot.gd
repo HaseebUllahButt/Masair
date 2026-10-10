@@ -41,6 +41,7 @@ func _initialize() -> void:
 	cap.wet = opts.has("wet")
 	cap.menu = opts.has("menu")
 	cap.bike = int(opts.get("bike", 0))
+	cap.speed_limit = float(opts.get("speed", 0.0))
 	cap.world_seed = int(opts.get("seed", 0))
 	cap.park_z = float(opts.get("z", -1.0))
 	cap.start_z = float(opts.get("startz", -1.0))
@@ -130,6 +131,10 @@ class Capture:
 	var tree_ref: SceneTree
 
 	var bench: bool = false
+	## km/h ceiling for detour runs — riding the climb flat out outruns the
+	## dress queue and photographs streaming lag rather than the road a player
+	## on a twisty spur actually sees.
+	var speed_limit: float = 0.0
 
 	var _elapsed := 0.0
 	var _taken := 0
@@ -503,6 +508,11 @@ class Capture:
 		if span != Vector2.ZERO:
 			target = (span.x + span.y) * 0.5
 		var error: float = target - float(player.lateral)
+		if speed_limit > 0.0:
+			if float(player.speed) * 3.6 > speed_limit:
+				Input.action_release("throttle")
+			else:
+				Input.action_press("throttle")
 		Input.action_release("steer_left")
 		Input.action_release("steer_right")
 		# Proportional-ish: stop steering once the lateral velocity already covers

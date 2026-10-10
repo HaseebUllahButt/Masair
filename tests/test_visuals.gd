@@ -59,6 +59,13 @@ func _count_trees_on_tarmac(chunk: Node3D, path: Node, index: int) -> int:
 		var at: Vector3 = path.call("center_at", best_z)
 		var right: Vector3 = (path.call("frame_flat_at", best_z) as Basis).x
 		var lateral: float = (world - at).dot(right)
+		# A trunk can only stand on the carriageway where it actually stands:
+		# the vista dressing plants far-bank trees hundreds of metres along the
+		# route, and those project to a small lateral inside this chunk's
+		# window without being anywhere near the road itself.
+		var flat: Vector3 = at + right * lateral
+		if Vector2(world.x - flat.x, world.z - flat.z).length() > 40.0:
+			continue
 		if bool(chunk.call("_on_tarmac", best_z, lateral, 0.8)):
 			on_road += 1
 	return on_road
@@ -450,12 +457,14 @@ func _run() -> void:
 	check(highway_shown, "the main road keeps its trees while the scenic spur is unused")
 	viewpoint.call("apply_corridor", true, true)
 	check(lake_mesh.visible, "the scenic basin draws once the rider takes the spur")
-	var highway_hidden := true
+	# The main road's woods stay in view from the climb, so committing to the
+	# spur must not hide them — that was trees blinking out beside the side road.
+	var highway_kept := false
 	for child in viewpoint.get_children():
 		if str(child.get_meta("corridor", "")) == "highway" and bool(child.visible):
-			highway_hidden = false
+			highway_kept = true
 			break
-	check(highway_hidden, "the scenic spur does not draw the unused highway trees")
+	check(highway_kept, "the main road's trees stay drawn while the rider climbs the spur")
 	viewpoint.call("apply_corridor", false, true, true)
 	check(viewpoint.get_node_or_null("ViewpointLake") == null, "committed highway frees the unused lake")
 	viewpoint.call("apply_corridor", false, false)

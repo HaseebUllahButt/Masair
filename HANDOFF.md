@@ -225,3 +225,63 @@ godot --headless --path . --script res://tools/profile_chunk.gd
 runtime error inside `_run()` aborts it, `quit()` never fires, and the SceneTree
 idles forever. It looks exactly like a hang. Pipe stderr to a file rather than
 through `tail`, which buffers and hides the error line.
+
+---
+
+## 6. Session 2 — remaining hitches, caches, warmup
+
+### What changed (commits 9cfa9a0 → 90e6407)
+
+- `_face_chord_point` uses a sorted edge table + binary search
+  (`_face_edges_left/right`, `_face_band_edges()`). ~59→10 µs/call;
+  `_face_profile` ~3.0→0.84 ms.
+- `_ground_color`, `road_path.ground_at`, and the lake dry-test's 4×4 grid
+  (`_lake_surface_y`) are memoised. All are pure functions of (z, lateral);
+  caches live per-chunk or are cleared in `set_world_seed`.
+- Every remaining synchronous lump got a `streamed`/`pace` path:
+  `_build_reflectors`, `_build_highway_spur_screen`, `_verge_flowers`,
+  `_power_line` (poles AND cable spans), `_forest_outcrop`,
+  `_build_platform_bays`, `_build_spur_barrier`. Slice checks are now per-item
+  in `_forest_stand`, `_forest_back_band`, `_forest_verge`, `_grass_verge`,
+  markings every 4 dashes, ribbon BANDS_PER_FRAME=1.
+- `scenic_warmup.gd` warms the `unit_*` ArrayMesh factories and both Kenney
+  rock GLBs at the menu so first-use never lands mid-ride.
+
+### Verified
+
+- Seed-1 identical lake geometry: `tools/check_lake.gd` → 93 verts/23 quads
+  both trees (probe sets `set_world_seed(1)` first — `_ready()` randomizes).
+- `tools/check_spur_fast.gd`: fast path is ~33 ms cold on this VM, and the
+  spur ribbon/bays/barrier are ~2 ms of it — the rest is `_configure` cold
+  caches + markings + mesh commits.
+- profile_scenic full detour A/B (same VM, back-to-back): ride p99
+  94.4→40.2 ms, >33 ms frames 195→49; approach 91→14; parked 127→3.
+  Readiness COMPLETE in 4.98 s vs 19.5 s parked.
+
+### What did NOT land / open items
+
+- `test_restart` "taking the spur late-builds the lake" fails on this VM on
+  BOTH trees (48-frame window can't stream the lake at ~10 fps headless).
+  Check on the laptop before believing it.
+- `setup_ribbon_fast` still pays ~5-15 ms (real hardware guess) synchronously
+  when the bike outruns streaming. Splitting the spur commit (deck vs details)
+  was examined and skipped: the incremental path early-outs on `SpurSurface`,
+  so a partial commit would permanently drop the stone barrier.
+- Idle frames on this VM already take 20-57 ms with empty queues — all
+  wall-clock numbers here are contamination-bounded. Trust call counts and
+  the paired A/B direction, not absolute ms.
+
+### For the laptop (Iris Xe) check
+
+- No shadow maps anywhere; GPU cost is vertex load + fill + post.
+- Draw calls: ~6263 MultiMesh instances at the overlook in ~45 mm nodes —
+  already batched. Watch `Trunks`/`Crowns` (989/179) — forest buckets draw
+  to 300 m; if GPU ms is high, cut forest tree visibility_range to ~220 m
+  and let the canopy blobs carry the distance.
+- Grass ~140 m, props ~160 m culls are in place; lake buckets need their
+  ~1800 m range (opposite-bank view) — do NOT blanket-reduce.
+- Post stack is the other suspect at 1080p on Iris Xe: try disabling
+  glow/bloom first, then AA mode (FXAA over MSAA for this GPU).
+- Run: `tools/profile_scenic.gd` (detour hitches), `tools/profile_hitch.gd`
+  (slice sites), `tools/diag_restart_timing.gd` (restart <48 ms),
+  `tools/check_lake.gd` (water sheet sanity).

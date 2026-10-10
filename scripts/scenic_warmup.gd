@@ -180,6 +180,19 @@ func _build_surfaces(preview: SubViewport) -> void:
 		instances.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		preview.add_child(instances)
 
+	# The far-ground slopes at every overlook draw a runtime `duplicate()` of
+	# the terrain material flipped to UNSHADED - a different program from the
+	# shaded one above, so the vista chunk used to pay its compile on the frame
+	# the basin first appeared (~200 ms of draw time, mid-arrival).
+	var far_ground: StandardMaterial3D = LowPolyGD.terrain_material().duplicate() as StandardMaterial3D
+	far_ground.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var far_mesh := MeshInstance3D.new()
+	far_mesh.mesh = RoadChunkGD.unit_cube()
+	far_mesh.material_override = far_ground
+	far_mesh.position = Vector3(14.0, -6.0, 0.0)
+	far_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	preview.add_child(far_mesh)
+
 	# The contact patch under every car. Nothing draws one until traffic does,
 	# so without this the first car to appear pays for it mid-ride.
 	var contact_shadow := MeshInstance3D.new()
@@ -190,6 +203,24 @@ func _build_surfaces(preview: SubViewport) -> void:
 	contact_shadow.position = Vector3(-13.0, 0.02, 0.0)
 	contact_shadow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	preview.add_child(contact_shadow)
+
+	# The procedural unit meshes every prop bucket instantiates. Each factory
+	# builds an ArrayMesh the first time it is called, so an unwarmed boot left
+	# ~20 ms of mesh commits inside the first chunk's build — and inside the
+	# timed window of a restart. They are static resources: building them here
+	# costs the menu frame once and every chunk after builds on warm caches.
+	for mesh: ArrayMesh in [
+		RoadChunkGD.unit_cube(), RoadChunkGD.unit_box_sharp(), RoadChunkGD.unit_cone(),
+		RoadChunkGD.unit_sphere(), RoadChunkGD.unit_trunk(), RoadChunkGD.unit_crown(),
+		RoadChunkGD.unit_conifer(), RoadChunkGD.unit_ridge(), RoadChunkGD.unit_hay_bale(),
+		RoadChunkGD.grass_tuft(),
+	]:
+		var warm := MeshInstance3D.new()
+		warm.mesh = mesh
+		warm.material_override = LowPolyGD.solid_material()
+		warm.position = Vector3(-10.0, 10.0, 0.0)
+		warm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		preview.add_child(warm)
 
 
 func _build_lookouts(preview: SubViewport) -> void:
@@ -220,6 +251,15 @@ func _build_lookouts(preview: SubViewport) -> void:
 	var life_root := Node3D.new()
 	preview.add_child(life_root)
 	LookoutLifeGD.warm_into(life_root)
+	# The imported Kenney boulders: the GLB parses and its materials compile on
+	# the first rock a verge asks for otherwise — mid-ride, not at the menu.
+	for prefer_a: bool in [true, false]:
+		var rock: PackedScene = RoadChunkGD._rock_scene(prefer_a)
+		if rock == null:
+			continue
+		var instance: Node3D = rock.instantiate()
+		instance.position = Vector3(3.0 if prefer_a else 4.5, 9.0, 0.0)
+		preview.add_child(instance)
 
 
 func _build_canvas(preview: SubViewport) -> void:
