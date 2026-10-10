@@ -881,7 +881,11 @@ func viewpoint_reserves(z: float, lateral: float) -> bool:
 	if lateral * viewpoint_side_for(centre) <= 0.0:
 		return false
 	var out := absf(lateral)
-	if out > _crest_line(z, centre) - 6.0:
+	# The lip only owns ground while the basin is actually carved under it.
+	# Past the water's reach the same line is a drawing aid, not a shoreline —
+	# holding it closed out to the spur span is what turned two kilometres of
+	# ordinary hillside beside every approach into unplanted green desert.
+	if distance <= LAKE_SPAN + 60.0 and out > _crest_line(z, centre) - 6.0:
 		return true  # the drop, the water, the far shore
 	if distance > SPUR_HALF_SPAN:
 		return false

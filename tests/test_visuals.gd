@@ -367,8 +367,15 @@ func _run() -> void:
 	)
 	var on_road_trees := _count_trees_on_tarmac(viewpoint, path, overlook_chunk)
 	check(on_road_trees == 0, "the platform chunk does not plant trees on the scenic road (%d)" % on_road_trees)
-	var platform_grass: int = (viewpoint.get("_grass") as Array).size()
-	check(platform_grass < 100, "the platform does not scatter field grass over the lake (%d)" % platform_grass)
+	# The platform verge dresses like the rest of the biome now, so the count
+	# that matters is blades rooted under the water sheet, not the chunk total.
+	var water_y: float = float(viewpoint.get("_vp_water_y"))
+	var chunk_origin: Vector3 = viewpoint.get("_origin")
+	var sunk_grass := 0
+	for tuft: Transform3D in viewpoint.get("_grass"):
+		if tuft.origin.y + chunk_origin.y < water_y - 0.2:
+			sunk_grass += 1
+	check(sunk_grass == 0, "the platform grows no grass under the lake (%d sunk)" % sunk_grass)
 	check(viewpoint.get_node_or_null("Birds") == null, "overlooks run no flock")
 	check(viewpoint.get_node_or_null("Clouds") == null, "overlook peaks wear no cloud collars")
 	check(not viewpoint.is_processing(), "the platform chunk does not process")
