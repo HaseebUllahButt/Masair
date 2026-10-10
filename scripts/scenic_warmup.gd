@@ -125,10 +125,16 @@ func _build_world(preview: SubViewport) -> void:
 	preview.add_child(world_environment)
 
 	# Two directional lights, because the game has two. The key publishes itself
-	# to the sky as well as lighting; the fill is light only.
+	# to the sky as well as lighting; the fill is light only. The key's shadow
+	# state is part of the program key exactly like its sky mode: compiled
+	# without it, every material drew a no-shadow variant here and paid a second
+	# compile for the shadowed one the first time it rendered in the real scene —
+	# on the laptop that was a ~140 ms stall the moment a chunk first put cubes
+	# and crowns inside the sun's 40 m box.
 	var key := DirectionalLight3D.new()
 	key.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
-	key.shadow_enabled = false
+	key.shadow_enabled = true
+	key.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
 	key.rotation_degrees = Vector3(-12.0, 30.0, 0.0)
 	preview.add_child(key)
 	var fill := DirectionalLight3D.new()
@@ -160,11 +166,15 @@ func _build_surfaces(preview: SubViewport) -> void:
 		RangeMaterialGD.overlook(3), RangeMaterialGD.overlook(4), RoadChunkGD._vista_rock_material(Color("5a5148"))]
 	for i in materials.size():
 		var position_hint := Vector3(float(i % 6) * 4.0 - 10.0, float(i / 6) * 4.0 - 6.0, 0.0)
+		# In the game only the Cubes and Foliage buckets cast sun shadows.
+		# Casting here too puts those two materials into the preview's shadow
+		# pass, so their depth program exists before a forest verge asks for it.
+		var casts: bool = materials[i] == LowPolyGD.solid_material() or materials[i] == LowPolyGD.foliage_material()
 		var mesh := MeshInstance3D.new()
 		mesh.mesh = RoadChunkGD.unit_cube()
 		mesh.material_override = materials[i]
 		mesh.position = position_hint
-		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if casts else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		preview.add_child(mesh)
 		var instances := MultiMeshInstance3D.new()
 		var multimesh := MultiMesh.new()
@@ -177,7 +187,7 @@ func _build_surfaces(preview: SubViewport) -> void:
 		instances.multimesh = multimesh
 		instances.material_override = materials[i]
 		instances.position = position_hint + Vector3(1.5, 0.0, 0.0)
-		instances.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		instances.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if casts else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		preview.add_child(instances)
 
 	# The far-ground slopes at every overlook draw a runtime `duplicate()` of
