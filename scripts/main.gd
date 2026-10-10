@@ -187,12 +187,20 @@ const MOODS := {
 		# and warm, and that warm band is what makes the distance look like air
 		# instead of paint. It also feeds the sky ambient, so it warms the light
 		# on every shaded face in the world at the same time.
-		"zenith_color": Color("10388c"),
-		"mid_color": Color("5590e0"),
+		# Mid blue is much deeper than it looks. The grade (LUT + the bright-
+		# range warm split in grade.gdshader) pulls any pale or half-saturated
+		# blue toward sage — a mid like 5590e0 renders mint. 2e68cc survives the
+		# curve with blue still on top, so the band between zenith and horizon
+		# reads as sky instead of shallow water.
+		"zenith_color": Color("2a5aa8"),
+		"mid_color": Color("2e68cc"),
 		"horizon_color": Color("f4d2a0"),
 		"ground_color": Color("505e57"),
 		"band_low": 0.10,
-		"band_high": 0.78,
+		# The zenith has to reach low. A wide mid band (0.78) held the gradient
+		# at exactly the luminance the split-tone mints; pulling the ramp down to
+		# 0.50 keeps the crossover dark enough to stay blue.
+		"band_high": 0.50,
 		"horizon_glow": 0.26,
 		"energy": 1.0,
 		"sun_color": Color(1.70, 1.58, 1.30),
@@ -202,7 +210,11 @@ const MOODS := {
 		"sun_disc": 1.0,
 		"moon_face": 0.0,
 		"cloud_lit": Color("f4e6cc"),
-		"cloud_dark": Color("6f88a2"),
+		# 6f88a2 graded to sage — the shadowed sides of clouds were the most
+		# visible mint in the frame. Needs a strong blue lead before the LUT to
+		# land as blue-grey instead of green: its blend with the warm lit side
+		# must cross grey, and only a deep blue keeps that crossover saturated.
+		"cloud_dark": Color("36549c"),
 		"cloud_cover": 0.46,
 		"cloud_sharpness": 0.44,
 		"cloud_scale": 1.18,
@@ -274,7 +286,10 @@ const MOODS := {
 		# Aerial perspective drags the fog colour toward the sky's pale horizon
 		# band. At 0.22 it read as a second, brighter fog layered over the first.
 		"fog_aerial": 0.12,
-		"fog_sky": 0.07,
+		# Fog on the sky is a flat mix toward sage + sun-scatter, and 7% of it
+		# was enough to lay a mint veil over the whole blue. A whisper keeps the
+		# horizon band joined to the land's air without tinting the dome.
+		"fog_sky": 0.02,
 		"fog_height": 6.0,
 		# Halved: over the lake basin the sightline runs hundreds of metres
 		# through the low band and the water drowned in it.
@@ -644,7 +659,13 @@ func _grade_lut() -> ImageTexture:
 			# anchor is where the road's own value maps, and at the old number
 			# the carriageway came out aubergine instead of charcoal.
 			Color(0.118, 0.136, 0.174),
-			Color(0.605, 0.566, 0.515),
+			# Mid anchor. Its blue channel used to sit below green, so any
+			# pale blue input — mid sky, cloud undersides, haze — had its
+			# channels reordered into sage. Blue now sits a touch above
+			# green: parity was not enough, since ACES and the warm split
+			# tone keep chipping at the lead. Warm midtones are unaffected —
+			# their red lead still decides the hue.
+			Color(0.605, 0.566, 0.590),
 			Color(1.000, 0.945, 0.845),
 		]
 	)
