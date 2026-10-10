@@ -1113,6 +1113,15 @@ func _apply_lighting() -> void:
 	# the same sky that the engine fog converges the far distance to.
 	LowPoly.foliage_material().set_shader_parameter("aerial_tint", mood["fog_color"])
 	LowPoly.field_material().set_shader_parameter("aerial_tint", mood["fog_color"])
+	# Shaded crowns need more sky than the shared ambient can spare: with the
+	# sun's shadows on, a pine's unlit side lands under the grade's black clip.
+	# Foliage gets its own fill, derived from the mood's ambient rather than a
+	# new row — a canopy traps skylight between its leaves, so it holds a few
+	# times the ambient a flat surface shows, and it dulls itself in the rain
+	# because ambient_color is already in the overcast list.
+	LowPoly.foliage_material().set_shader_parameter(
+		"sky_fill", (mood["ambient_color"] as Color) * float(mood["ambient"]) * 4.6
+	)
 	var horizon := get_node_or_null("HorizonMountains")
 	if horizon and horizon.has_method("apply_mood"):
 		horizon.call("apply_mood", mood)
