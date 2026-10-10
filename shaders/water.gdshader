@@ -123,7 +123,11 @@ void fragment() {
 	// what keeps deep water teal under a key of any colour instead of taking the
 	// hue of the sunset like a painted floor would.
 	vec3 body = water_color * 0.50 * (1.0 - schlick);
-	EMISSION = reflected * schlick * structure * mix(vec3(1.0), water_color * 2.2, 0.35) + body;
+	// The vertex tones (depth, shore aprons, drift bands) ride on the mirror
+	// too — at 0.35 the far half of the basin averaged back to one pale plane
+	// at grazing angles; half-coupled, the baked bands modulate the reflected
+	// sky and the sheet keeps its water-body structure.
+	EMISSION = reflected * schlick * structure * mix(vec3(1.0), water_color * 2.4, 0.52) + body;
 	METALLIC = 0.12;
 	ROUGHNESS = mix(0.16, 0.055, fresnel);
 	SPECULAR = 0.92;
