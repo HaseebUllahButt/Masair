@@ -2022,8 +2022,12 @@ func _face_base_color() -> Color:
 	# a39a80 rendered as orange clay — the sunlit bank face ringing the lake was
 	# the sand strip's biggest offender. Neutral 7d7c72 still went ochre on the
 	# bright hay ground under the warm key — the base has to start green for the
-	# blend to land as a grassed bank instead of a sandstone one.
-	return Color("5f6b52")
+	# blend to land as a grassed bank instead of a sandstone one. The key's red
+	# gain is roughly double its green, so killing the tan read is a hue job,
+	# not a value job: keep the luminance, put G well ahead of R, and the lit
+	# panels land as grey-olive stone instead of straw. 45574a tried to win on
+	# darkness and read as a black slab.
+	return Color("4a6350")
 
 
 func _deck_mix(z: float, lateral: float) -> float:
@@ -2122,7 +2126,9 @@ func _shore_color() -> Color:
 			return Color("6a6e68")
 		Env.FOREST:
 			return Color("666a62")
-	return Color("6b6c64")
+	# Country's grey still rendered as wet sand under the day key — the band
+	# sits flat and takes the full warm light. Dark moss-green shingle instead.
+	return Color("414a40")
 
 
 func _wash_mix(z: float, lateral: float) -> float:
@@ -2160,7 +2166,9 @@ func _wash_color() -> Color:
 			return Color("7e7c72")
 		Env.FOREST:
 			return Color("7a766a")
-	return Color("807b6e")
+	# Same problem a step further up the bank: 807b6e sun-dries straight to
+	# straw. A green-grey gravel reads as the damp pasture edge it is.
+	return Color("525b4c")
 
 
 static var _road_mat_configured := false
@@ -7732,17 +7740,22 @@ func _add_face_scarp(b: LowPoly, za: float, zb: float, pal: Dictionary) -> bool:
 		# face under it as well as height over the water: off the live slope
 		# and within the last metres of the drop it fades away entirely.
 		var steepest := maxf(maxf(slope_a[i], slope_a[i + 1]), maxf(slope_b[i], slope_b[i + 1]))
+		# The apron's shade is baked, not lit: HeadlandFill exists only once the
+		# platform chunk streams, and on the low rows the sky term was the whole
+		# reason the foot washed to a pale cap whenever the light was — or was
+		# not — there. Nothing within fourteen metres of the waterline keeps
+		# any of it; the toe carries its own dark value instead.
 		fill *= smoothstep(0.30, 0.55, steepest) * smoothstep(
-			_vp_water_y + 1.0, _vp_water_y + 7.0, chord_lo
+			_vp_water_y + 4.0, _vp_water_y + 14.0, chord_lo
 		)
 		# And wet the toe: a flat quad lying on the low bank carries the same
 		# dark value the marsh under it does, or the sheet reads as a pale
-		# plate floating on shadowed water. Steep quads stay dry — a rising
-		# face is not the wet line.
+		# plate floating on shadowed water. The flatter the row the wetter it
+		# reads, but even the rising beds just above the waterline keep a share
+		# of it — the foot of a lake cliff is wet rock whatever its slope.
 		var wet := (
-			(1.0 - smoothstep(_vp_water_y + 1.0, _vp_water_y + 9.0, chord_lo))
-			* smoothstep(0.4, 0.75, up)
-			* 0.7
+			(1.0 - smoothstep(_vp_water_y + 1.0, _vp_water_y + 10.0, chord_lo))
+			* lerpf(0.45, 0.8, smoothstep(0.3, 0.75, up))
 		)
 		var wet_tone := (pal["seam"] as Color).lerp(Color("232a2c"), 0.6)
 		var ca0 := cols_a[i].lerp(sky_fill, fill).lerp(wet_tone, wet)
@@ -8049,14 +8062,34 @@ func _water_shade(surface: Color, out: float, z: float) -> Color:
 	## the only distance cue the surface has of its own.
 	var deep: float = smoothstep(RoadPathGD.LAKE_NEAR - 30.0, RoadPathGD.LAKE_NEAR + 220.0, out)
 	var color := surface.lightened(0.16).lerp(surface.darkened(0.14), deep)
-	# A pale hem where the sheet meets the shore — the line that tells the eye
-	# where water starts.
+	# Waterline work: a thin lit rim where the sheet meets the far bank keeps
+	# the seated edge readable, and a darker shallow apron inside each shore
+	# gives the grazing view a band of water-body before the mirror takes over.
+	# The near shore gets no rim — the cells run ~60 m across, so one corner
+	# inside the band lit a whole quad into the pale plate the across frames
+	# kept catching. There the waterline is drawn by the terrain meeting the
+	# water, and the shallow band carries the tone.
 	var near: float = float(_path.viewpoint_near_shore(z))
-	var hem: float = 1.0 - smoothstep(near + 1.0, near + 26.0, out)
-	color = color.lerp(surface.lightened(0.34), hem * 0.22)
-	# Very broad horizontal variations catch the sky as painted planes. Kept
-	# below four percent so the water gains facets without becoming stripy.
-	return color.lightened((0.5 + 0.5 * sin(out * 0.043 + z * 0.018)) * 0.035)
+	var far: float = float(_path.viewpoint_far_shore(z, _vp_centre))
+	var shallow: float = (
+		smoothstep(near + 4.0, near + 14.0, out) * (1.0 - smoothstep(near + 36.0, near + 78.0, out))
+	)
+	shallow = maxf(
+		shallow,
+		smoothstep(far - 90.0, far - 44.0, out) * (1.0 - smoothstep(far - 12.0, far - 4.0, out))
+	)
+	color = color.lerp(surface.darkened(0.26), minf(shallow, 1.0) * 0.45)
+	var rim: float = (
+		smoothstep(far - 6.0, far - 2.5, out) * (1.0 - smoothstep(far - 1.5, far + 1.5, out))
+	)
+	color = color.lerp(surface.lightened(0.30), rim * 0.2)
+	# Very broad horizontal variations catch the sky as painted planes — two
+	# wavelengths now, so the far half of the basin keeps a slow value drift at
+	# grazing angles instead of averaging to one flat tone. Still under six
+	# percent, so it facets rather than striping.
+	var drift := (0.5 + 0.5 * sin(out * 0.043 + z * 0.018)) * 0.032
+	drift += (0.5 + 0.5 * sin(out * 0.011 - z * 0.006)) * 0.045
+	return color.lightened(drift)
 
 
 func _build_far_ground() -> void:
@@ -8534,7 +8567,10 @@ func _basin_stone() -> Array[Color]:
 			# separate from water measured at 0.02 linear, and that it now does
 			# with 3x its body's value rather than 4x.
 			return [Color("5e6365"), Color("9aa0a2")]
-	return [Color("4a463c"), Color("ab9f80")]
+	# The crown was ab9f80 — pale straw that lit to bread-roll orange standing
+	# in the shallows. Still the lit shoulder, now a wet-stone tan off the moss
+	# band rather than off the hay field.
+	return [Color("4a463c"), Color("8d8468")]
 
 
 func _water_ball(
@@ -8744,7 +8780,10 @@ func _shore_band_tone() -> Array[Color]:
 			return [Color("5a5f62"), Color("a8aeb0")]
 	# b6a888 rendered as a pale ochre rim right at the bank's lit lip — the last
 	# piece of the sand ring. Grey shingle keeps the value step without the hue.
-	return [Color("565448"), Color("a3a392")]
+	# Grey was not enough either: a3a392 lies flat at the waterline where the
+	# key is strongest, and every grey tried there arrives as sand. Moss-green
+	# shingle keeps the step and loses the beach.
+	return [Color("333d33"), Color("4f5947")]
 
 
 func _build_shore_strip() -> void:
@@ -9315,7 +9354,9 @@ func _build_face_ledges(streamed: bool = false) -> void:
 			elif _vp_theme == Env.FOREST:
 				tone = Color("8d8271").lerp(Color("655c4e"), _rng.randf())
 			elif _vp_theme == Env.COUNTRY:
-				tone = Color("9a8c74").lerp(Color("6f6350"), _rng.randf())
+				# Cooled a step — 9a8c74 is the warm tan that kept reading as
+				# sandstone slabs on a grassed headland under the day key.
+				tone = Color("7f7d68").lerp(Color("5f5947"), _rng.randf())
 			_face_ledge(z, out, slab, tone)
 			z += slab.z * _rng.randf_range(0.72, 0.95) + _rng.randf_range(2.0, 7.0)
 
@@ -9371,7 +9412,11 @@ func _far_cliff_tone() -> Array[Color]:
 			# Cooled off from 3d382c/2e2c24/5a543e: under the day key those warmed
 			# to solid ochre and the whole bank read as a sand berm. These land as
 			# olive-grey earth — the grade supplies the warmth it always does.
-			return [Color("3a3c33"), Color("2b2e29"), Color("4e5346")]
+			# Down again, and greener: the seated day frames still read the
+			# sun-facing spans as a tan berm (measured ~(160,124,65) off the
+			# pixels), so the band now starts at wet moss on the waterline and
+			# ends at dark turf on the lip.
+			return [Color("27321f"), Color("1c251d"), Color("35402c")]
 	return [Color("28261f"), Color("21201b"), Color("3c372c")]
 
 

@@ -46,6 +46,16 @@ uniform float canopy_sky_strength : hint_range(0.0, 1.0) = 0.5;
 // green instead of a black paper cutout.
 uniform float wrap : hint_range(0.0, 1.0) = 0.62;
 
+// Extra skylight for shaded crowns, pushed per-mood from main.gd. Since the sun
+// learned to cast real shadows a crown's shade side lands under the grade's
+// black clip — the Environment's ambient is deliberately too weak to reach it.
+// A canopy legitimately holds more sky than a flat surface (light scatters
+// between the leaves), so the fill is scoped to this material, emitted through
+// the leaf's own albedo so it stays the tree's own green rather than mint, and
+// driven by the mood's ambient so dusk goes violet and night goes navy instead
+// of glowing.
+uniform vec3 sky_fill : source_color = vec3(0.0);
+
 // Canopy hexes were authored nearly black ("1c3328" is 0.02 linear) back when
 // ambient was strong enough to wash everything mint. Nothing multiplied onto an
 // albedo that dark survives, so the darkest greens are lifted toward a real leaf
@@ -155,6 +165,16 @@ void fragment() {
 	// Keep a cool canopy tint, but let the environment and wrapped light
 	// illuminate it. Self-emission made the trees glow green after dark.
 	ALBEDO = albedo * mix(vec3(1.0), canopy_sky, canopy_sky_strength * 0.2);
+	// ...except this one: the shade-side skylight above. Emitted through the
+	// leaf's own albedo, so a shadowed crown lifts as deep green rather than as
+	// a flat glow, and a lit crown barely notices it beside the sun.
+	//
+	// The darkest leaves need disproportionately more: a conifer tier's shade
+	// face runs ~0.03 luminance, and a flat share of the fill that reaches a
+	// mid-green crown leaves it under the clip. Weight the fill toward them —
+	// a dark leaf gets up to 2.5x, a bright one stays untouched.
+	float dark_leaf = 1.0 - smoothstep(0.0, 0.10, dot(albedo, vec3(0.2126, 0.7152, 0.0722)));
+	EMISSION = albedo * sky_fill * (1.0 + dark_leaf * 1.5);
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
 	BACKLIGHT = vec3(translucency);
