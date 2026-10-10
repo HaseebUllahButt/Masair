@@ -22,7 +22,7 @@ uniform float translucency : hint_range(0.0, 1.0) = 0.26;
 // real leaves glow yellow-green where the sun is behind them, and that rim is
 // the whole difference between a tree against a low sun and a cardboard cutout.
 uniform vec3 leaf_glow : source_color = vec3(1.0, 0.86, 0.42);
-uniform float leaf_glow_strength : hint_range(0.0, 2.0) = 0.80;
+uniform float leaf_glow_strength : hint_range(0.0, 2.0) = 0.95;
 // Self-shadowing a canopy would take a shadow map. The underside of a crown is
 // dark and the top catches sky for the same reason every time, so it is painted
 // from height in the mesh's own space: crowns and conifers stand on Y=0 and

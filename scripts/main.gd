@@ -231,7 +231,10 @@ const MOODS := {
 		# energy lands about twice as bright. Halved to hold the day's exposure,
 		# with a little extra off so the road keeps reading charcoal rather
 		# than sunlit dust.
-		"light_energy": 1.55,
+		# 1.55 -> 1.75: the first halving left lit crowns a step dull — the
+		# shadow map needs a lit side to cut a shadow from, and the extra key
+		# is what makes the sun-facing halves read as sunlit.
+		"light_energy": 1.75,
 		# Lower than midday. A sun near the zenith lights the tops of everything
 		# and leaves the sides equal, which is the worst case for a world with no
 		# shadows: raking it gives every box, tree and hillside a lit side and a
@@ -299,7 +302,7 @@ const MOODS := {
 		# day key and grade: less red and a touch more green, not more blue,
 		# which only turned the road violet.
 		"road_tint": Color(0.925,1.035,1.01),
-		"road_sheen": 0.16,
+		"road_sheen": 0.20,
 	},
 	LightingMode.NIGHT:
 	{
