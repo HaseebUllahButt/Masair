@@ -116,7 +116,7 @@ const FOLIAGE_OVERHANG_HEIGHT := 9.0
 const FOLIAGE_SWAY := 0.12
 ## Bushes packed onto the first few metres of verge. Indexed by Env. Split across
 ## frames while streaming — planting all of them at once was a 35–90 ms hitch.
-const VERGE_BUSH_COUNT := [8, 34, 18, 26, 32]
+const VERGE_BUSH_COUNT := [8, 34, 18, 26, 16]
 const VERGE_BUSH_BATCH := 1
 ## Hard cap on GLB instances per chunk. The Kenney kit is suburban, so it stocks
 ## the countryside and villages; the city builds its own frontage.
@@ -169,6 +169,24 @@ const HALF_PROFILE := [
 	[305.0, 0.0, "ground"],
 	[370.0, 0.0, "ground"],
 ]
+
+## Country patchwork, shared by the ground colouring and the hedge planting so
+## a painted boundary always has its grown boundary on the same line. Depth
+## edges reuse the ground ribbon's own vertex laterals — the only places a
+## per-vertex colour can draw a sharp line — and field lengths grow with
+## distance the way real parcels do.
+const FIELD_EDGES: Array[float] = [22.0, 47.0, 75.0, 125.0, 195.0, 305.0]
+const FIELD_LENGTHS: Array[float] = [50.0, 72.0, 96.0, 126.0, 170.0, 220.0]
+## How far each depth edge wanders along its run, so parcel lines meander like
+## hedgerows instead of drafting a surveyor's grid.
+const FIELD_WAVE: Array[float] = [2.0, 3.5, 5.0, 7.0, 9.0, 11.0]
+## Length of one along-edge hedge decision; runs this long come and go rather
+## than unbroken walls marching the whole biome.
+const FIELD_RUN := 26.0
+
+## What one parcel is growing. Grass dominates, as it should in English
+## farmland; crop and cut hay are the accents, plough the rare dark note.
+enum Field { GRAZED, PASTURE, CROP, MOWN, FALLOW }
 
 ## Roadside tree species. One shape — a ball on a stick — at every scale in every
 ## theme is what made a pine forest, an orchard and a fellside plantation all
@@ -1571,6 +1589,10 @@ func _ground_color(lateral: float, z: float) -> Color:
 		var bank: float = 0.5 + 0.5 * sin(lateral * 0.028 + z * 0.011) * sin(absf(lateral) * 0.09 - z * 0.007)
 		mix = lerpf(mix, bank, 0.55)
 	var color: Color = (_pal["ground"] as Color).lerp(_pal["ground_alt"], mix * 0.95)
+	if theme == Env.COUNTRY:
+		# The worked land itself: hedged parcels painted onto the same cells the
+		# hedge lines are grown from, so colour and geometry never disagree.
+		color = _country_field_tint(lateral, z, color, mix)
 	if theme == Env.FOREST and not _on_spur and not _on_lake:
 		# Under the canopy the floor sits in shade. Past the planted edge the
 		# ground sinks toward the wood's dark instead of staying lit pasture —
@@ -1614,7 +1636,7 @@ func _shoulder_color(lateral: float, z: float, band: String) -> Color:
 	if band == "ground":
 		return _ground_color(lateral, z)
 	var grain: float = 0.5 + 0.5 * sin(lateral * 0.14 + z * 0.07) * sin(lateral * 0.05 - z * 0.03)
-	var gravel: Color = (_pal["shoulder"] as Color).darkened(0.08 + grain * 0.1)
+	var gravel: Color = (_pal["shoulder"] as Color).darkened(0.1 + grain * 0.12)
 	var grass: Color = (_pal["verge"] as Color).lerp(_pal["prop_a"] as Color, grain * 0.35)
 	var out: float = absf(lateral) - HALF_WIDTH
 	# The verge band is a single quad: its two edge colours interpolate across
@@ -1626,6 +1648,209 @@ func _shoulder_color(lateral: float, z: float, band: String) -> Color:
 	if _on_spur:
 		color = color.lerp(_deck_color(z, lateral), _deck_mix(z, lateral) * 0.85)
 	return color
+
+
+# ------------------------------------------------------------ country fields
+
+
+func _field_edge_at(edge_i: int, z: float, side_i: int) -> float:
+	## Where one depth boundary sits at this z. It wanders a few metres along
+	## its run — differently on each side of the road — so parcel edges meander
+	## the way hedgerows do instead of drafting a surveyor's grid.
+	return FIELD_EDGES[edge_i] + sin(
+		z * 0.013 + float(edge_i) * 1.9 + float(side_i) * 0.83
+	) * FIELD_WAVE[edge_i]
+
+
+var _field_edge_rows: Dictionary = {}  # Vector2(z, side) -> PackedFloat64Array
+var _field_phases: Dictionary = {}  # Vector2i(side_i, band) -> float
+var _field_cells: Dictionary = {}  # Vector3i(side_i, band, cell) -> [kind, hedged, lift, period]
+var _field_runs: Dictionary = {}  # Vector3i(side_i, edge_i, zseg) -> bool
+
+
+func _field_edges_at(z: float, side_i: int) -> PackedFloat64Array:
+	## All six depth boundaries for one cross-section. A ribbon row's vertices
+	## share z, so this runs six sine waves per row instead of per vertex.
+	var key := Vector2(z, side_i)
+	var cached: Variant = _field_edge_rows.get(key)
+	if cached != null:
+		return cached
+	var edges := PackedFloat64Array()
+	edges.resize(FIELD_EDGES.size())
+	for i in FIELD_EDGES.size():
+		edges[i] = _field_edge_at(i, z, side_i)
+	_field_edge_rows[key] = edges
+	return edges
+
+
+func _field_phase(side_i: int, band: int) -> float:
+	## Each depth band slides its own parcel grid, so the field ends on opposite
+	## sides of the road never line up into avenues.
+	var key := Vector2i(side_i, band)
+	var cached: Variant = _field_phases.get(key)
+	if cached != null:
+		return cached
+	var phase := (
+		float(posmod(hash(Vector2i(side_i * 733 + band * 131, int(_path.world_seed))), 1000))
+		* 0.001
+		* FIELD_LENGTHS[band]
+	)
+	_field_phases[key] = phase
+	return phase
+
+
+func _field_cell(side_i: int, band: int, cell: int) -> Array:
+	## [kind, road-end hedged, tone lift, crop row period] for one parcel —
+	## every vertex in the cell asks the same four hashed questions.
+	var key := Vector3i(side_i, band, cell)
+	var cached: Variant = _field_cells.get(key)
+	if cached != null:
+		return cached
+	var h := float(
+		posmod(hash(Vector3i(side_i * 131 + band * 37, cell, int(_path.world_seed))), 1000)
+	) * 0.001
+	var kind := Field.FALLOW
+	if h < 0.34:
+		kind = Field.GRAZED
+	elif h < 0.68:
+		kind = Field.PASTURE
+	elif h < 0.86:
+		kind = Field.CROP
+	elif h < 0.95:
+		kind = Field.MOWN
+	var info := [
+		kind,
+		posmod(
+			hash(Vector3i(side_i * 197 + band * 41, cell, int(_path.world_seed) ^ 0x5a37)), 100
+		)
+		< 62,
+		(float(posmod(hash(Vector3i(side_i * 17 + band * 5, cell, int(_path.world_seed))), 100)) - 50.0) * 0.0009,
+		13.0 + float(posmod(hash(Vector2i(cell, band * 7 + side_i)), 100)) * 0.14,
+	]
+	_field_cells[key] = info
+	return info
+
+
+func _field_kind(side_i: int, band: int, cell: int) -> int:
+	## What one parcel is growing, hashed off the world seed so the same map
+	## answers the ground colour and the prop planting identically.
+	return _field_cell(side_i, band, cell)[0]
+
+
+func _field_hedged(side_i: int, band: int, cell: int) -> bool:
+	## Whether a parcel's road-end boundary grows a hedge — roughly three in
+	## five; the rest stay open grass with only a ditch line painted.
+	return _field_cell(side_i, band, cell)[1]
+
+
+func _field_hedge_run(side_i: int, edge_i: int, zseg: int) -> bool:
+	## Whether one FIELD_RUN stretch of a depth boundary stands grown. Keyed the
+	## same way the ground colour asks, so a dark boundary line always has its
+	## hedge on it and a gap stays pale.
+	var key := Vector3i(side_i, edge_i, zseg)
+	var cached: Variant = _field_runs.get(key)
+	if cached != null:
+		return cached
+	var run := posmod(
+		hash(Vector3i(side_i * 89 + edge_i * 29, zseg, int(_path.world_seed) ^ 0x2e51)), 100
+	) < 46
+	_field_runs[key] = run
+	return run
+
+
+func _field_kind_at(side_i: int, out: float, z: float) -> int:
+	## Which parcel a prop lands in, on the unwobbled edges — a bale asks
+	## "which field am I in", not "where exactly is the hedge line". -1 past
+	## the last field edge, where the plain wash takes over.
+	var band := 0
+	while band < FIELD_EDGES.size() and out >= FIELD_EDGES[band]:
+		band += 1
+	if band >= FIELD_LENGTHS.size():
+		return -1
+	var cell := int(floor((z + _field_phase(side_i, band)) / FIELD_LENGTHS[band]))
+	return _field_kind(side_i, band, cell)
+
+
+func _field_tone(kind: int, grain: float) -> Color:
+	## A parcel's two-tone wash. All greens and damp earth — no golds: ripe corn
+	## under the warm key is exactly the sandy slab this biome already lost once.
+	match kind:
+		Field.GRAZED:
+			return Color("38542a").lerp(Color("44602f"), grain)
+		Field.PASTURE:
+			return Color("4a722d").lerp(Color("567f33"), grain)
+		Field.CROP:
+			return Color("527f30").lerp(Color("60893a"), grain)
+		Field.MOWN:
+			# Fresh-cut grass — the palest parcel on the sheet, but a sage green:
+			# the straw colour lives on the bales, not on the ground.
+			return Color("5e8148").lerp(Color("6d8e50"), grain)
+		_:
+			# Ploughed earth: damp loam, the darkest parcel on the sheet. Kept
+			# green-grey on the red channel's wrong side — a warm brown bakes to
+			# gold under the low sun and the whole parcel reads as sand.
+			return Color("414931").lerp(Color("4c553c"), grain)
+
+
+func _country_field_tint(lateral: float, z: float, base: Color, grain: float) -> Color:
+	## Worked land painted onto the ground mesh. Everything is a pure function
+	## of position, so neighbouring chunks shade the same parcels and the hedge
+	## planting in _scenery_country reads the very same cells.
+	var out := absf(lateral)
+	if out < 15.5 or out > FIELD_EDGES[FIELD_EDGES.size() - 1]:
+		return base
+	var side_i := 1 if lateral > 0.0 else -1
+	var edges := _field_edges_at(z, side_i)
+	var band := 0
+	while band < edges.size() and out >= edges[band]:
+		band += 1
+	if band >= edges.size():
+		return base
+	var edge_out := edges[band]
+	var edge_in := 15.5 if band == 0 else edges[band - 1]
+	# Shearing z by a slow wave of `out` tilts every field end a little off the
+	# perpendicular — parcels that skew rather than stamp a grid.
+	var shear := sin(out * 0.05 + float(band) * 1.7) * (2.0 + float(band) * 1.6)
+	var len_i := FIELD_LENGTHS[band]
+	var phase := _field_phase(side_i, band)
+	var cell := int(floor((z + shear + phase) / len_i))
+	var cell_a := float(cell) * len_i - phase - shear
+	var cell_b := cell_a + len_i
+	var info := _field_cell(side_i, band, cell)
+	var kind: int = int(info[0])
+	var tone := _field_tone(kind, grain)
+	# Per-parcel lift, so two neighbouring pastures never sit the same green.
+	# Modest: at ±0.08 the palest parcels washed to cream under the day key.
+	tone = tone.lightened(float(info[2]))
+	# Boundary shadow: a hedge casts a dark line on its own side of a parcel
+	# edge — a grown one deeper, an open ditch a bare hint. The z ends belong
+	# to whichever cell opens there; the depth edges break into FIELD_RUN
+	# stretches so the lines come and go like real hedgerows.
+	var shade := 0.0
+	var d_a := z - cell_a
+	var d_b := cell_b - z
+	if d_a < d_b:
+		shade = (1.0 - smoothstep(0.4, 4.5, d_a)) * (0.17 if bool(info[1]) else 0.05)
+	else:
+		var hedged_b: bool = bool((_field_cell(side_i, band, cell + 1))[1])
+		shade = (1.0 - smoothstep(0.4, 4.5, d_b)) * (0.17 if hedged_b else 0.05)
+	var zseg := int(floor(z / FIELD_RUN))
+	if out - edge_in < edge_out - out:
+		var hedged := band > 0 and _field_hedge_run(side_i, band - 1, zseg)
+		shade = maxf(shade, (1.0 - smoothstep(0.4, 3.6, out - edge_in)) * (0.15 if hedged else 0.05))
+	else:
+		shade = maxf(shade, (1.0 - smoothstep(0.4, 3.6, edge_out - out)) * (0.15 if _field_hedge_run(side_i, band, zseg) else 0.05))
+	tone = tone.lerp((_pal["prop_a"] as Color).darkened(0.18), minf(shade, 0.6))
+	# Standing crop carries tramlines — faint rows crossing the parcel along the
+	# one direction the vertex grid can draw, faded before they could zebra.
+	if kind == Field.CROP:
+		var row_vis := 1.0 - smoothstep(80.0, 150.0, out)
+		if row_vis > 0.0:
+			tone = tone.darkened((0.5 + 0.5 * sin(z * TAU / float(info[3]))) * 0.11 * row_vis)
+	# Farther parcels keep their shapes but breathe toward the meadow wash —
+	# aerial softening, so the distance is hazy farmland, not a checkerboard.
+	tone = tone.lerp(base.lightened(0.03), smoothstep(150.0, 290.0, out) * 0.5)
+	return base.lerp(tone, 0.88)
 
 
 func _embankment_mix(lateral: float, z: float) -> float:
@@ -3790,18 +4015,26 @@ func _hedge_verge() -> void:
 		set_meta("hedge_done", true)
 		return
 	var z0: float = float(chunk_index) * LENGTH
+	# In country the verge hedge is the field boundary proper — longer, deeper
+	# runs of hawthorn green with fewer breaks, not a sprinkle of round bushes.
+	var country := theme == Env.COUNTRY
 	for side in [-1.0, 1.0]:
 		var hz := z0 + _rng.randf_range(0.0, 1.1)
 		while hz < z0 + LENGTH:
-			if _rng.randf() < 0.17:
+			if _rng.randf() < (0.13 if country else 0.17):
 				var gap := _rng.randf_range(3.0, 8.0)
-				if theme == Env.COUNTRY and _rng.randf() < 0.5:
+				if country and _rng.randf() < 0.5:
 					_field_gate(hz + gap * 0.5, side)
 				hz += gap
 				continue
-			var run_end := minf(hz + _rng.randf_range(7.0, 22.0), z0 + LENGTH)
-			var run_col: Color = (_pal["prop_a"] as Color).lerp(_pal["verge"], _rng.randf_range(0.15, 0.55))
-			var run_h := _rng.randf_range(1.1, 2.1)
+			var run_end := minf(
+				hz + _rng.randf_range(10.0, 30.0) if country else hz + _rng.randf_range(7.0, 22.0),
+				z0 + LENGTH
+			)
+			var run_col: Color = (_pal["prop_a"] as Color).lerp(
+				_pal["verge"], _rng.randf_range(0.1, 0.4) if country else _rng.randf_range(0.15, 0.55)
+			)
+			var run_h := _rng.randf_range(1.3, 2.3) if country else _rng.randf_range(1.1, 2.1)
 			while hz < run_end:
 				var lx: float = _mow_lateral(hz, side * (HALF_WIDTH + 3.0 + _rng.randf_range(0.0, 2.6)))
 				# Forced blobs skip `_footprint_is_clear`; without a tarmac test they grow
@@ -3809,9 +4042,9 @@ func _hedge_verge() -> void:
 				if ((_on_lake or _on_spur) and _viewpoint_reserves_sightline(hz, lx)) or _on_tarmac(hz, lx, 1.2):
 					hz += 2.0
 					continue
-				var w := _rng.randf_range(1.55, 2.55)
+				var w := _rng.randf_range(1.8, 2.9) if country else _rng.randf_range(1.55, 2.55)
 				_blob(
-					hz, lx, Vector3(w, run_h * _rng.randf_range(0.82, 1.12), w * 0.78),
+					hz, lx, Vector3(w, run_h * _rng.randf_range(0.82, 1.12), w * _rng.randf_range(0.85, 1.15) if country else w * 0.78),
 					run_col.darkened(_rng.randf() * 0.18), 0.0, true, true
 				)
 				if _rng.randf() < 0.28:
@@ -3820,7 +4053,9 @@ func _hedge_verge() -> void:
 						hz + 0.35,
 						_mow_lateral(hz, side * (HALF_WIDTH + 1.65 + _rng.randf() * 1.5)),
 						Vector3(s * 1.35, s * 0.72, s * 1.1),
-						(_pal["prop_c"] as Color).darkened(_rng.randf() * 0.22)
+						# A rooty clod at the hedge foot — dark, not the hay-gold
+						# prop_c that sprinkled the verge with tan litter.
+						run_col.darkened(_rng.randf_range(0.2, 0.34))
 					)
 				hz += _rng.randf_range(1.65, 2.45)
 	set_meta("hedge_done", true)
@@ -3833,7 +4068,7 @@ func _field_gate(z: float, side: float) -> void:
 	## guardrails do rather than floating over a spur junction.
 	var lat: float = _mow_lateral(z, side * (HALF_WIDTH + 4.6))
 	var wood: Color = (_pal["rail"] as Color).darkened(_rng.randf_range(0.05, 0.2))
-	_cube(z - 1.7, lat, Vector3(0.24, 1.45, 0.24), (_pal["prop_c"] as Color).darkened(0.1))
+	_cube(z - 1.7, lat, Vector3(0.24, 1.45, 0.24), wood.darkened(0.14))
 	_cube(z + 1.7, lat, Vector3(0.18, 1.2, 0.18), wood)
 	for r in 3:
 		_terrain_beam(z - 1.7, z + 1.7, lat, 0.07, 0.09, wood, 0.36 + float(r) * 0.32)
@@ -4139,8 +4374,15 @@ func _verge_plant_bushes(count: int) -> void:
 		# Sparser the further out, so the near verge stays the dense, fast-moving band.
 		var lx: float = _mow_lateral(z, side * (HALF_WIDTH + 3.0 + pow(_rng.randf(), 1.35) * 16.0))
 		var s := _rng.randf_range(0.7, 2.15)
-		var col: Color = (base as Color).lerp(alt, _rng.randf() * 0.7).darkened(_rng.randf() * 0.22)
-		_blob(z, lx, Vector3(s * 1.6, s * _rng.randf_range(0.85, 1.45), s * 1.5), col, 0.0, true)
+		if theme == Env.COUNTRY:
+			# Fewer, longer, deeper — low scrub on the verge, not a scatter of
+			# little round balls; the hedge runs carry the fine detail.
+			s = _rng.randf_range(1.0, 2.6)
+			var col: Color = (base as Color).lerp(alt, _rng.randf() * 0.3).darkened(_rng.randf() * 0.2)
+			_blob(z, lx, Vector3(s * 1.5, s * _rng.randf_range(0.7, 1.05), s * 2.3), col, 0.0, true)
+		else:
+			var col: Color = (base as Color).lerp(alt, _rng.randf() * 0.7).darkened(_rng.randf() * 0.22)
+			_blob(z, lx, Vector3(s * 1.6, s * _rng.randf_range(0.85, 1.45), s * 1.5), col, 0.0, true)
 
 
 func _verge_plant_fringe(side_filter: float) -> void:
@@ -5023,85 +5265,176 @@ func _scenery_country(streamed: bool = false) -> void:
 		if streamed and _slice_spent() and not await _keep_streaming():
 			return
 
-	# Hedgerows: field boundaries marching away from the road over the swells.
+	# Hedgerows grown on the painted parcel map: each field's road-end may
+	# stand a hedge line across its own depth band, the longer depth edges
+	# carry broken runs of hedge parallel to the road, and the odd mature oak
+	# stands in the line — which is most of what an English hedgerow is. The
+	# cells these read are the same ones _country_field_tint paints, so the
+	# line you see shaded on the ground is the line you see grown.
 	for side in [-1.0, 1.0]:
-		var hz := z0 + _rng.randf_range(0.0, 22.0)
-		while hz < z0 + LENGTH:
-			var out := HALF_WIDTH + 7.0
-			while out < 95.0:
-				var h := _rng.randf_range(1.5, 2.4)
-				# follow_terrain=false: a 2.6 m hedge segment sits on a single terrain
-				# sample instead of the nine-sample corner fit wide props use. That fit
-				# was ~945 terrain lookups per chunk across the ~100 segments and was the
-				# single largest per-chunk streaming hitch; one sample is imperceptible
-				# on a hedge this narrow.
-				_leaf_cube(
-					hz,
-					side * out,
-					Vector3(2.6, h, 1.5),
-					(_pal["prop_a"] as Color).darkened(_rng.randf() * 0.25),
-					0.0,
-					0.0,
-					false,
-					false
-				)
-				out += _rng.randf_range(2.2, 3.0)
+		if _on_spur and is_equal_approx(side, _vp_side):
+			continue
+		var side_i := int(side)
+		for band in 4:
+			var len_i := FIELD_LENGTHS[band]
+			var phase := _field_phase(side_i, band)
+			var k0 := int(floor((z0 + phase) / len_i)) - 1
+			var k1 := int(floor((z0 + LENGTH + phase) / len_i))
+			for k in range(k0, k1 + 1):
+				var zb: float = float(k) * len_i - phase
+				if zb < z0 + 1.5 or zb > z0 + LENGTH - 1.5:
+					continue
+				if not _field_hedged(side_i, band, k):
+					continue
+				_field_hedge_line(zb, side, band)
+				if band == 0 and _rng.randf() < 0.35:
+					# The gateway sits where the boundary meets the verge.
+					_field_gate(zb + _rng.randf_range(-1.4, 1.4), side)
 				if streamed and _slice_spent() and not await _keep_streaming():
 					return
-			hz += _rng.randf_range(30.0, 60.0)
-			if streamed and _slice_spent() and not await _keep_streaming():
-				return
-		if streamed and _slice_spent() and not await _keep_streaming():
-			return
+		for edge_i in [0, 1, 2]:
+			var zs := z0
+			while zs < z0 + LENGTH:
+				var seg := int(floor(zs / FIELD_RUN))
+				var seg_b: float = minf(z0 + LENGTH, float(seg + 1) * FIELD_RUN)
+				if _field_hedge_run(side_i, edge_i, seg) and seg_b - zs > 3.0:
+					var zz := zs
+					while zz < seg_b - 1.2:
+						var lat: float = side * (_field_edge_at(edge_i, zz, side_i) + 0.7)
+						_leaf_cube(
+							zz,
+							lat,
+							Vector3(1.7, _rng.randf_range(1.4, 2.3), _rng.randf_range(2.4, 3.3)),
+							(_pal["prop_a"] as Color).darkened(0.04 + _rng.randf() * 0.26).lerp(
+								_pal["verge"], _rng.randf() * 0.16
+							),
+							0.0,
+							0.0,
+							false,
+							false
+						)
+						if _rng.randf() < 0.05:
+							_tree(
+								Flora.BROADLEAF,
+								zz,
+								lat + side * _rng.randf_range(0.8, 1.6),
+								_rng.randf_range(9.0, 13.5),
+								(_pal["prop_a"] as Color).darkened(0.04 + _rng.randf() * 0.16)
+							)
+						zz += _rng.randf_range(2.6, 3.4)
+						if streamed and _slice_spent() and not await _keep_streaming():
+							return
+				zs += FIELD_RUN
+				if streamed and _slice_spent() and not await _keep_streaming():
+					return
 
 	# Hedgerow oaks, pines, the odd birch clump, and one big field tree standing
 	# alone — a restrained English-country mix with no palms or tropical foliage.
 	for side in [-1.0, 1.0]:
-		for _i in 7:
+		for _i in 6:
 			var z := z0 + _rng.randf_range(0.0, LENGTH)
-			var lx: float = side * (HALF_WIDTH + 8.0 + _rng.randf_range(0.0, 70.0))
-			var tint: Color = (_pal["prop_a"] as Color).darkened(_rng.randf() * 0.24)
+			var lx: float = side * (HALF_WIDTH + 8.0 + _rng.randf_range(0.0, 74.0))
+			var tint: Color = (_pal["prop_a"] as Color).darkened(0.05 + _rng.randf() * 0.24)
 			var species_roll := _rng.randf()
-			if species_roll < 0.55:
-				_tree(Flora.BROADLEAF, z, lx, _rng.randf_range(6.0, 10.0), tint)
-			elif species_roll < 0.9:
+			if species_roll < 0.62:
+				_tree(Flora.BROADLEAF, z, lx, _rng.randf_range(6.0, 11.0), tint)
+			elif species_roll < 0.88:
 				_tree(Flora.CONIFER, z, lx, _rng.randf_range(7.0, 12.0), tint.darkened(0.12))
 			else:
-				_tree(Flora.BIRCH, z, lx, _rng.randf_range(5.0, 8.0), tint.lightened(0.14))
+				_tree(Flora.BIRCH, z, lx, _rng.randf_range(5.0, 8.0), tint.darkened(0.02))
 			if streamed and _slice_spent() and not await _keep_streaming():
 				return
-		if _rng.randf() < 0.5:
+		if _rng.randf() < 0.55:
 			_tree(
 				Flora.BROADLEAF,
 				z0 + _rng.randf_range(0.0, LENGTH),
 				side * (HALF_WIDTH + 26.0 + _rng.randf_range(0.0, 50.0)),
 				_rng.randf_range(11.0, 15.0),
-				(_pal["prop_a"] as Color).darkened(_rng.randf() * 0.15)
+				(_pal["prop_a"] as Color).darkened(0.04 + _rng.randf() * 0.17)
 			)
 		if streamed and _slice_spent() and not await _keep_streaming():
 			return
 
+	# Copses and spinneys cresting the midfield — a tight stand reads on a swell
+	# at a hundred metres where a lone tree is only a speck.
+	for side in [-1.0, 1.0]:
+		if _on_spur and is_equal_approx(side, _vp_side):
+			continue
+		if _rng.randf() > 0.45:
+			continue
+		var cz2 := z0 + _rng.randf_range(5.0, LENGTH - 5.0)
+		var clx2: float = side * (HALF_WIDTH + _rng.randf_range(50.0, 125.0))
+		var stand_col: Color = (_pal["prop_a"] as Color).darkened(_rng.randf_range(0.1, 0.26))
+		var reach := _rng.randf_range(5.0, 10.0)
+		for _t in _rng.randi_range(4, 8):
+			var a2 := _rng.randf_range(0.0, TAU)
+			var rr := sqrt(_rng.randf()) * reach
+			_tree(
+				Flora.CONIFER if _rng.randf() < 0.28 else Flora.BROADLEAF,
+				cz2 + cos(a2) * rr,
+				clx2 + sin(a2) * rr * 0.8,
+				_rng.randf_range(7.0, 12.5),
+				stand_col.lightened(_rng.randf() * 0.06)
+			)
+
+	# A low down swelling through the field plain now and then: the terrain
+	# already rolls, but a broad hump drapes a couple of parcels over a shoulder
+	# and gives the far hedges something to climb. Unculled like the skyline
+	# ridges — a hill popping in at a hundred metres is worse than its draw.
+	for side in [-1.0, 1.0]:
+		if _on_spur and is_equal_approx(side, _vp_side):
+			continue
+		if _rng.randf() > 0.5:
+			continue
+		var dz2 := z0 + _rng.randf_range(0.0, LENGTH)
+		var dlx: float = side * _rng.randf_range(95.0, 160.0)
+		_ridge(
+			dz2,
+			dlx,
+			Vector3(_rng.randf_range(48.0, 92.0), _rng.randf_range(4.5, 8.0), _rng.randf_range(40.0, 75.0)),
+			(_pal["ground_alt"] as Color).lerp(_pal["ground"], 0.3).darkened(_rng.randf_range(0.0, 0.1))
+		)
+		if _rng.randf() < 0.45:
+			# And a spinney on its crest — the classic hilltop clump.
+			for _t in _rng.randi_range(3, 6):
+				_tree(
+					Flora.BROADLEAF,
+					dz2 + _rng.randf_range(-12.0, 12.0),
+					dlx + _rng.randf_range(-8.0, 8.0),
+					_rng.randf_range(6.0, 10.0),
+					(_pal["prop_a"] as Color).darkened(0.04 + _rng.randf() * 0.16)
+				)
+
 	# Grass out across the fields themselves, thinning with distance — the verge
 	# planting alone stops at ~13 m and left everything beyond it a bare tinted
-	# ground plane instead of pasture.
-	for _i in 70:
+	# ground plane instead of pasture. Plough stays bare earth.
+	for _i in 80:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var side: float = 1.0 if _rng.randf() < 0.5 else -1.0
 		var lx: float = side * (HALF_WIDTH + 10.0 + pow(_rng.randf(), 1.4) * 80.0)
+		var fkind := _field_kind_at(int(side), absf(lx), z)
+		if fkind == Field.FALLOW and _rng.randf() < 0.7:
+			continue
 		var height := _rng.randf_range(0.3, 0.62)
 		var tuft := Vector3(_rng.randf_range(0.5, 0.9), height, _rng.randf_range(0.5, 0.9))
-		_grass_at(
-			z, lx, tuft,
+		var tuft_col: Color = (
 			(_pal["verge"] as Color).lerp(_pal["prop_a"], _rng.randf() * 0.5).darkened(_rng.randf() * 0.25)
 		)
+		if fkind == Field.MOWN:
+			tuft_col = tuft_col.lerp(_pal["prop_c"], 0.3)
+		_grass_at(z, lx, tuft, tuft_col)
 		if streamed and int(_i) % 10 == 9 and _slice_spent() and not await _keep_streaming():
 			return
 
-	# Round hay bales dotted through the fields, in loose little clusters rather
-	# than an even scatter — the way a baler actually leaves them behind.
-	for _i in 4:
+	# Round bales in the cut fields — dropped where the parcel map says mown,
+	# in loose little clusters rather than an even scatter, the way a baler
+	# actually leaves them behind.
+	for _i in 5:
 		var cz := z0 + _rng.randf_range(0.0, LENGTH)
-		var clx: float = (1.0 if _rng.randf() > 0.5 else -1.0) * (HALF_WIDTH + 14.0 + _rng.randf_range(0.0, 65.0))
+		var cside: float = 1.0 if _rng.randf() > 0.5 else -1.0
+		var clx: float = cside * (HALF_WIDTH + 14.0 + _rng.randf_range(0.0, 65.0))
+		if _field_kind_at(int(cside), absf(clx), cz) != Field.MOWN and _rng.randf() < 0.72:
+			continue
 		var bales: int = _rng.randi_range(2, 4)
 		var bale_color: Color = (_pal["prop_c"] as Color).lightened(_rng.randf_range(0.0, 0.1))
 		for _j in bales:
@@ -5110,18 +5443,22 @@ func _scenery_country(streamed: bool = false) -> void:
 			_hay_bale(z, lx, _rng.randf_range(0.55, 0.7), _rng.randf_range(1.1, 1.4), bale_color)
 
 	# Sheep out in the nearer fields — a flock every couple of chunks, never an
-	# even scatter. At the only distances they are ever seen from, a cream blob
-	# with a dark head tucked under its shoulder is a ewe; rarer, a bigger
-	# brown-black body is cattle. All of it goes through the same corridor
-	# checks as the bales.
+	# even scatter, and keyed to the grass parcels so they crop the pasture
+	# instead of standing in the barley. At the only distances they are ever
+	# seen from, a cream blob with a dark head tucked under its shoulder is a
+	# ewe; rarer, a bigger brown-black body is cattle. All of it goes through
+	# the same corridor checks as the bales.
 	for _flock in 2:
-		if _rng.randf() > 0.52:
+		if _rng.randf() > 0.58:
 			continue
 		var fz2 := z0 + _rng.randf_range(2.0, LENGTH - 2.0)
 		var fside: float = 1.0 if _rng.randf() < 0.5 else -1.0
 		# The near edge of the band matters most: a ewe 20 m out is a cream dot
 		# over the wall top, one at 60 m is lost against the far pasture.
 		var fx: float = fside * (HALF_WIDTH + _rng.randf_range(12.0, 44.0))
+		var flock_kind := _field_kind_at(int(fside), absf(fx), fz2)
+		if flock_kind != Field.GRAZED and flock_kind != Field.PASTURE and _rng.randf() < 0.75:
+			continue
 		if not _footprint_is_clear(fz2, fx, 7.0, 9.0):
 			continue
 		if _rng.randf() < 0.2:
@@ -5133,8 +5470,8 @@ func _scenery_country(streamed: bool = false) -> void:
 					_rng.randf_range(1.5, 1.75), hide
 				)
 		else:
-			var wool := Color("eae3d4").darkened(_rng.randf() * 0.1)
-			for _i in _rng.randi_range(4, 7):
+			var wool := Color("f0ead9").darkened(_rng.randf() * 0.08)
+			for _i in _rng.randi_range(5, 8):
 				_sheep(
 					fz2 + _rng.randf_range(-7.0, 7.0), fx + _rng.randf_range(-5.5, 5.5),
 					wool.darkened(_rng.randf() * 0.07)
@@ -5142,6 +5479,42 @@ func _scenery_country(streamed: bool = false) -> void:
 
 	# No farmstead, no telegraph stubs: buildings are out, and the power line is
 	# built by _power_line() with real spans rather than bare poles.
+
+
+func _field_hedge_line(z: float, side: float, band: int) -> void:
+	## A hedgerow stood on one painted parcel boundary, marching out across its
+	## own depth band. The cell is the same one the ground colour reads, so the
+	## grown line always sits inside the shadow already painted under it.
+	var side_i := int(side)
+	var out := 16.5 if band == 0 else _field_edge_at(band - 1, z, side_i) + 1.6
+	var outer: float = _field_edge_at(band, z, side_i) - 1.4
+	var line_col: Color = (_pal["prop_a"] as Color).darkened(_rng.randf() * 0.1)
+	while out < outer:
+		var h := _rng.randf_range(1.5, 2.6)
+		# follow_terrain=false, as before: a hedge segment this narrow sits fine
+		# on a single terrain sample, and the nine-sample corner fit was the
+		# single largest per-chunk streaming hitch.
+		_leaf_cube(
+			z + _rng.randf_range(-0.9, 0.9),
+			side * out,
+			Vector3(_rng.randf_range(2.4, 3.2), h, 1.6),
+			line_col.lerp(_pal["verge"], _rng.randf() * 0.16).darkened(_rng.randf() * 0.18),
+			0.0,
+			0.0,
+			false,
+			false
+		)
+		if _rng.randf() < 0.05:
+			# A mature oak stood in the hedge line — most of what makes the
+			# English field pattern read from a distance is the trees on it.
+			_tree(
+				Flora.BROADLEAF,
+				z + _rng.randf_range(-1.0, 1.0),
+				side * (out + _rng.randf_range(0.5, 1.5)),
+				_rng.randf_range(9.0, 14.0),
+				line_col.lightened(_rng.randf() * 0.08)
+			)
+		out += _rng.randf_range(2.5, 3.4)
 
 
 func _boundary_rail(z_a: float, z_b: float, lateral: float) -> void:
@@ -5155,8 +5528,11 @@ func _boundary_rail(z_a: float, z_b: float, lateral: float) -> void:
 		_cube(fz, lateral, Vector3(0.12, 1.15, 0.12), _pal["rail"])
 		if fseg % 2 == 0:
 			var zend: float = minf(fz + 8.0, z_b)
-			_terrain_beam(fz, zend, lateral, 0.09, 0.09, _pal["rail"], 0.92)
-			_terrain_beam(fz, zend, lateral, 0.09, 0.09, _pal["rail"], 0.58)
+			# The rails face up into the key — a bare palette colour blooms to
+			# cream, so the beams run a step under the posts.
+			var beam: Color = (_pal["rail"] as Color).darkened(0.12)
+			_terrain_beam(fz, zend, lateral, 0.09, 0.09, beam, 0.92)
+			_terrain_beam(fz, zend, lateral, 0.09, 0.09, beam, 0.58)
 		fz += 4.0
 		fseg += 1
 
@@ -5165,7 +5541,7 @@ func _boundary_stone(z_a: float, z_b: float, lateral: float) -> void:
 	## A run of dry-stone wall: a course beam and a wider coping course per bay.
 	## Kept low — about hip height — so the fields still read over the top, and
 	## slightly darker than the rail timber so the swap reads at a glance.
-	var stone: Color = (_pal["rail"] as Color).lerp(Color("7f786c"), 0.45)
+	var stone: Color = (_pal["rail"] as Color).lerp(Color("565c50"), 0.55).darkened(0.05)
 	var fz := z_a
 	var fseg := 0
 	while fz < z_b - 0.01:
@@ -5186,8 +5562,9 @@ func _boundary_stone(z_a: float, z_b: float, lateral: float) -> void:
 func _sheep(z: float, lateral: float, wool: Color) -> void:
 	## One grazing sheep: a fat woolly body, a dark head tucked low at one end,
 	## and a thin dark slab under it for legs and shade. Headed whichever way it
-	## happened to be cropping when we looked.
-	_grazer(z, lateral, _rng.randf_range(0.95, 1.15), wool)
+	## happened to be cropping when we looked. Run a touch over true scale — a
+	## ewe at forty metres is a moving dot, not a silhouette.
+	_grazer(z, lateral, _rng.randf_range(1.25, 1.5), wool)
 
 
 func _grazer(z: float, lateral: float, s: float, coat: Color) -> void:
@@ -5469,7 +5846,7 @@ func _landmark_wall() -> void:
 	var z0 := float(chunk_index) * LENGTH
 	var side: float = _landmark_side(z0)
 	var base_lat: float = side * _rng.randf_range(88.0, 132.0)
-	var stone := Color("8a8478").darkened(0.08)
+	var stone := Color("6c6f62").darkened(0.08)
 	var cap := stone.lightened(0.12)
 	var built := false
 	for i in 8:
@@ -10486,30 +10863,29 @@ static func palette(t: int) -> Dictionary:
 				"glow": Color(2.4, 1.8, 1.2),
 			}
 		Env.COUNTRY:
-			# Ripe crop against pasture. The two ground tones were both olive and
-			# eleven points apart in value, which is a stain rather than a patchwork
-			# — and the patchwork is the entire reason to ride through farmland.
+			# Green pasture against deeper grazing. The old olive verge and meadow
+			# sat barely past G=R, so the warm day key pushed every hedge, verge and
+			# field to the same sandy yellow-green — the "small bush sandy biome".
+			# Everything vegetal now keeps G well ahead of R so it stays green under
+			# that key; the warm grade supplies the warmth, the albedo supplies green.
 			return {
 				"road": ROAD_TARMAC,
 				"stripe": Color("efe6bc"),
-				# Same fix as the forest shoulder: sandy grit under a golden key
-				# was the neon ribbon along the verge, not the fence on top of it.
-				# Country needed the biggest pull toward grey — the old tan was
-				# the brightest thing beside the tarmac and read as beach sand.
-				"shoulder": Color("6d6c63"),
-				"curb": Color("6a685f"),
-				"verge": Color("6f8238"),
-				# Two meadow greens, not corn against pasture. Golden standing corn
-				# under the warm grade covered whole valleys in what read as sand
-				# dunes, and the user wants English farmland, not a desert.
-				"ground": Color("6b8a3e"),  # hay meadow
-				"ground_alt": Color("4c6834"),  # grazed pasture
-				# Bleached post-and-rail oak, not fresh cream paint — the old tan
-				# was the brightest man-made object in every dusk frame.
-				"rail": Color("837f76"),
-				"prop_a": Color("425e32"),
+				# A thin cool gravel at the tarmac edge — sandy grit under a golden
+				# key was the tan ribbon the rider read as the verge itself.
+				"shoulder": Color("586553"),
+				"curb": Color("556050"),
+				"verge": Color("4f7a31"),  # lush verge grass
+				# Two pasture greens: meadow against grazed-down turf, far enough
+				# apart in value to read as patchwork without a gold in sight.
+				"ground": Color("5b8339"),  # open meadow
+				"ground_alt": Color("43642e"),  # grazed pasture
+				# Weathered fence timber, dark enough that the toon-lit top face
+				# stays grey-brown instead of blooming to cream under the key.
+				"rail": Color("5f635a"),
+				"prop_a": Color("3d6031"),  # hedgerow green
 				"prop_b": Color("a74e32"),  # brick and rust
-				"prop_c": Color("d8b96a"),  # cut hay
+				"prop_c": Color("d8b96a"),  # cut hay — the bales keep the one straw note
 				"accent": Color("ead4a2"),
 				"glow": Color(2.6, 2.2, 1.5),
 			}
