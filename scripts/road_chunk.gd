@@ -116,7 +116,7 @@ const FOLIAGE_OVERHANG_HEIGHT := 9.0
 const FOLIAGE_SWAY := 0.12
 ## Bushes packed onto the first few metres of verge. Indexed by Env. Split across
 ## frames while streaming — planting all of them at once was a 35–90 ms hitch.
-const VERGE_BUSH_COUNT := [8, 34, 18, 26, 32]
+const VERGE_BUSH_COUNT := [8, 34, 18, 26, 16]
 const VERGE_BUSH_BATCH := 2
 ## Hard cap on GLB instances per chunk. The Kenney kit is suburban, so it stocks
 ## the countryside and villages; the city builds its own frontage.
@@ -1422,10 +1422,12 @@ func _shoulder_color(lateral: float, z: float, band: String) -> Color:
 	if band == "ground":
 		return _ground_color(lateral, z)
 	var grain: float = 0.5 + 0.5 * sin(lateral * 0.14 + z * 0.07) * sin(lateral * 0.05 - z * 0.03)
-	var gravel: Color = (_pal["shoulder"] as Color).darkened(0.08 + grain * 0.1)
+	var gravel: Color = (_pal["shoulder"] as Color).darkened(0.1 + grain * 0.12)
 	var grass: Color = (_pal["verge"] as Color).lerp(_pal["prop_a"] as Color, grain * 0.35)
 	var out: float = absf(lateral) - HALF_WIDTH
-	var t: float = smoothstep(0.2, 3.2, out)
+	# A thin gravel lip against the curb, then grass takes the verge — a wide
+	# pale grit strip reads as bare dirt at saddle height, not as a shoulder.
+	var t: float = smoothstep(0.1, 1.8, out)
 	var color: Color = gravel.lerp(grass, t)
 	if _on_spur:
 		color = color.lerp(_deck_color(z, lateral), _deck_mix(z, lateral) * 0.85)
@@ -1460,13 +1462,13 @@ func _field_kind(side_i: int, band: int, cell: int) -> int:
 	var h := float(
 		posmod(hash(Vector3i(side_i * 131 + band * 37, cell, int(_path.world_seed))), 1000)
 	) * 0.001
-	if h < 0.30:
+	if h < 0.34:
 		return Field.GRAZED
-	if h < 0.56:
+	if h < 0.66:
 		return Field.PASTURE
-	if h < 0.78:
+	if h < 0.84:
 		return Field.CROP
-	if h < 0.90:
+	if h < 0.94:
 		return Field.MOWN
 	return Field.FALLOW
 
@@ -1506,17 +1508,18 @@ func _field_tone(kind: int, grain: float) -> Color:
 	## under the warm key is exactly the sandy slab this biome already lost once.
 	match kind:
 		Field.GRAZED:
-			return Color("3f5a2f").lerp(Color("4c6434"), grain)
+			return Color("38542a").lerp(Color("44602f"), grain)
 		Field.PASTURE:
-			return Color("56723b").lerp(Color("5f7c3f"), grain)
+			return Color("4a722d").lerp(Color("567f33"), grain)
 		Field.CROP:
-			return Color("6d8739").lerp(Color("7a9040"), grain)
+			return Color("527f30").lerp(Color("60893a"), grain)
 		Field.MOWN:
-			# Fresh-cut hay — pale sage straw, not the gold that reads as sand.
-			return Color("8f8f4f").lerp(Color("9d9e59"), grain)
+			# Fresh-cut grass — the palest parcel on the sheet, but a sage green:
+			# the straw colour lives on the bales, not on the ground.
+			return Color("6e8a4a").lerp(Color("7d9553"), grain)
 		_:
-			# Ploughed earth: damp umber, the darkest parcel on the sheet.
-			return Color("57503b").lerp(Color("645d44"), grain)
+			# Ploughed earth: damp loam, the darkest parcel on the sheet.
+			return Color("4f4d38").lerp(Color("5b5742"), grain)
 
 
 func _country_field_tint(lateral: float, z: float, base: Color, grain: float) -> Color:
@@ -1545,8 +1548,9 @@ func _country_field_tint(lateral: float, z: float, base: Color, grain: float) ->
 	var kind := _field_kind(side_i, band, cell)
 	var tone := _field_tone(kind, grain)
 	# Per-parcel lift, so two neighbouring pastures never sit the same green.
+	# Modest: at ±0.08 the palest parcels washed to cream under the day key.
 	tone = tone.lightened(
-		(float(posmod(hash(Vector3i(side_i * 17 + band * 5, cell, int(_path.world_seed))), 100)) - 50.0) * 0.0016
+		(float(posmod(hash(Vector3i(side_i * 17 + band * 5, cell, int(_path.world_seed))), 100)) - 50.0) * 0.0009
 	)
 	# Boundary shadow: a hedge casts a dark line on its own side of a parcel
 	# edge — a grown one deeper, an open ditch a bare hint. The z ends belong
@@ -1612,7 +1616,8 @@ func _embankment_color(lateral: float, z: float) -> Color:
 		Env.FOREST:
 			return Color("5a5848").lerp(Color("3e4a38"), grain * 0.4)
 		Env.COUNTRY:
-			return Color("9a7e4c").lerp(Color("6a6840"), grain * 0.45)
+			# Turf over clay — the old warm clay bank was another sand stripe.
+			return Color("6f7a45").lerp(Color("4c6134"), grain * 0.55)
 	return (_pal["shoulder"] as Color).darkened(0.1 + grain * 0.08)
 
 
@@ -3693,18 +3698,26 @@ func _hedge_verge() -> void:
 		set_meta("hedge_done", true)
 		return
 	var z0: float = float(chunk_index) * LENGTH
+	# In country the verge hedge is the field boundary proper — longer, deeper
+	# runs of hawthorn green with fewer breaks, not a sprinkle of round bushes.
+	var country := theme == Env.COUNTRY
 	for side in [-1.0, 1.0]:
 		var hz := z0 + _rng.randf_range(0.0, 1.1)
 		while hz < z0 + LENGTH:
-			if _rng.randf() < 0.17:
+			if _rng.randf() < (0.13 if country else 0.17):
 				var gap := _rng.randf_range(3.0, 8.0)
-				if theme == Env.COUNTRY and _rng.randf() < 0.5:
+				if country and _rng.randf() < 0.5:
 					_field_gate(hz + gap * 0.5, side)
 				hz += gap
 				continue
-			var run_end := minf(hz + _rng.randf_range(7.0, 22.0), z0 + LENGTH)
-			var run_col: Color = (_pal["prop_a"] as Color).lerp(_pal["verge"], _rng.randf_range(0.15, 0.55))
-			var run_h := _rng.randf_range(1.1, 2.1)
+			var run_end := minf(
+				hz + _rng.randf_range(10.0, 30.0) if country else hz + _rng.randf_range(7.0, 22.0),
+				z0 + LENGTH
+			)
+			var run_col: Color = (_pal["prop_a"] as Color).lerp(
+				_pal["verge"], _rng.randf_range(0.1, 0.4) if country else _rng.randf_range(0.15, 0.55)
+			)
+			var run_h := _rng.randf_range(1.3, 2.3) if country else _rng.randf_range(1.1, 2.1)
 			while hz < run_end:
 				var lx: float = _mow_lateral(hz, side * (HALF_WIDTH + 3.0 + _rng.randf_range(0.0, 2.6)))
 				# Forced blobs skip `_footprint_is_clear`; without a tarmac test they grow
@@ -3712,9 +3725,9 @@ func _hedge_verge() -> void:
 				if ((_on_lake or _on_spur) and _viewpoint_reserves_sightline(hz, lx)) or _on_tarmac(hz, lx, 1.2):
 					hz += 2.0
 					continue
-				var w := _rng.randf_range(1.55, 2.55)
+				var w := _rng.randf_range(1.8, 2.9) if country else _rng.randf_range(1.55, 2.55)
 				_blob(
-					hz, lx, Vector3(w, run_h * _rng.randf_range(0.82, 1.12), w * 0.78),
+					hz, lx, Vector3(w, run_h * _rng.randf_range(0.82, 1.12), w * _rng.randf_range(0.85, 1.15) if country else w * 0.78),
 					run_col.darkened(_rng.randf() * 0.18), 0.0, true, true
 				)
 				if _rng.randf() < 0.28:
@@ -3723,7 +3736,9 @@ func _hedge_verge() -> void:
 						hz + 0.35,
 						_mow_lateral(hz, side * (HALF_WIDTH + 1.65 + _rng.randf() * 1.5)),
 						Vector3(s * 1.35, s * 0.72, s * 1.1),
-						(_pal["prop_c"] as Color).darkened(_rng.randf() * 0.22)
+						# A rooty clod at the hedge foot — dark, not the hay-gold
+						# prop_c that sprinkled the verge with tan litter.
+						run_col.darkened(_rng.randf_range(0.2, 0.34))
 					)
 				hz += _rng.randf_range(1.65, 2.45)
 	set_meta("hedge_done", true)
@@ -3736,7 +3751,7 @@ func _field_gate(z: float, side: float) -> void:
 	## guardrails do rather than floating over a spur junction.
 	var lat: float = _mow_lateral(z, side * (HALF_WIDTH + 4.6))
 	var wood: Color = (_pal["rail"] as Color).darkened(_rng.randf_range(0.05, 0.2))
-	_cube(z - 1.7, lat, Vector3(0.24, 1.45, 0.24), (_pal["prop_c"] as Color).darkened(0.1))
+	_cube(z - 1.7, lat, Vector3(0.24, 1.45, 0.24), wood.darkened(0.14))
 	_cube(z + 1.7, lat, Vector3(0.18, 1.2, 0.18), wood)
 	for r in 3:
 		_terrain_beam(z - 1.7, z + 1.7, lat, 0.07, 0.09, wood, 0.36 + float(r) * 0.32)
@@ -3998,8 +4013,15 @@ func _verge_plant_bushes(count: int) -> void:
 		# Sparser the further out, so the near verge stays the dense, fast-moving band.
 		var lx: float = _mow_lateral(z, side * (HALF_WIDTH + 3.0 + pow(_rng.randf(), 1.35) * 16.0))
 		var s := _rng.randf_range(0.7, 2.15)
-		var col: Color = (base as Color).lerp(alt, _rng.randf() * 0.7).darkened(_rng.randf() * 0.22)
-		_blob(z, lx, Vector3(s * 1.6, s * _rng.randf_range(0.85, 1.45), s * 1.5), col, 0.0, true)
+		if theme == Env.COUNTRY:
+			# Fewer, longer, deeper — low scrub on the verge, not a scatter of
+			# little round balls; the hedge runs carry the fine detail.
+			s = _rng.randf_range(1.0, 2.6)
+			var col: Color = (base as Color).lerp(alt, _rng.randf() * 0.3).darkened(_rng.randf() * 0.2)
+			_blob(z, lx, Vector3(s * 1.5, s * _rng.randf_range(0.7, 1.05), s * 2.3), col, 0.0, true)
+		else:
+			var col: Color = (base as Color).lerp(alt, _rng.randf() * 0.7).darkened(_rng.randf() * 0.22)
+			_blob(z, lx, Vector3(s * 1.6, s * _rng.randf_range(0.85, 1.45), s * 1.5), col, 0.0, true)
 
 
 func _verge_plant_fringe(side_filter: float) -> void:
@@ -4924,7 +4946,7 @@ func _scenery_country() -> void:
 			elif species_roll < 0.88:
 				_tree(Flora.CONIFER, z, lx, _rng.randf_range(7.0, 12.0), tint.darkened(0.12))
 			else:
-				_tree(Flora.BIRCH, z, lx, _rng.randf_range(5.0, 8.0), tint.lightened(0.14))
+				_tree(Flora.BIRCH, z, lx, _rng.randf_range(5.0, 8.0), tint.lightened(0.08))
 		if _rng.randf() < 0.55:
 			_tree(
 				Flora.BROADLEAF,
@@ -5115,7 +5137,7 @@ func _boundary_stone(z_a: float, z_b: float, lateral: float) -> void:
 	## A run of dry-stone wall: a course beam and a wider coping course per bay.
 	## Kept low — about hip height — so the fields still read over the top, and
 	## slightly darker than the rail timber so the swap reads at a glance.
-	var stone: Color = (_pal["rail"] as Color).lerp(Color("7f786c"), 0.45)
+	var stone: Color = (_pal["rail"] as Color).lerp(Color("67695f"), 0.5).darkened(0.04)
 	var fz := z_a
 	var fseg := 0
 	while fz < z_b - 0.01:
@@ -5138,7 +5160,7 @@ func _sheep(z: float, lateral: float, wool: Color) -> void:
 	## and a thin dark slab under it for legs and shade. Headed whichever way it
 	## happened to be cropping when we looked. Run a touch over true scale — a
 	## ewe at forty metres is a moving dot, not a silhouette.
-	_grazer(z, lateral, _rng.randf_range(1.15, 1.4), wool)
+	_grazer(z, lateral, _rng.randf_range(1.25, 1.5), wool)
 
 
 func _grazer(z: float, lateral: float, s: float, coat: Color) -> void:
@@ -5420,7 +5442,7 @@ func _landmark_wall() -> void:
 	var z0 := float(chunk_index) * LENGTH
 	var side: float = _landmark_side(z0)
 	var base_lat: float = side * _rng.randf_range(88.0, 132.0)
-	var stone := Color("8a8478").darkened(0.08)
+	var stone := Color("7b786b").darkened(0.08)
 	var cap := stone.lightened(0.12)
 	var built := false
 	for i in 8:
@@ -10310,28 +10332,29 @@ static func palette(t: int) -> Dictionary:
 				"glow": Color(2.4, 1.8, 1.2),
 			}
 		Env.COUNTRY:
-			# Ripe crop against pasture. The two ground tones were both olive and
-			# eleven points apart in value, which is a stain rather than a patchwork
-			# — and the patchwork is the entire reason to ride through farmland.
+			# Green pasture against deeper grazing. The old olive verge and meadow
+			# sat barely past G=R, so the warm day key pushed every hedge, verge and
+			# field to the same sandy yellow-green — the "small bush sandy biome".
+			# Everything vegetal now keeps G well ahead of R so it stays green under
+			# that key; the warm grade supplies the warmth, the albedo supplies green.
 			return {
 				"road": ROAD_TARMAC,
 				"stripe": Color("efe6bc"),
-				# Same fix as the forest shoulder: sandy grit under a golden key
-				# was the neon ribbon along the verge, not the fence on top of it.
-				"shoulder": Color("817b6b"),
-				"curb": Color("7c7468"),
-				"verge": Color("7d8a3c"),
-				# Two meadow greens, not corn against pasture. Golden standing corn
-				# under the warm grade covered whole valleys in what read as sand
-				# dunes, and the user wants English farmland, not a desert.
-				"ground": Color("6b8a3e"),  # hay meadow
-				"ground_alt": Color("4c6834"),  # grazed pasture
-				# Bleached post-and-rail oak, not fresh cream paint — the old tan
-				# was the brightest man-made object in every dusk frame.
-				"rail": Color("837f76"),
-				"prop_a": Color("425e32"),
+				# A thin cool gravel at the tarmac edge — sandy grit under a golden
+				# key was the tan ribbon the rider read as the verge itself.
+				"shoulder": Color("626a5f"),
+				"curb": Color("5f665c"),
+				"verge": Color("4f7a31"),  # lush verge grass
+				# Two pasture greens: meadow against grazed-down turf, far enough
+				# apart in value to read as patchwork without a gold in sight.
+				"ground": Color("5b8339"),  # open meadow
+				"ground_alt": Color("43642e"),  # grazed pasture
+				# Silvered post-and-rail timber: the pale bleached oak lit up cream
+				# under the day key and read as another sand stripe.
+				"rail": Color("73766d"),
+				"prop_a": Color("3d6031"),  # hedgerow green
 				"prop_b": Color("a74e32"),  # brick and rust
-				"prop_c": Color("d8b96a"),  # cut hay
+				"prop_c": Color("d8b96a"),  # cut hay — the bales keep the one straw note
 				"accent": Color("ead4a2"),
 				"glow": Color(2.6, 2.2, 1.5),
 			}
