@@ -23,8 +23,10 @@ uniform float band_fade = 260.0;
 // front, so the ground breathes even between fronts.
 uniform float drift_strength : hint_range(0.0, 0.3) = 0.09;
 // The bright side of a band is sunlight arriving, not the field going pale —
-// so it warms as it brightens, the way a gust of sun does over corn.
-uniform vec3 band_warm : source_color = vec3(1.07, 1.03, 0.92);
+// so it warms as it brightens, the way a gust of sun does over corn. Kept
+// gentle: under the warm day key any stronger blue loss reads as sand on the
+// verge scarps rather than as sun moving over grass.
+uniform vec3 band_warm : source_color = vec3(1.045, 1.02, 0.95);
 // Pasture is never one colour: dry patches, late grass, stands of thistle all
 // sit a few percent off the field's mean at the tens-of-metres scale. This is
 // that mottle — slow noise, mostly luminance with a small lean toward hay —
@@ -90,7 +92,9 @@ void fragment() {
 	albedo *= 1.0 + (mottle - 0.5) * 2.0 * mottle_strength;
 	// Where the noise runs high the grass dries toward hay — hue, not just
 	// value, so the patches read as different ground and not as a shadow map.
-	albedo *= mix(vec3(1.0), vec3(1.10, 1.02, 0.80), smoothstep(0.60, 0.92, mottle) * mottle_strength * 3.2);
+	// The hay lean used to crush blue by a fifth; on top of the warm key and
+	// the gust tint it pushed whole scarps to pink. Straw, not sand.
+	albedo *= mix(vec3(1.0), vec3(1.06, 1.015, 0.88), smoothstep(0.60, 0.92, mottle) * mottle_strength * 3.2);
 	ALBEDO = albedo;
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;

@@ -1377,10 +1377,14 @@ func _ground_color(lateral: float, z: float) -> Color:
 		var shade: float = smoothstep(HALF_WIDTH + 14.0, HALF_WIDTH + 46.0, absf(lateral))
 		color = color.lerp(color.darkened(0.32), shade)
 	# Near the carriageway lean toward verge green so the soft shoulder meets
-	# the hard curb without a painted seam.
+	# the hard curb without a painted seam. But verge is a yellow grass and the
+	# first ground band is a sun-facing scarp: under the warm key it rendered as
+	# a pink-gold sand apron beside the road. Leaning toward the deeper prop
+	# green — and shading the scarp a touch — keeps the seam reading as meadow.
 	var near: float = 1.0 - smoothstep(HALF_WIDTH + 2.0, HALF_WIDTH + 18.0, absf(lateral))
 	if near > 0.0:
-		color = color.lerp(_pal["verge"] as Color, near * 0.35)
+		var near_grass: Color = (_pal["verge"] as Color).lerp(_pal["prop_a"] as Color, 0.55)
+		color = color.lerp(near_grass, near * 0.5).darkened(near * 0.07)
 	if _on_spur:
 		color = color.lerp(_embankment_color(lateral, z), _embankment_mix(lateral, z))
 		color = color.lerp(_deck_color(z, lateral), _deck_mix(z, lateral))
@@ -1394,6 +1398,14 @@ func _ground_color(lateral: float, z: float) -> Color:
 	return color
 
 
+func _curb_edge_color() -> Color:
+	## The narrow shelf between tarmac and verge. The palette's pale concrete
+	## reads as poured kerb in the city, but on rural roads this strip is dirt
+	## and gravel — darker, and leaning a little toward the verge's green so the
+	## surface sequence is tarmac, grit, grass rather than tarmac, beach, grass.
+	return (_pal["curb"] as Color).lerp(_pal["prop_a"] as Color, 0.72).darkened(0.12)
+
+
 func _shoulder_color(lateral: float, z: float, band: String) -> Color:
 	## Soft verge / near-ground colour. Gravel grain on the curb lip, grass further
 	## out — so the strip between tarmac and guardrail is never a flat slab.
@@ -1403,7 +1415,11 @@ func _shoulder_color(lateral: float, z: float, band: String) -> Color:
 	var gravel: Color = (_pal["shoulder"] as Color).darkened(0.08 + grain * 0.1)
 	var grass: Color = (_pal["verge"] as Color).lerp(_pal["prop_a"] as Color, grain * 0.35)
 	var out: float = absf(lateral) - HALF_WIDTH
-	var t: float = smoothstep(0.2, 3.2, out)
+	# The verge band is a single quad: its two edge colours interpolate across
+	# all 3.1 m, so the blend has to finish before the band's inner edge (0.7 m)
+	# or gravel bleeds pink across the whole strip. The 0.7 m curb top already
+	# carries the gravel lip.
+	var t: float = smoothstep(0.05, 0.8, out)
 	var color: Color = gravel.lerp(grass, t)
 	if _on_spur:
 		color = color.lerp(_deck_color(z, lateral), _deck_mix(z, lateral) * 0.85)
@@ -1436,13 +1452,14 @@ func _embankment_color(lateral: float, z: float) -> Color:
 			return Color("565a52").lerp(Color("4a5248"), grain * 0.5)
 		Env.FOREST:
 			# 5a5848 lit to a golden scarp beside the spur; cooler keeps it on
-			# the moss side of the cut bank.
-			return Color("4c5147").lerp(Color("3e4a38"), grain * 0.4)
+			# the moss side of the cut bank. 4c5147 still warmed to bare dirt
+			# where the bank catches the key — a moss-dark olive survives it.
+			return Color("3f4a35").lerp(Color("33402c"), grain * 0.4)
 		Env.COUNTRY:
 			# Down from 9a7e4c twice now: at this brightness any warm albedo
 			# goes gold under the key, and the whole outer bank read as sand.
-			# 4f5444 holds to olive earth.
-			return Color("4f5444").lerp(Color("606848"), grain * 0.45)
+			# Grassed-over bank greens now, darker toward the cut.
+			return Color("44522f").lerp(Color("4d5c33"), grain * 0.45)
 	return (_pal["shoulder"] as Color).darkened(0.1 + grain * 0.08)
 
 
@@ -1554,9 +1571,10 @@ func _face_base_color() -> Color:
 		Env.FOREST:
 			return Color("857f6c")
 	# a39a80 rendered as orange clay — the sunlit bank face ringing the lake was
-	# the sand strip's biggest offender. Under the warm key only a near-neutral
-	# grey lands as soil-and-stone instead of ochre.
-	return Color("7d7c72")
+	# the sand strip's biggest offender. Neutral 7d7c72 still went ochre on the
+	# bright hay ground under the warm key — the base has to start green for the
+	# blend to land as a grassed bank instead of a sandstone one.
+	return Color("5f6b52")
 
 
 func _deck_mix(z: float, lateral: float) -> float:
@@ -1610,17 +1628,17 @@ func _terrace_color() -> Color:
 
 
 func _deck_color(z: float, lateral: float) -> Color:
-	## Compacted grey gravel, the same on every theme. The grain is long and
-	## shallow on purpose: at a couple of metres of wavelength it read as damage
-	## to the road rather than as texture on the ground beside it.
+	## Worn grass at the road's edge, the same on every theme. The grain is long
+	## and shallow on purpose: at a couple of metres of wavelength it read as
+	## damage to the road rather than as texture on the ground beside it.
 	var grain: float = 0.5 + 0.5 * sin(lateral * 0.11 + z * 0.055) * sin(lateral * 0.043 - z * 0.026)
-	# Dark enough to sit under the view rather than in front of it: this surfacing
-	# is the nearest thing to a parked rider and fills the bottom of the frame, so
-	# at anything lighter it is the brightest object in a picture of a lake.
-	# No longer the palette shoulder: even a neutral grey warms to tan under this
-	# key, and the strip beside the spur tarmac read as a band of sand. A cool
-	# dark base lands as the grey of compacted millings instead.
-	return Color("42474e").darkened(0.04 + grain * 0.10)
+	# Grey gravel kept arriving as sand: every neutral tried still renders tan
+	# under the warm key, and a tan strip beside a country lane is beach, not
+	# verge. Olive went the same way — the key doubles red against green, so a
+	# mid olive lights up gold. The deep prop green is what the verge grass
+	# already renders as beside it, so the strip lands as a close-cropped grass
+	# edge and cannot read as sand at any temperature.
+	return (_pal["verge"] as Color).lerp(_pal["prop_a"] as Color, 0.62 + grain * 0.28).darkened(0.10 + grain * 0.08)
 
 
 func _shore_mix(z: float, lateral: float) -> float:
@@ -1802,6 +1820,13 @@ func _build_ribbon_rows(
 					)
 				else:
 					var band_color: Color = _pal[band[4]]
+					if band[4] == "curb":
+						# The curb top is a flat 0.7 m shelf: at handlebar height it
+						# foreshortens into a broad strip beside the tarmac, and the
+						# pale concrete tone kept rendering as sand under the warm
+						# key. A dirt-and-gravel edge, part-way to the verge green,
+						# is what a country road actually grows along its lip.
+						band_color = _curb_edge_color()
 					if _on_spur:
 						# Curb and verge bands turn into made ground where the spur
 						# road crosses the carriageway's profile at a junction.
@@ -5622,9 +5647,16 @@ func _build_spur_barrier(hard: LowPoly, z0: float) -> void:
 		var a_foot := _p(za, la, -foot_a)
 		var b_foot := _p(zb, lb, -foot_b)
 		var out: Vector3 = (_p(za, la + 1.0, -head_a) - a_top).normalized() * THICK
-		hard.add_quad(a_foot - out, b_foot - out, b_top - out, a_top - out, segment_stone.lightened(0.1))
-		hard.add_quad(b_foot + out, a_foot + out, a_top + out, b_top + out, segment_stone.darkened(0.14))
-		hard.add_quad(a_top - out, b_top - out, b_top + out, a_top + out, segment_stone)
+		# The road-side face is a waist-high band at handlebar height — it
+		# foreshortens into a broad field, and any warm stone tone on it reads
+		# as a sand apron running the length of the climb. Painting the side
+		# faces with the bank's own mossy cut colour makes them read as the
+		# shaded grassed bank the wall stands on; only the pale coping carries
+		# the drystone read now.
+		var face_dark: Color = _embankment_color(la, za).lerp(Color("20301f"), 0.72)
+		hard.add_quad(a_foot - out, b_foot - out, b_top - out, a_top - out, face_dark)
+		hard.add_quad(b_foot + out, a_foot + out, a_top + out, b_top + out, face_dark)
+		hard.add_quad(a_top - out, b_top - out, b_top + out, a_top + out, segment_stone.lerp(Color("5a6058"), 0.5))
 
 
 func _spur_span(z: float) -> Vector2:
