@@ -2074,7 +2074,7 @@ func _build_markings(b: LowPoly, z0: float) -> void:
 				_p(za, lx + 0.11, -LIFT),
 				_p(zb, lx + 0.11, -LIFT),
 				_p(zb, lx - 0.11, -LIFT),
-				stripe
+				_worn_stripe(stripe, za)
 			)
 
 	# Dashed lane dividers. Phase comes from world z, so dashes run unbroken
@@ -2084,6 +2084,7 @@ func _build_markings(b: LowPoly, z0: float) -> void:
 	var z := z0
 	while z < z0 + LENGTH - 0.001:
 		if fposmod(z + dz * 0.5, DASH_PERIOD) < DASH_ON:
+			var worn := _worn_stripe(stripe, z + dz * 0.5)
 			for lane in range(1, lanes):
 				var lx: float = (_path.lane_x(lane - 1) + _path.lane_x(lane)) * 0.5
 				b.add_quad(
@@ -2091,9 +2092,19 @@ func _build_markings(b: LowPoly, z0: float) -> void:
 					_p(z, lx + 0.09, -LIFT),
 					_p(z + dz, lx + 0.09, -LIFT),
 					_p(z + dz, lx - 0.09, -LIFT),
-					stripe
+					worn
 				)
 		z += dz
+
+
+func _worn_stripe(stripe: Color, z: float) -> Color:
+	## Paint wears in stretches, not per metre — sun and plough take it off in
+	## runs of tens of metres, and a per-quad speckle would read as noise rather
+	## than age. Two slow overlapping sines give that drift; the swing stays
+	## small enough that the freshest paint still reads as one line with the
+	## faded runs.
+	var wear := 0.90 + 0.07 * sin(z * 0.109 + 3.1) * sin(z * 0.031 + 1.4)
+	return Color(stripe.r * wear, stripe.g * wear, stripe.b * wear)
 
 
 # ------------------------------------------------------------------ prop API

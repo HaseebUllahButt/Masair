@@ -341,7 +341,7 @@ const MOODS := {
 		# Moonlit surfaces stay below daylight. The former strong fill made the
 		# pale terrace brighter at night and kept the woodland saturated green.
 		"light_color": Color("9ec8de"),
-		"light_energy": 0.55,
+		"light_energy": 0.68,
 		"fill_color": Color("4d6d9a"),
 		"fill_energy": 0.35,
 		"ambient": 0.36,
@@ -592,11 +592,15 @@ func _build_environment() -> void:
 	# shading and the fog carry the picture, which they were already doing.
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-	sun.directional_shadow_max_distance = 100.0
+	# 80 m, not 100: the ortho width is what the map's texels span, so a tighter
+	# box is a sharper edge on every crown and post it holds — ~25 texels to the
+	# metre at 2048. Past it the authored face shading and fog were already
+	# carrying the picture.
+	sun.directional_shadow_max_distance = 80.0
 	sun.directional_shadow_pancake_size = 90.0
 	sun.shadow_bias = 0.05
 	sun.shadow_normal_bias = 1.2
-	sun.shadow_opacity = 0.82
+	sun.shadow_opacity = 0.88
 	sun.shadow_blur = 1.5
 
 	_build_fill_light()
@@ -1080,6 +1084,11 @@ func _apply_lighting() -> void:
 	var road_mat := LowPoly.road_material()
 	road_mat.set_shader_parameter("tarmac_tint", mood["road_tint"])
 	road_mat.set_shader_parameter("sheen_strength", mood["road_sheen"])
+	# The shaders' own aerial fade (thin fog would never reach the mid-ground):
+	# both take the mood's air colour so the woods and the pasture cool toward
+	# the same sky that the engine fog converges the far distance to.
+	LowPoly.foliage_material().set_shader_parameter("aerial_tint", mood["fog_color"])
+	LowPoly.field_material().set_shader_parameter("aerial_tint", mood["fog_color"])
 	var horizon := get_node_or_null("HorizonMountains")
 	if horizon and horizon.has_method("apply_mood"):
 		horizon.call("apply_mood", mood)

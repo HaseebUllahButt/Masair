@@ -830,9 +830,9 @@ func set_night_lighting(darkness: float) -> void:
 	if _headlight == null:
 		return
 	var t: float = pow(clampf(darkness, 0.0, 1.0), 0.55)
-	_headlight.light_energy = lerpf(0.0, 4.6, t)
-	_headlight.spot_range = lerpf(26.0, 60.0, t)
-	_headlight.spot_angle = lerpf(20.0, 31.0, t)
+	_headlight.light_energy = lerpf(0.0, 5.4, t)
+	_headlight.spot_range = lerpf(26.0, 68.0, t)
+	_headlight.spot_angle = lerpf(20.0, 33.0, t)
 	_headlight.light_color = Color(1.0, 0.90, 0.72).lerp(Color(1.0, 0.95, 0.86), t)
 
 

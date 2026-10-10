@@ -27,7 +27,7 @@ uniform float leaf_glow_strength : hint_range(0.0, 2.0) = 0.80;
 // dark and the top catches sky for the same reason every time, so it is painted
 // from height in the mesh's own space: crowns and conifers stand on Y=0 and
 // reach ~1, blobs are centred on it.
-uniform float crown_depth : hint_range(0.0, 1.0) = 0.42;
+uniform float crown_depth : hint_range(0.0, 1.0) = 0.48;
 // Per-tree value drift. A thousand instances of one hex colour is the mark of a
 // procedural forest; a few percent either way makes it a wood.
 uniform float instance_drift : hint_range(0.0, 0.3) = 0.12;
@@ -58,15 +58,30 @@ uniform float leaf_floor : hint_range(0.0, 0.1) = 0.072;
 // distance the geometry's own movement resolves at.
 uniform float gust_sheen : hint_range(0.0, 0.5) = 0.22;
 
+// Mid-ground aerial perspective. The engine fog is deliberately thin — an
+// overlook's kilometres-long view has to stay clear — but that leaves the
+// 200–600 m band of trees at full chroma, which is the flat wall a roadside
+// wood used to read as. This fades only foliage, and only as far as the first
+// ridge: luminance is held so crowns keep their lit/shaded modelling, while
+// chroma walks toward the mood's air colour (pushed to aerial_tint each mood
+// change — day sage, dusk mauve, night navy) the way real air steals colour
+// before it steals value.
+uniform float aerial_strength : hint_range(0.0, 1.0) = 0.55;
+uniform float aerial_near = 150.0;
+uniform float aerial_far = 580.0;
+uniform vec3 aerial_tint : source_color = vec3(0.61, 0.66, 0.72);
+
 varying float crown_h;
 varying float drift;
 varying float drift_hue;
 varying float gust_now;
+varying float view_dist;
 
 void vertex() {
 	// Instance origin in world space: the per-tree phase offset and the point
 	// the gust field is sampled at.
 	vec3 origin = (MODEL_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+	view_dist = distance(origin, CAMERA_POSITION_WORLD);
 	float gust = wind_gust(origin.xz, TIME);
 	gust_now = gust;
 	// Height above the instance origin, so the sway hinges at the base.
@@ -117,7 +132,7 @@ void fragment() {
 	// cool, shadowed skirts under a warm sunlit top. It is the same warm/cool
 	// split the key and fill put on everything else, pre-baked because foliage
 	// has no shadow map to find it in.
-	albedo *= mix(vec3(0.90, 0.97, 1.09), vec3(1.09, 1.05, 0.86), smoothstep(0.08, 0.85, crown_h));
+	albedo *= mix(vec3(0.87, 0.96, 1.12), vec3(1.12, 1.06, 0.82), smoothstep(0.08, 0.85, crown_h));
 	// Same tree, different green. Cool spruce-blue one way, warm new-leaf the
 	// other — kept narrow enough that every tint still reads as foliage.
 	vec3 hue_walk = mix(vec3(0.94, 1.00, 1.10), vec3(1.12, 1.01, 0.83), drift_hue + 0.5);
@@ -126,6 +141,17 @@ void fragment() {
 	// the same field that is bending the plant. Weighted toward the crown top,
 	// where the leaves actually turn over.
 	albedo *= 1.0 + (gust_now - 0.5) * gust_sheen * (0.5 + 0.5 * crown_h);
+	// Aerial depth: held to luminance, so a distant crown keeps its shaded side
+	// but loses its green — the difference between a wood reading as layered
+	// distance and one reading as a pasted cut-out. At night aerial_tint is
+	// navy, so the same line darkens instead of washing.
+	float airy = smoothstep(aerial_near, aerial_far, view_dist) * aerial_strength;
+	if (airy > 0.001) {
+		float lum = max(dot(albedo, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
+		float tint_lum = max(dot(aerial_tint, vec3(0.2126, 0.7152, 0.0722)), 1e-3);
+		vec3 aired = aerial_tint * (lum / tint_lum);
+		albedo = mix(albedo, mix(vec3(lum), aired, 0.65), airy);
+	}
 	// Keep a cool canopy tint, but let the environment and wrapped light
 	// illuminate it. Self-emission made the trees glow green after dark.
 	ALBEDO = albedo * mix(vec3(1.0), canopy_sky, canopy_sky_strength * 0.2);

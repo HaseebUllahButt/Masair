@@ -25,6 +25,18 @@ uniform float track_width = 0.70;
 uniform float track_darkening : hint_range(0.0, 1.0) = 0.08;
 uniform float base_roughness : hint_range(0.0, 1.0) = 0.85;
 uniform float grain_strength : hint_range(0.0, 1.0) = 0.045;
+// The lane centre carries a drip line of oil and tyre dust — always darker,
+// never a painted stripe, so its strength breathes along its length and it
+// dies out across patches and the verge.
+uniform float oil_strength : hint_range(0.0, 1.0) = 0.13;
+// Resurfacing scars: broad, newer-asphalt rectangles a shade darker than the
+// lane around them. Kept rare and quiet — two or three per hundred metres,
+// not a chequerboard.
+uniform float patch_strength : hint_range(0.0, 1.0) = 0.13;
+// The kerb line: grime where the verge sheds over the edge plus the contact
+// shadow the verge itself throws. It is what seats the ribbon into the land
+// instead of floating on it.
+uniform float edge_line_strength : hint_range(0.0, 1.0) = 0.12;
 // 0 dry, 1 in the middle of a squall. Driven from the weather in main.gd.
 //
 // Wet tarmac is the one case where the polished wheel tracks are allowed to be
@@ -99,6 +111,23 @@ void fragment() {
 	float edge_grime = smoothstep(half_width - 2.4, half_width - 0.2, abs(lateral))
 		* (0.55 + 0.45 * vnoise(vec2(along * 0.045, lateral * 0.5)));
 
+	// Lane-centre drip line: a soft band ~0.8 m wide whose density wanders with
+	// a slow noise, and which thins where the surface was relaid.
+	float oil_noise = 0.35 + 0.65 * vnoise(vec2(along * 0.014, lateral * 1.6 + 9.1));
+	float oil = (1.0 - smoothstep(0.0, 0.42, lane_phase)) * oil_noise;
+
+	// Resurfacing patches: long low-frequency cells stretched along the road so
+	// each one reads as a few metres of newer surface, not noise. Rare — most
+	// of the road keeps one pour.
+	float patch_cell = vnoise(vec2(lateral * 0.30, along * 0.011));
+	float patch = smoothstep(0.68, 0.85, patch_cell);
+
+	// Kerb line: a tighter, stronger band than the broad grime — the last half
+	// metre before the verge, broken by slow noise so it reads as weathering
+	// rather than a painted edge stripe.
+	float edge_line = smoothstep(half_width - 0.72, half_width - 0.22, abs(lateral))
+		* (0.60 + 0.40 * vnoise(vec2(along * 0.031, lateral * 2.3 + 4.7)));
+
 	// Water darkens tarmac and fills the ruts first, so the tracks go from
 	// slightly darker than the lane to a great deal darker.
 	float soaked = wet * (0.55 + track * 0.45);
@@ -110,6 +139,9 @@ void fragment() {
 		* (1.0 + grain * grain_strength * (1.0 - wet * 0.7))
 		* (1.0 + age * 0.05)
 		* mix(vec3(1.0), vec3(0.94, 0.95, 0.97), edge_grime * 0.85)
+		* (1.0 - oil * oil_strength)
+		* (1.0 - patch * patch_strength)
+		* (1.0 - edge_line * edge_line_strength)
 		* (1.0 - track * track_darkening)
 		* (1.0 - soaked * 0.55);
 	METALLIC = 0.0;
