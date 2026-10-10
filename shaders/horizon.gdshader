@@ -353,31 +353,34 @@ void fragment() {
 	}
 	float side = 1.0 - smoothstep(0.12, 0.78, ahead);
 	col = mix(col, air, side * 0.0);
-	// Granite is never blue-dominant: even in shade a rock face reads grey or
-	// grey-green, and the channel that leads is green, not blue. Hard-capping
-	// blue at the green channel's level is the guarantee the near and mid
-	// rings cannot go ultramarine no matter what the LUT does downstream —
-	// measured: comp-off input at B/R ~1.5 still returned screen B/R ~1.8.
-	// The far bands keep real headroom: a kilometre of air genuinely does put
-	// blue over a ridge, so the cap opens up with haze and only the back
-	// ranges get to keep their aerial veil uncut. Day only — dusk's rose and
-	// night's moonlit faces take the same uniform path and must not be
-	// touched.
-	float bcap = mix(1.02, 1.38, smoothstep(0.42, 0.70, haze_v));
-	col.b = mix(col.b, min(col.b, col.g * bcap), day_gate);
 	// Grade compensation, far bands only. The film grade lifts red ~30% and
 	// holds blue down through the whole midtone band — a neutral 0.45 face
 	// comes back as (0.80,0.72,0.53) — so the distant ranges still arrive a
-	// touch blue to survive that warp and render as the stepped dusty-slate
-	// aerial the reviewer graded right. Near and mid need none: their rock is
-	// grey on the way in, and any push here is what cartoon-blued them.
-	// Weighted to the mids — the deep shades are already cooled by the
-	// grade's lifted lavender toe and need no help, and a bright cap under it
-	// stays sunlit snow. The forest band keeps most of its green.
+	// touch blue to survive that warp and render as a dusty slate aerial.
+	// Near and mid need none: their rock is grey on the way in, and any push
+	// here is what cartoon-blued them. Weighted to the mids — the deep shades
+	// are already cooled by the grade's lifted lavender toe and need no help,
+	// and a bright cap under it stays sunlit snow. The forest band keeps most
+	// of its green.
 	float cl = dot(col, vec3(0.2126, 0.7152, 0.0722));
 	float cw = smoothstep(0.10, 0.50, cl) * (1.0 - forest * 0.7)
 		* mix(1.0, smoothstep(0.48, 0.68, haze_v), day_gate);
-	vec3 compv = mix(vec3(0.85, 0.97, 1.38), vec3(0.92, 0.99, 1.13), day_gate);
-	vec3 comp = mix(vec3(1.0), compv, cw);
-	ALBEDO = col * comp;
+	vec3 compv = mix(vec3(0.85, 0.97, 1.38), vec3(0.95, 0.995, 1.07), day_gate);
+	col *= mix(vec3(1.0), compv, cw);
+	// Granite is never blue-dominant: even in shade a rock face reads grey or
+	// grey-green, and the channel that leads is green, not blue. Capping blue
+	// at the green channel's level is the guarantee that no band can go
+	// ultramarine or cobalt no matter what the LUT does downstream — GPU
+	// captures showed the far ranges at screen B/R ~2.5+. The cap opens
+	// gently with haze: the aerial read on the farthest ring is a dusty
+	// blue-grey, earned mostly by the value ladder (far = lighter) rather
+	// than saturation. Note the cap is on green, not red — the grade crushes
+	// unsaturated mids toward olive, so clamping blue at the red channel
+	// sends the whole skyline to grass. The cap runs last so the
+	// compensation cannot re-saturate a clamped face. Day only — dusk's rose
+	// and night's moonlit faces take the same uniform path and must not be
+	// touched.
+	float bcap = mix(1.02, 1.08, smoothstep(0.42, 0.72, haze_v));
+	col.b = mix(col.b, min(col.b, col.g * bcap), day_gate);
+	ALBEDO = col;
 }
