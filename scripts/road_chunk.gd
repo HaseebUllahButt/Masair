@@ -2013,8 +2013,12 @@ func _face_base_color() -> Color:
 	# a39a80 rendered as orange clay — the sunlit bank face ringing the lake was
 	# the sand strip's biggest offender. Neutral 7d7c72 still went ochre on the
 	# bright hay ground under the warm key — the base has to start green for the
-	# blend to land as a grassed bank instead of a sandstone one.
-	return Color("5f6b52")
+	# blend to land as a grassed bank instead of a sandstone one. The key's red
+	# gain is roughly double its green, so killing the tan read is a hue job,
+	# not a value job: keep the luminance, put G well ahead of R, and the lit
+	# panels land as grey-olive stone instead of straw. 45574a tried to win on
+	# darkness and read as a black slab.
+	return Color("4a6350")
 
 
 func _deck_mix(z: float, lateral: float) -> float:
@@ -8034,10 +8038,13 @@ func _water_shade(surface: Color, out: float, z: float) -> Color:
 	## the only distance cue the surface has of its own.
 	var deep: float = smoothstep(RoadPathGD.LAKE_NEAR - 30.0, RoadPathGD.LAKE_NEAR + 220.0, out)
 	var color := surface.lightened(0.16).lerp(surface.darkened(0.14), deep)
-	# Waterline work on both shores: a thin lit rim where the sheet meets the
-	# land keeps the edge readable, and a darker shallow apron just inside it
-	# gives the grazing view a band of water-body before the mirror takes over —
-	# without it the far half of the lake lay down as one pale plane.
+	# Waterline work: a thin lit rim where the sheet meets the far bank keeps
+	# the seated edge readable, and a darker shallow apron inside each shore
+	# gives the grazing view a band of water-body before the mirror takes over.
+	# The near shore gets no rim — the cells run ~60 m across, so one corner
+	# inside the band lit a whole quad into the pale plate the across frames
+	# kept catching. There the waterline is drawn by the terrain meeting the
+	# water, and the shallow band carries the tone.
 	var near: float = float(_path.viewpoint_near_shore(z))
 	var far: float = float(_path.viewpoint_far_shore(z, _vp_centre))
 	var shallow: float = (
@@ -8048,15 +8055,10 @@ func _water_shade(surface: Color, out: float, z: float) -> Color:
 		smoothstep(far - 90.0, far - 44.0, out) * (1.0 - smoothstep(far - 12.0, far - 4.0, out))
 	)
 	color = color.lerp(surface.darkened(0.26), minf(shallow, 1.0) * 0.45)
-	# The rim is thin on purpose: the sheet's cells run ~60 m across, so a wide
-	# bright band lands on a whole quad corner and reads as a pale plate
-	# standing in the lake rather than as a waterline.
-	var rim: float = 1.0 - smoothstep(near + 0.5, near + 4.5, out)
-	rim = maxf(
-		rim,
+	var rim: float = (
 		smoothstep(far - 6.0, far - 2.5, out) * (1.0 - smoothstep(far - 1.5, far + 1.5, out))
 	)
-	color = color.lerp(surface.lightened(0.30), minf(rim, 1.0) * 0.2)
+	color = color.lerp(surface.lightened(0.30), rim * 0.2)
 	# Very broad horizontal variations catch the sky as painted planes — two
 	# wavelengths now, so the far half of the basin keeps a slow value drift at
 	# grazing angles instead of averaging to one flat tone. Still under six
