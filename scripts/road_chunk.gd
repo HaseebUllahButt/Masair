@@ -7978,6 +7978,11 @@ func _build_vista_landmarks() -> void:
 			_vista_cairn()
 		Env.COUNTRY:
 			_vista_shore_wall()
+	# The composed landmarks emit once, on the owner — one islet, one tower
+	# group, one crag and one stair per overlook, not one per lake chunk.
+	if _owns_platform:
+		_build_islet()
+		_build_spires()
 
 
 func _vista_cairn() -> void:
@@ -8040,6 +8045,214 @@ func _vista_shore_wall() -> void:
 	var marker := Node3D.new()
 	marker.name = "ViewpointWall"
 	add_child(marker)
+
+
+func _facet_tone(base: Color, amount: float) -> Color:
+	## Per-face brightness for hand-built facets: a little lighter on the lit
+	## side, darker opposite, so a flat-coloured prism still models like rock.
+	return base.lightened(amount) if amount >= 0.0 else base.darkened(-amount)
+
+
+func _build_islet() -> void:
+	## The Bled anchor — a small islet standing in open water, carrying a tiny
+	## pale beacon and a dark copse. A panorama gives the eye nowhere to land;
+	## an island in the middle of the lake is the thing a rider came an hour
+	## to see. One per overlook, off the view axis so it composes against the
+	## shore rather than parking dead centre in the shot.
+	var hand := 1.0 if posmod(
+		hash(Vector2i(int(round(_vp_centre)), int(_path.world_seed) ^ 0x51ed)), 2
+	) == 0 else -1.0
+	var z: float = _vp_centre + hand * 110.0
+	var near: float = float(_path.viewpoint_near_shore(z))
+	var far: float = float(_path.viewpoint_far_shore(z, _vp_centre))
+	if far - near < 110.0:
+		return
+	var out: float = lerpf(near + 34.0, far - 44.0, 0.5)
+	var lat: float = _vp_side * out
+	var wy: float = _vp_water_y - _origin.y
+	var rock := Color("414a3e")
+	var rock_wet := Color("2b332c")
+	var moss := Color("4a6239")
+	var plaster := Color("ddd3bd")
+	var slate := Color("37332f")
+	var leaf := Color("24402d")
+	var b := LowPoly.new()
+	const SIDES := 9
+	var rings := [
+		{"y": wy - 0.7, "r": 16.5, "c": rock_wet},
+		{"y": wy + 1.4, "r": 11.5, "c": rock},
+		{"y": wy + 2.9, "r": 6.6, "c": moss.darkened(0.14)},
+	]
+	var apex := _far_point(z, lat, wy + 4.1)
+	b.hull_origin = _far_point(z, lat, wy + 2.0)
+	for i in SIDES:
+		var a0: float = TAU * float(i) / SIDES + 0.17
+		var a1: float = TAU * float(i + 1) / SIDES + 0.17
+		var wob0 := 1.0 + 0.13 * sin(float(i) * 2.71 + _vp_phase)
+		var wob1 := 1.0 + 0.13 * sin(float(i + 1) * 2.71 + _vp_phase)
+		for k in rings.size() - 1:
+			var r_lo: Dictionary = rings[k]
+			var r_hi: Dictionary = rings[k + 1]
+			var shade := 0.14 * sin(float(i) * 1.7 + float(k) * 2.3)
+			b.add_hull_quad(
+				_far_point(
+					z + sin(a0) * float(r_lo["r"]) * wob0,
+					lat + cos(a0) * float(r_lo["r"]) * wob0,
+					float(r_lo["y"])
+				),
+				_far_point(
+					z + sin(a1) * float(r_lo["r"]) * wob1,
+					lat + cos(a1) * float(r_lo["r"]) * wob1,
+					float(r_lo["y"])
+				),
+				_far_point(
+					z + sin(a1) * float(r_hi["r"]) * wob1,
+					lat + cos(a1) * float(r_hi["r"]) * wob1,
+					float(r_hi["y"])
+				),
+				_far_point(
+					z + sin(a0) * float(r_hi["r"]) * wob0,
+					lat + cos(a0) * float(r_hi["r"]) * wob0,
+					float(r_hi["y"])
+				),
+				_facet_tone(r_hi["c"] as Color, shade)
+			)
+		var r_top: Dictionary = rings[rings.size() - 1]
+		b.add_hull_tri(
+			_far_point(
+				z + sin(a0) * float(r_top["r"]) * wob0,
+				lat + cos(a0) * float(r_top["r"]) * wob0,
+				float(r_top["y"])
+			),
+			apex,
+			_far_point(
+				z + sin(a1) * float(r_top["r"]) * wob1,
+				lat + cos(a1) * float(r_top["r"]) * wob1,
+				float(r_top["y"])
+			),
+			_facet_tone(moss, 0.12 * sin(float(i) * 2.9))
+		)
+		# A lit hem on the water around the shore — the shallow lap a real
+		# islet carries, drawn one ring out so it sits on the sheet, not in it.
+		b.hull_origin = apex - Vector3(0.0, 30.0, 0.0)
+		b.add_hull_quad(
+			_far_point(z + sin(a0) * 17.2 * wob0, lat + cos(a0) * 17.2 * wob0, wy + 0.05),
+			_far_point(z + sin(a1) * 17.2 * wob1, lat + cos(a1) * 17.2 * wob1, wy + 0.05),
+			_far_point(z + sin(a1) * 20.5 * wob1, lat + cos(a1) * 20.5 * wob1, wy + 0.05),
+			_far_point(z + sin(a0) * 20.5 * wob0, lat + cos(a0) * 20.5 * wob0, wy + 0.05),
+			_water_color().lightened(0.09)
+		)
+		b.hull_origin = _far_point(z, lat, wy + 2.0)
+	# The beacon: a squat nave with a hipped cap and a slim belfry — the Bled
+	# chapel silhouette. Pale plaster catches the key where bare rock would
+	# dissolve into the water tone at three hundred metres.
+	var top := wy + 4.0
+	var vb := _vista_basis
+	b.add_box(
+		Transform3D(vb, _far_point(z + 1.8, lat - _vp_side * 1.6, top + 1.7)),
+		Vector3(3.0, 3.4, 2.3),
+		plaster
+	)
+	b.add_cone(
+		Transform3D(vb.rotated(vb.y, PI * 0.25), _far_point(z + 1.8, lat - _vp_side * 1.6, top + 3.4)),
+		2.2, 1.5, 4, slate
+	)
+	b.add_box(
+		Transform3D(vb, _far_point(z + 1.0, lat - _vp_side * 3.0, top + 2.4)),
+		Vector3(1.0, 4.8, 1.0),
+		plaster.lightened(0.05)
+	)
+	b.add_cone(
+		Transform3D(vb.rotated(vb.y, PI * 0.25), _far_point(z + 1.0, lat - _vp_side * 3.0, top + 4.8)),
+		0.9, 1.2, 4, slate
+	)
+	# The copse: a handful of dark crowns holding the tower in the middle of
+	# the rock — bare it reads as a chimney, wooded it reads as a place.
+	for t in [[0.0, 2.8, 2.1, 6.8], [-3.4, -1.0, 1.8, 5.2], [3.0, -3.2, 2.4, 7.4], [-1.5, 4.2, 1.5, 4.4]]:
+		b.add_cone(
+			Transform3D(vb, _far_point(z + float(t[0]), lat + _vp_side * float(t[1]), top)),
+			float(t[2]), float(t[3]), 6, leaf.lerp(moss, _rng.randf() * 0.3)
+		)
+	var mesh: MeshInstance3D = b.commit_to(self, "ViewpointIslet")
+	if mesh:
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+func _build_spires() -> void:
+	## The Tre Cime signature — a group of jagged towers standing on the far
+	## ground between the shore and the painted skyline. Every range in the
+	## view is a smooth brow; a rock tooth is the silhouette a pass is famous
+	## for. Downland gets the same architecture squatter — a tor group, which
+	## is the same photograph at a different scale.
+	var b := LowPoly.new()
+	var specs := [
+		# z offset from the axis, out beyond the far shore, height, half-width, lean
+		[-150.0, 300.0, 118.0, 26.0, -7.0],
+		[-80.0, 350.0, 150.0, 30.0, 5.0],
+		[8.0, 290.0, 96.0, 22.0, 10.0],
+	]
+	if _vp_theme == Env.COUNTRY:
+		specs = [
+			[-150.0, 300.0, 62.0, 34.0, -5.0],
+			[-80.0, 350.0, 78.0, 40.0, 4.0],
+			[8.0, 290.0, 52.0, 28.0, 8.0],
+		]
+	var stone := Color("5d6a75")
+	var stone_hi := Color("8d99a4")
+	if _vp_theme == Env.COUNTRY:
+		stone = Color("646d5c")
+		stone_hi = Color("8a917e")
+	for s in specs:
+		var z: float = _vp_centre + float(s[0])
+		var out: float = float(_path.viewpoint_far_shore(z, _vp_centre)) + float(s[1])
+		# Root a few metres under the far ground so the tower grows out of the
+		# bank, not onto it.
+		var base_y: float = _far_ground_y(z, out) - 12.0 - _origin.y
+		_spire(b, z, _vp_side * out, base_y, float(s[2]), float(s[3]), float(s[4]), stone, stone_hi)
+	var mesh: MeshInstance3D = b.commit_to(self, "ViewpointSpires")
+	if mesh:
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mesh.visibility_range_end = 0.0
+
+
+func _spire(
+	b: LowPoly,
+	z: float,
+	lat: float,
+	base_y: float,
+	height: float,
+	half_w: float,
+	lean: float,
+	stone: Color,
+	stone_hi: Color
+) -> void:
+	## One rock tooth: a tapering five-sided prism whose apex drifts off the
+	## column, the way a dolomite tower never stands plumb. A pale cap band
+	## near the summit is the lit crest the eye finds first.
+	const SIDES := 5
+	const FRACS := [0.0, 0.34, 0.62, 0.86, 1.0]
+	const WID := [1.0, 0.62, 0.38, 0.20, 0.015]
+	var spin := _vp_phase * 0.7
+	b.hull_origin = _far_point(z, lat, base_y + height * 0.5)
+	for k in FRACS.size() - 1:
+		var f0: float = FRACS[k]
+		var f1: float = FRACS[k + 1]
+		var lean0 := lean * f0 * f0
+		var lean1 := lean * f1 * f1
+		for i in SIDES:
+			var a0: float = TAU * float(i) / SIDES + spin
+			var a1: float = TAU * float(i + 1) / SIDES + spin
+			var r0: float = half_w * WID[k]
+			var r1: float = half_w * WID[k + 1]
+			var cap: bool = k >= 2
+			var tone: float = 0.15 * sin(float(i) * 1.3 + 0.6) - 0.05 * float(k)
+			b.add_hull_quad(
+				_far_point(z + sin(a0) * r0 + lean0, lat + cos(a0) * r0, base_y + height * f0),
+				_far_point(z + sin(a1) * r0 + lean0, lat + cos(a1) * r0, base_y + height * f0),
+				_far_point(z + sin(a1) * r1 + lean1, lat + cos(a1) * r1, base_y + height * f1),
+				_far_point(z + sin(a0) * r1 + lean1, lat + cos(a0) * r1, base_y + height * f1),
+				_facet_tone(stone_hi if cap else stone, tone)
+			)
 
 
 func _water_color() -> Color:
