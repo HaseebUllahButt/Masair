@@ -7983,6 +7983,8 @@ func _build_vista_landmarks() -> void:
 	if _owns_platform:
 		_build_islet()
 		_build_spires()
+		_build_bastion()
+		_build_face_path()
 
 
 func _vista_cairn() -> void:
@@ -8253,6 +8255,154 @@ func _spire(
 				_far_point(z + sin(a0) * r1 + lean1, lat + cos(a0) * r1, base_y + height * f1),
 				_facet_tone(stone_hi if cap else stone, tone)
 			)
+
+
+func _build_bastion() -> void:
+	## The crag the terrace stands on. From across the water the belvedere's
+	## plinth met the face as a single thin course over a smooth dome — a
+	## shelf, not a place. Three stepped rock buttresses continue the masonry
+	## down the chord under the platform span, so the terrace reads as a
+	## bastion on bedrock the way Bled castle or Glacier Point does — the
+	## drop you can see is what makes the rail worth leaning on.
+	var pal := _face_scarp_palette()
+	var rock: Color = pal["rock_lo"]
+	var lip: Color = pal["lip"]
+	var b := LowPoly.new()
+	var half: float = RoadPathGD.PLATFORM_HALF_LENGTH
+	var placed := 0
+	for zoff in [-0.72, -0.34, 0.0, 0.36, 0.72]:
+		var z: float = _vp_centre + zoff * half
+		var prof := _face_profile(z)
+		if prof.is_empty() or not _face_is_face(prof):
+			continue
+		placed += 1
+		# Courses step out as they drop — the battered profile of a retaining
+		# crag, not a curtain. Each block is keyed to the drawn chord and sunk
+		# a third into it so the mass grows out of the face.
+		var f := 0.16
+		var step := 0
+		while f < 0.78 and step < 4:
+			var out: float = _profile_out(prof, f)
+			var chord := _face_chord_point(z, out)
+			if chord.y + _origin.y < _vp_water_y + 1.2:
+				break
+			var w := 8.5 - float(step) * 1.1
+			var h := 5.2 - float(step) * 0.5
+			var col := rock if step > 0 else rock.lightened(0.06)
+			var bx := Transform3D(
+				_vista_basis,
+				chord + _vista_basis.x * (-_vp_side * (w * 0.28)) + Vector3(0.0, -h * 0.18, 0.0)
+			)
+			b.add_box(bx, Vector3(w, h, 6.5 - float(step)), col.darkened(_rng.randf() * 0.08))
+			# A lip of the face's own turf over the course top — the crag stays
+			# geology, not dressed masonry.
+			b.add_box(
+				Transform3D(
+					_vista_basis,
+					chord + _vista_basis.x * (-_vp_side * (w * 0.10)) + Vector3(0.0, h * 0.42, 0.0)
+				),
+				Vector3(w * 0.72, 0.55, 5.6 - float(step)),
+				lip.darkened(0.08)
+			)
+			f += 0.17
+			step += 1
+		if step == 0:
+			continue
+	if placed == 0:
+		return
+	var mesh: MeshInstance3D = b.commit_to(self, "ViewpointBastion")
+	if mesh:
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+func _build_face_path() -> void:
+	## The way down — the Bled ninety-nine steps. A pale stair leaving the
+	## platform's far end and dropping the face to a plank jetty, with the
+	## little boat that says the water is something you can touch, not just
+	## look at. From the seat it is the scale cue the bare face never had;
+	## from across the water it is the line that says people come here.
+	var zs: Array[float] = []
+	for end in [1.0, -1.0]:
+		var z: float = _vp_centre + end * (RoadPathGD.PLATFORM_HALF_LENGTH + 15.0)
+		var prof := _face_profile(z)
+		if not prof.is_empty() and _face_is_face(prof) and _face_above_water(z, _profile_out(prof, 0.25), 2.0):
+			zs.append(z)
+			break
+	if zs.is_empty():
+		return
+	var z: float = zs[0]
+	var tread := Color("9a9078")
+	var timber := Color("54452f")
+	var b := LowPoly.new()
+	# The flight: alternate straight runs with a jog — the stair's own
+	# switchback, so the line zigzags twice on the way down instead of
+	# drawing one ruled diagonal.
+	var step_i := 0
+	var jog := 0.0
+	var jog_dir := 1.0
+	var f := 0.14
+	var last_out := 0.0
+	var prof := _face_profile(z)
+	while f < 0.96 and step_i < 44:
+		var out: float = _profile_out(prof, f)
+		var chord := _face_chord_point(z + jog, out)
+		if chord.y + _origin.y < _vp_water_y + 0.9:
+			break
+		last_out = out
+		var tread_basis := _vista_basis.rotated(_vista_basis.y, 0.25 * jog_dir)
+		b.add_box(
+			Transform3D(tread_basis, chord + Vector3(0.0, 0.10, 0.0)),
+			Vector3(0.85, 0.22, 1.9),
+			tread.darkened(_rng.randf() * 0.1)
+		)
+		# A slim post every fourth step — the balustrade tick that makes a row
+		# of pale dots read as a stair and not as scree.
+		if step_i % 4 == 0:
+			b.add_box(
+				Transform3D(
+					tread_basis,
+					chord + _vista_basis.x * (_vp_side * 1.1) + Vector3(0.0, 0.55, 0.0)
+				),
+				Vector3(0.16, 0.9, 0.16),
+				timber
+			)
+		step_i += 1
+		f += 0.022
+		jog += jog_dir * 0.55
+		if step_i % 9 == 0:
+			jog_dir = -jog_dir
+	# The jetty: a short plank over the shallows at the foot of the stair,
+	# and a flat-bottomed boat alongside — the pletna at the landing. Out
+	# past the face the point is placed on the vista frame directly, the
+	# same space the water sheet is drawn in.
+	var water_y: float = _vp_water_y - _origin.y
+	var jetty_out: float = last_out + 3.4
+	var jp := _far_point(z + jog, _vp_side * jetty_out, water_y + 0.35)
+	b.add_box(
+		Transform3D(_vista_basis, jp),
+		Vector3(5.6, 0.24, 1.9),
+		timber.lightened(0.10)
+	)
+	for off in [-2.4, 2.4]:
+		var post_p := _far_point(z + jog + off, _vp_side * jetty_out, water_y - 0.15)
+		b.add_box(Transform3D(_vista_basis, post_p), Vector3(0.22, 1.3, 0.22), timber.darkened(0.15))
+	# The boat: one flat hull and a thwart — three quads of silhouette at
+	# two hundred metres is a boat.
+	var boat_p := _far_point(z + jog + 1.2, _vp_side * (jetty_out + 2.6), water_y + 0.02)
+	var hull := Color("6a4f36")
+	b.add_box(
+		Transform3D(_vista_basis.rotated(_vista_basis.y, 0.5), boat_p),
+		Vector3(3.0, 0.5, 1.15),
+		hull
+	)
+	b.add_box(
+		Transform3D(_vista_basis.rotated(_vista_basis.y, 0.5), boat_p + Vector3(0.0, 0.3, 0.0)),
+		Vector3(2.2, 0.12, 0.9),
+		hull.darkened(0.25)
+	)
+	var mesh: MeshInstance3D = b.commit_to(self, "ViewpointPath")
+	if mesh:
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 
 func _water_color() -> Color:
