@@ -1,37 +1,33 @@
 extends Node3D
 ## Distant range that follows the rider's position but never their heading, so
-## it cannot be approached. Each layer is one continuous ridgeline built the way
-## the overlooks build theirs (`RoadChunk._range_sample`): the upper *envelope*
-## of many overlapping alpine tents — heroes, shoulders, foothills and spurs —
-## lofted as scree / mid-slope / crest / backslope.
+## it cannot be approached. Each layer wraps one *real* 360° skyline — a
+## horizon panorama raycast from DEM elevation data (`MtnProfiles`, see
+## `scripts/mtn_profiles.gd`) — lofted as scree / mid-slope / crest shelves.
 ##
 ## Two rules this file exists to obey, both learnt the hard way:
 ##
-## 1. **Envelope, never a sum, never a floor term.** Summed tents stack past the
-##    layer top and clamp flat where they overlap; a floor term fills the cols.
-##    Either one gives a mesa with paper fins glued to it.
-## 2. **Enough massifs to fill a lens.** The riding camera is 78° *vertical* on
-##    16:9, which is roughly 110° horizontal. Seven massifs around 360° puts two
-##    of them in that window and two tents in a window is a pair of pyramids, no
-##    matter how the tents themselves are shaped. Seventeen on the near ring puts
-##    five primaries plus their spurs in front of the rider.
+## 1. **Real skylines, never tents.** No arrangement of jittered tents reads
+##    as mountains — every attempt lands back on cones. A ridgeline raycast
+##    from real terrain carries what cannot be authored by hand: asymmetric
+##    massifs, cols at odd intervals, serrated arêtes, a hero peak that owns
+##    a sector. Each ring borrows a different valley's horizon so the layers
+##    stay independent ranges, and the ring seam inherits the panorama's own
+##    continuity.
+## 2. **Enough silhouette to fill a lens.** The riding camera is ~110°
+##    horizontal on 16:9. Real panoramas keep several named summits in that
+##    window at every heading; the profile carries 0.5° of arc per sample, so
+##    even the 128-segment far ring samples real serration, not noise.
 
 const RangeMaterial := preload("res://scripts/range_material.gd")
 const CLOUD_SHADER: Shader = preload("res://shaders/horizon_cloud.gdshader")
 const LowPoly := preload("res://scripts/low_poly.gd")
+const MtnProfiles := preload("res://scripts/mtn_profiles.gd")
 
 ## Riding camera far clip. Layers sit inside this. Far enough that a fourth
 ## range can rise behind the near foothills without being sliced by the lens.
 const CLIP_FAR := 2800.0
 const FOOT_Y := -160.0
 
-## Relative summit heights walked around the ring. Written out rather than
-## rolled so the composition is designed: hero, col, shoulder, foothill, hero.
-## Thirteen entries is prime against every massif count below, so the rhythm
-## never lines up with itself and no two sectors of the horizon are twins.
-const RHYTHM := [1.00, 0.48, 0.78, 0.52, 0.96, 0.46, 0.68, 0.54, 0.92, 0.50, 0.64, 0.56, 0.84]
-## Neighbours overlap just enough for a col, not enough to fill into a wall.
-const REACH := 1.02
 const GRIT_BLOCK := 8
 
 ## Four visible shelves are enough once the fragment shader owns the rock
@@ -46,7 +42,6 @@ const LAYERS := [
 		"radius": 1460.0,
 		"face": 360.0,
 		"high": 300.0,
-		"count": 17,
 		"segments": 256,
 		"haze": 0.05,
 		## No collar on the foothills. At fifteen hundred metres a puff sized
@@ -54,44 +49,43 @@ const LAYERS := [
 		## smeared across the nearest faces rather than as cloud.
 		"clouds": false,
 		"phase": 0.11,
-		"sharp": 1.46,
-		"beat": 0,
+		## Keswick fells: the nearest ring is a Lake District skyline —
+		## rolling tops, no horns.
+		"profile": "fells",
+		"floor": 0.20,
 	},
 	{
 		"radius": 1760.0,
 		"face": 320.0,
 		"high": 450.0,
-		"count": 15,
 		"segments": 208,
 		"haze": 0.24,
 		"clouds": true,
 		"phase": 0.47,
-		"sharp": 1.38,
-		"beat": 5,
+		"profile": "cortina",
+		"floor": 0.13,
 	},
 	{
 		"radius": 2080.0,
 		"face": 270.0,
 		"high": 650.0,
-		"count": 13,
 		"segments": 160,
 		"haze": 0.45,
 		"clouds": true,
 		"phase": 0.83,
-		"sharp": 1.32,
-		"beat": 9,
+		"profile": "banff",
+		"floor": 0.10,
 	},
 	{
 		"radius": 2430.0,
 		"face": 230.0,
 		"high": 900.0,
-		"count": 11,
 		"segments": 128,
 		"haze": 0.66,
 		"clouds": false,
 		"phase": 0.29,
-		"sharp": 1.24,
-		"beat": 3,
+		"profile": "chamonix",
+		"floor": 0.08,
 	},
 ]
 
@@ -151,7 +145,6 @@ func _follow_player() -> void:
 
 func _build_layer(index: int) -> void:
 	var layer: Dictionary = LAYERS[index]
-	var massifs: Array[Dictionary] = _plant_massifs(index, layer)
 	var segments := int(layer["segments"])
 	var high := float(layer["high"])
 	var haze := float(layer["haze"])
@@ -160,7 +153,7 @@ func _build_layer(index: int) -> void:
 	var samples: Array[Dictionary] = []
 	for s in segments:
 		var angle := TAU * float(s) / float(segments)
-		samples.append(_sample(angle, layer, massifs))
+		samples.append(_sample(angle, layer))
 	_smooth_front_normals(samples)
 	for s in segments:
 		var a: Dictionary = samples[s]
@@ -189,7 +182,7 @@ func _build_layer(index: int) -> void:
 	mesh.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	add_child(mesh)
 	if bool(layer["clouds"]):
-		_collect_peaks(layer, massifs, samples, segments)
+		_collect_peaks(layer, samples, segments)
 
 
 func _smooth_front_normals(samples: Array[Dictionary]) -> void:
@@ -220,121 +213,53 @@ func _smooth_front_normals(samples: Array[Dictionary]) -> void:
 			_front_normals[band[k]] = -n if n.dot(inward) < 0.0 else n
 
 
-func _plant_massifs(index: int, layer: Dictionary) -> Array[Dictionary]:
-	## The whole silhouette lives here. A primary every `spacing`, jittered off
-	## the grid; a companion horn beside the tall ones so no summit is a lone
-	## symmetric spike; and a spur pulled *inward* off each substantial massif
-	## so the crest has ridges running toward the rider rather than one clean
-	## tent outline. Half-widths are deliberately wider than the spacing: the
-	## tents are meant to overlap, because the col between two overlapping
-	## tents is what reads as a mountain pass.
-	var count := int(layer["count"])
-	var spacing := TAU / float(count)
-	var sharp := float(layer["sharp"])
-	var face := float(layer["face"])
-	var beat := int(layer["beat"])
-	var planted: Array[Dictionary] = []
-	for m in count:
-		var seed := index * 977 + m * 31
-		var centre: float = spacing * (float(m) + float(layer["phase"])) + (_hash(seed) - 0.5) * spacing * 0.34
-		var beat_h: float = float(RHYTHM[(m + beat) % RHYTHM.size()])
-		var peak: float = clampf(beat_h * (0.90 + 0.18 * _hash(seed + 3)), 0.34, 1.0)
-		## Above one, so the flanks are concave and the summit is a horn. Below
-		## one every tent was a rounded dome and the ring a row of sand dunes.
-		var shape: float = clampf(sharp * (0.88 + 0.20 * beat_h), 1.1, 1.7)
-		var steep_sign := 1.0 if _hash(seed + 5) > 0.5 else -1.0
-		planted.append({
-			"centre": centre,
-			"peak": peak,
-			"inner": spacing * REACH * (0.82 + 0.10 * _hash(seed + 6)),
-			"outer": spacing * REACH * (1.04 + 0.12 * _hash(seed + 8)),
-			"steep": steep_sign,
-			"sharp": shape,
-			"radial": (_hash(seed + 12) - 0.5) * face * 0.28,
-		})
-		if peak > 0.78:
-			planted.append({
-				"centre": centre + steep_sign * spacing * (0.22 + 0.08 * _hash(seed + 10)),
-				"peak": peak * (0.70 + 0.10 * _hash(seed + 11)),
-				"inner": spacing * 0.55,
-				"outer": spacing * 0.72,
-				"steep": -steep_sign,
-				"sharp": 1.30,
-				"radial": (_hash(seed + 13) - 0.5) * face * 0.16,
-			})
-		if peak > 0.62:
-			var side := -steep_sign if _hash(seed + 14) > 0.42 else steep_sign
-			planted.append({
-				"centre": centre + side * spacing * (0.32 + 0.12 * _hash(seed + 15)),
-				"peak": peak * (0.42 + 0.14 * _hash(seed + 16)),
-				"inner": spacing * (0.40 + 0.10 * _hash(seed + 17)),
-				"outer": spacing * (0.58 + 0.12 * _hash(seed + 18)),
-				"steep": side,
-				"sharp": 1.18,
-				"radial": -face * (0.10 + 0.10 * _hash(seed + 19)),
-			})
-	return planted
-
-
-func _sample(angle: float, layer: Dictionary, massifs: Array[Dictionary]) -> Dictionary:
+func _sample(angle: float, layer: Dictionary) -> Dictionary:
 	var radius := float(layer["radius"])
 	var face := float(layer["face"])
 	var high := float(layer["high"])
 	var phase := float(layer["phase"])
-	var crest := 0.0
-	var pull := 0.0
-	var weight := 0.0
-	for massif in massifs:
-		var delta := _wrap(angle - float(massif["centre"]))
-		var half: float = float(massif["inner"]) if delta * float(massif["steep"]) < 0.0 else float(massif["outer"])
-		var t: float = 1.0 - clampf(absf(delta) / maxf(half, 0.0001), 0.0, 1.0)
-		if t <= 0.0:
-			continue
-		var value: float = float(massif["peak"]) * _tent(t, float(massif["sharp"]))
-		crest = maxf(crest, value)
-		## Whichever tent is winning the envelope here also owns the radial
-		## offset. A fifth power picks the winner nearly outright but still
-		## crosses over smoothly, so a spur folds into its parent instead of
-		## tearing a step in the ridgeline.
-		var dominance: float = pow(value, 5.0)
-		pull += dominance * float(massif["radial"])
-		weight += dominance
-	if weight > 1e-6:
-		pull /= weight
-	else:
-		pull = 0.0
-	## Flank jag only. Scaled by crest alone every summit became a needle; by
-	## crest * (1 - crest) it lands on the slopes and leaves the tops and the
-	## cols where the composition put them. The amplitudes have to be generous
-	## even so — that weighting peaks at a quarter, so a tenth here is a couple
-	## of metres of relief and a ridge that runs dead straight from foot to
-	## apex, which is the tell that gave the last version away as folded paper.
-	## The two fast terms are the crest's own teeth: gendarmes and notches a few
-	## segments wide, so a ridge reads as broken rock against the sky rather
-	## than a smooth curve cut out of card.
-	var jag: float = (
-		0.24 * sin(angle * 11.0 + phase * 4.0)
-		+ 0.14 * sin(angle * 19.0 + phase * 9.0)
-		+ 0.08 * sin(angle * 31.0 + phase * 2.3)
-		+ 0.045 * absf(sin(angle * 47.0 + phase * 5.7))
+	## The skyline is a real panorama raycast from DEM data (mtn_profiles.gd):
+	## each layer wraps a different valley viewpoint's actual horizon — real
+	## cols, real asymmetric massifs, real serrated crests. Tent envelopes
+	## always read as cones no matter how they are jittered; a real ridgeline
+	## is a chain of named summits connected by arêtes, and this is what the
+	## eye has been missing all along.
+	var prof: Dictionary = MtnProfiles.ALL[String(layer["profile"])]
+	var data: Array = prof["profile"]
+	var n := data.size()
+	var t := (angle + float(layer.get("rot", 0.0))) / TAU * float(n)
+	var i0 := int(t) % n
+	var i1 := (i0 + 1) % n
+	var h_app := lerpf(float(data[i0]), float(data[i1]), t - floorf(t)) / 255.0
+	## Peak the profile a touch: real panoramas carry long mid-height plateau
+	## arcs (summit domes, tableland) that read as mesas under the flat loft,
+	## while the eye expects crests and cols. A mild gamma deepens the cols
+	## and keeps the hero arcs at full height.
+	h_app = pow(h_app, 1.08)
+	## A real valley has gaps — but a ring that falls to the flat horizon
+	## reads as a hole in the world, so each layer keeps its own minimum
+	## skyline: rolling on the near fells, a thin saw on the far heroes.
+	var body := clampf(maxf(h_app, float(layer.get("floor", 0.035))), 0.0, 1.0)
+	## Two teeth on top of the profile: a slow 15-degree wave so a real
+	## plateau crest (Mont Blanc's summit dome, a tableland rim) arrives as a
+	## serrated ridge rather than a draughted straight edge, and a fine
+	## gendarme tooth for the sparkle the 0.5-degree profile cannot carry.
+	var crest := clampf(
+		body + (
+			0.028 * sin(angle * 23.0 + phase * 3.1)
+			+ 0.045 * absf(sin(angle * 47.0 + phase * 5.7))
+		) * body,
+		0.0, 1.0
 	)
-	## The jagged skyline belongs to the skyline. Carry the smooth envelope
-	## separately and hang the slopes below off *that*: the fine relief on a
-	## crest does not repeat itself in the scree apron four hundred metres
-	## underneath it, and if it does — if every break up the face is the same
-	## curve scaled by the same number — then each angular column is a flat
-	## panel and the hillside is a pleated paper fan. That is the whole reason
-	## the last two attempts read as cardboard, and no amount of extra segments
-	## or per-facet tone fixes it, because it is the surface that is ruled.
-	var body := clampf(maxf(crest, 0.07), 0.0, 1.0)
-	crest = clampf(body + jag * body * (1.0 - body), 0.0, 1.0)
 	var height: float = high * crest
-	## Slow bows across whole sectors of the ring. Anything fast lives in the
-	## per-break terms below, where it can differ from one shelf to the next.
+	## Real skylines carry no depth, so the radial pull is synthesised: high
+	## crest advances toward the rider, low cols recede — the opposite of a
+	## ruled cylinder and the reason a chain reads as folded country rather
+	## than a round wall. Slow bows keep whole sectors breathing.
+	var pull := (body - 0.42) * face * 0.34
 	var fold: float = (
 		42.0 * sin(angle * 3.0 + phase * 2.2)
 		+ 22.0 * sin(angle * 7.0 + phase * 1.1)
-		+ body * 14.0 * sin(angle * 17.0 + phase * 3.1)
 	)
 	var out := Vector3(cos(angle), 0.0, sin(angle))
 	var r: float = radius + pull + fold
@@ -382,16 +307,6 @@ func _sample(angle: float, layer: Dictionary, massifs: Array[Dictionary]) -> Dic
 		"band": band,
 		"crest": band[last],
 	}
-
-
-func _tent(t: float, sharpness: float) -> float:
-	## Sharpness > 1 is alpine (concave flanks, a horn on top), < 1 is a round
-	## fell. Same curve the overlooks use.
-	return pow(t, sharpness)
-
-
-func _wrap(delta: float) -> float:
-	return fposmod(delta + PI, TAU) - PI
 
 
 func _loft_span(
@@ -518,27 +433,33 @@ func _facet(
 		vi += 1
 
 
-func _collect_peaks(
-	layer: Dictionary, massifs: Array[Dictionary], samples: Array[Dictionary], segments: int
-) -> void:
-	## Clouds hang off the summits that were actually planted, read back from
-	## the built ridgeline so the collar sits on the crest the mesh ended up
-	## with — radial pull, jag and all — instead of on the ideal circle.
-	for massif in massifs:
-		if float(massif["peak"]) < 0.72:
-			continue
-		var centre: float = fposmod(float(massif["centre"]), TAU)
-		var s: int = int(round(centre / TAU * float(segments))) % segments
+func _collect_peaks(layer: Dictionary, samples: Array[Dictionary], segments: int) -> void:
+	## Clouds hang off the summits the real skyline actually planted: scan the
+	## built ridgeline for local maxima and drop a collar on every summit that
+	## stands clear of its neighbours, read back from the mesh so the wisp
+	## sits on the crest it ended up with — radial pull, teeth and all.
+	var high := float(layer["high"])
+	for s in segments:
 		var at: Dictionary = samples[s]
 		var crest: Vector3 = at["crest"]
-		if crest.y < 120.0:
+		if crest.y < maxf(160.0, high * 0.45):
+			continue
+		var prev: Vector3 = samples[(s - 1 + segments) % segments]["crest"]
+		var next: Vector3 = samples[(s + 1) % segments]["crest"]
+		if crest.y < prev.y or crest.y <= next.y:
+			continue
+		## A summit, not a tooth: it has to still stand proud a dozen segments
+		## out either side, or every wave in the crest collects its own wisp.
+		var wide_a: Vector3 = samples[(s - 12 + segments) % segments]["crest"]
+		var wide_b: Vector3 = samples[(s + 12) % segments]["crest"]
+		if crest.y < maxf(wide_a.y, wide_b.y) + 6.0:
 			continue
 		_peaks.append({
 			"out": at["out"],
 			"radius": Vector3(crest.x, 0.0, crest.z).length(),
 			"height": crest.y,
 			"face": float(layer["face"]),
-			"phase": float(layer["phase"]) + centre,
+			"phase": float(layer["phase"]) + s,
 		})
 
 
