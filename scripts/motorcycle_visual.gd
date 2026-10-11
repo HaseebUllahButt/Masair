@@ -58,6 +58,13 @@ const ENGINE := Vector3(0.0, 0.42, 0.06)
 const SIDES := 18
 const DIAL_TOP_SPEED := 62.0
 const MAX_BAR_STEER := deg_to_rad(11.0)
+## Above town pace the bars rest counter-steered while a lean is held — this is
+## how a real bike holds a line — and a sharp input kicks them a whisker
+## further the wrong way first. Mirrors the gates in motorcycle.gd.
+const BAR_COUNTER_HOLD := 0.55
+const BAR_COUNTER_FLICK := 0.018
+const COUNTER_V0 := 13.0
+const COUNTER_V1 := 24.0
 
 var _bars: Node3D
 var _front: MeshInstance3D
@@ -112,7 +119,20 @@ func _process(delta: float) -> void:
 		_rear.rotation.x = _spin
 	var lean: float = _rider.lean if _rider and "lean" in _rider else 0.0
 	var steer := Input.get_axis("steer_left", "steer_right") if InputMap.has_action("steer_left") else 0.0
-	var target_bar_y := -lean * 0.15 + steer * MAX_BAR_STEER
+	# The bars show what the front tyre is doing, which at speed is the
+	# opposite of the corner: a held lean is a held push on the inside bar, and
+	# a flick kicks them visibly the wrong way for a beat.
+	var counter_gate := smoothstep(COUNTER_V0, COUNTER_V1, speed)
+	var counter: float = 0.0
+	if _rider:
+		var counter_raw: Variant = _rider.get("counter_steer")
+		if counter_raw is float:
+			counter = counter_raw
+	var target_bar_y := (
+		-lean * 0.15
+		+ steer * MAX_BAR_STEER * lerpf(1.0, -BAR_COUNTER_HOLD, counter_gate)
+		- counter * BAR_COUNTER_FLICK
+	)
 	_bars.rotation.y = lerpf(_bars.rotation.y, target_bar_y, 1.0 - exp(-12.0 * delta))
 	if _needles.is_empty():
 		return

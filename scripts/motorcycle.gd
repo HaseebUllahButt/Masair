@@ -5,11 +5,11 @@ extends Node3D
 ## gravity on grades. Terminal speed falls out of the balance instead of being a
 ## clamp, so the last 20 km/h take real effort.
 ##
-## Lateral: steering sets a *lean target*. The bike takes time to fall into the
-## lean, the lean produces sideways acceleration, and lateral velocity carries
-## and has to be caught. That delay is the whole difference between "wonky" and
-## "planted" — the old model wrote lateral velocity straight from the keypress,
-## so the bike teleported sideways and the lean was pure decoration.
+## Lateral: steering sets a *lean target*. The bike is a sprung mass rolling
+## into that lean, the lean produces sideways acceleration up to a progressive
+## grip limit, and lateral velocity carries and has to be caught. Quick inputs
+## at speed also kick the contact patch the wrong way first — counter-steer —
+## which is what drops a real bike into the corner and stands it back up.
 
 signal crashed_into_traffic
 
@@ -34,6 +34,20 @@ var _pitch_span: float = 1.12
 var _voice_id: int = 0
 var _horn_env: float = 0.0
 var _prev_steer: float = 0.0
+## Roll rate of the sprung lean — the memory that makes a lean settle instead
+## of stop, and that a bar flick charges for a faster drop-in.
+var _lean_vel: float = 0.0
+## The lean target after the weight-transfer lag — what the spring chases.
+var _lean_demand: float = 0.0
+## Smoothed longitudinal acceleration; the friction budget shares it with the
+## cornering force and the fork reads it for brake dive.
+var _long_accel: float = 0.0
+var _head_roll: float = 0.0
+var _head_roll_vel: float = 0.0
+## Sprung fork pitch: brake dive and throttle lift with a settle, not a hinge.
+var _transfer: float = 0.0
+var _transfer_vel: float = 0.0
+var _scrape: AudioStreamPlayer
 
 # Lateral
 ## 45° is racetrack-on-slicks angle and looks absurd on a road bike.
@@ -62,6 +76,70 @@ var _prev_steer: float = 0.0
 ## number that decides how far you can actually place the bike.
 @export var max_lat_speed: float = 13.4
 @export var steer_authority_speed: float = 7.5
+
+# Steering feel. The lean is a sprung mass, not a rate-limited dial: the bike
+# falls into a corner and settles out of one. The exported lean_*_rate_deg
+# numbers become the spring's stiffness, so per-bike tuning still applies.
+## rad/s of stiffness per deg/s of the authored rate — matches the old
+## time-to-lean while letting the approach breathe.
+const LEAN_OMEGA_PER_RATE := 0.14
+## A shade under-damped dropping in — the fall has weight — and dead-settled
+## standing up, so releasing the bars never wobbles.
+const LEAN_ZETA_IN := 0.85
+const LEAN_ZETA_OUT := 1.02
+## A bar flick still tips faster than a held lean: rad/s of roll speed a full
+## input swing injects. Kept modest so the counter-steer jink gets its beat
+## before the bike starts falling.
+const LEAN_FLICK_VEL := 1.4
+## The spring may overshoot the authored max a little on a hard transition.
+const LEAN_OVERSHOOT := 1.10
+
+## Counter-steer: above town pace a quick input first pushes the contact patch
+## the wrong way. The ground track jinks opposite for a beat while the bike
+## falls in; on release the same kick is what stands it back up. A slow input
+## accumulates nothing — this is a flick cue, not a bias.
+var counter_steer: float = 0.0
+const COUNTER_GAIN := 10.0   ## m/s² of jink a full-speed input flick injects
+const COUNTER_TAU := 0.13   ## s the jink takes to die
+const COUNTER_V0 := 13.0    ## below this speed steering is direct
+const COUNTER_V1 := 24.0    ## fully physical above this speed
+
+## Grip edge: the tyre is a friction budget shared with the brakes, and the
+## last of the bar travel asks for more than it has — the answer sags
+## progressively instead of clipping against a wall.
+const GRIP_BUDGET := 32.0   ## m/s² friction circle
+const PUSHBACK_V0 := 26.0   ## lean demand starts sagging past this speed...
+const PUSHBACK_V1 := 54.0   ## ...reaching PUSHBACK_MIN of max_lean here
+const PUSHBACK_MIN := 0.90
+## Demand knee shape: x(1+K)/(x+K) is near-linear through the middle of the
+## travel then flattens toward the cap — full lock still reaches it, but the
+## last of the input buys much less than the first.
+const DEMAND_KNEE := 6.0
+## The rider's weight does not move the instant the bars do: the lean demand
+## filters through a short lag, so the counter-steer jink gets its beat and
+## every input arrives as a shift, not a cut.
+const LEAN_LAG := 0.055
+## A tremble through the pegs right at the lean limit — the readable warning a
+## real bike gives before the tyre lets go, plus a quiet scrape under the wind.
+const LEAN_LIMIT_BAND := 0.08
+const LEAN_LIMIT_SHAKE := 0.05
+const SCRAPE_DB := -27.0
+## Nose-down per m/s² of brake dive; throttle lifts a little less.
+const TRANSFER_PER_MS2 := deg_to_rad(0.28)
+const TRANSFER_DIVE_MAX := deg_to_rad(4.5)
+const TRANSFER_LIFT_MAX := deg_to_rad(3.0)
+const TRANSFER_W := 9.0
+const TRANSFER_Z := 0.75
+## The rider tucks lower with speed and the eye rolls about half the bike,
+## trailing it a beat and settling — the second-order model, again.
+const TUCK_V0 := 14.0
+const TUCK_V1 := 46.0
+const TUCK_DROP := 0.09
+const TUCK_FWD := 0.06
+const HEAD_ROLL_W := 6.5
+const HEAD_ROLL_Z := 1.05
+const HEAD_RATE_FEED := 0.02
+const HEAD_FEED_MAX := deg_to_rad(4.0)
 	## Usable road width leaves a little room for the tyre and shoulder. The path
 	## can widen this boundary for an authored scenic pull-off.
 @export var road_edge_margin: float = 0.38
@@ -88,10 +166,10 @@ const BODY_X_FROM_SCREEN := -1.0
 ## How much more upright the rider's head stays than the frame. 0 = head bolted
 ## rigid (onboard-camera look, the whole world rolling 32 degrees under you),
 ## 1 = head stays level and the bike swings across the screen on its own. A real
-## rider is somewhere in the middle and much nearer level than rigid: the neck
-## is doing the work, and the eyes are on the exit of the corner, not on the
-## tank. This also sets how far the eye swings sideways with the lean.
-const HEAD_UPRIGHT := 0.56
+## rider is somewhere in the middle — half is what a neck actually keeps level —
+## and the eyes are on the exit of the corner, not on the tank. This also sets
+## how far the eye swings sideways with the lean.
+const HEAD_UPRIGHT := 0.50
 ## How much of the lean the visible bike takes. What the rider actually sees bank
 ## is the difference between this and HEAD_UPRIGHT — at 1.0 that difference is
 ## fourteen degrees, which was fine under a full cockpit and is far too much for
@@ -182,6 +260,16 @@ func _setup_audio() -> void:
 	_horn = AudioStreamPlayer.new()
 	_horn.volume_db = -80.0
 	add_child(_horn)
+
+	# Peg-scrape: the baked tread-noise loop pitched into a grind, gated to the
+	# last of the lean travel in _update_audio.
+	_scrape = AudioStreamPlayer.new()
+	_scrape.stream = AudioGD.tyre()
+	_scrape.pitch_scale = 1.9
+	_scrape.volume_db = -80.0
+	_scrape.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_scrape)
+	_scrape.play()
 
 	_engine = AudioStreamPlayer.new()
 	_engine.bus = "Engine"
@@ -281,6 +369,9 @@ func _physics_process(delta: float) -> void:
 		speed = 0.0
 		lat_vel = 0.0
 		lean = 0.0
+		_lean_vel = 0.0
+		_lean_demand = 0.0
+		counter_steer = 0.0
 	elif not alive:
 		# Stop dead where the impact happened — no coasting on through the car.
 		lean = lerpf(lean, deg_to_rad(58.0) * _fall_dir, 1.0 - exp(-4.0 * delta))
@@ -341,6 +432,9 @@ func _drive(delta: float) -> void:
 	a -= brake_accel * brake
 	a -= roll_drag * speed
 	a -= 9.81 * sin(_road_pitch) * 0.75  # hills cost and pay back
+	# The tyre's friction budget pays for this too — keep a smoothed copy for
+	# the lateral soft-limit and the fork's brake dive.
+	_long_accel = lerpf(_long_accel, a, 1.0 - exp(-8.0 * delta))
 
 	# Keep the authored 55.5556 m/s (200 km/h) ceiling exact, including on a
 	# downhill. The engine curve still makes the final kilometres per hour feel
@@ -375,18 +469,64 @@ func _steer(delta: float) -> void:
 	# wheel steers badly.
 	var authority := clampf(speed / steer_authority_speed, 0.0, 1.0) * (1.0 - wheelie * 0.75)
 
-	var target_lean := steer * deg_to_rad(max_lean_deg) * authority
-	var rate := lean_in_rate_deg if absf(target_lean) > absf(lean) else lean_out_rate_deg
-	rate *= lerpf(1.0, high_speed_lean_rate, smoothstep(20.0, 48.0, speed))
-	# A bar flick tips the bike faster than a held lean — that first bite is
-	# what makes a café feel willing instead of delayed.
 	var steer_delta := steer - _prev_steer
+	var steer_rate := steer_delta / maxf(delta, 0.0001)
 	_prev_steer = steer
-	rate += minf(absf(steer_delta) * 180.0, 140.0)
-	lean = move_toward(lean, target_lean, deg_to_rad(rate) * delta)
 
-	# Lean generates side force; the road's own curve throws you the other way.
-	var a_lat := lean_grip * tan(lean)
+	# The tyre is a friction budget, not an infinite wedge: past cruising
+	# speed the same bar input asks for progressively less lean, and the
+	# demand itself is knee-softened — the last of the travel buys much less
+	# than the first, while full lock still reaches the cap.
+	var demand := steer * authority
+	var lean_cap := deg_to_rad(max_lean_deg) * lerpf(
+		1.0, PUSHBACK_MIN, smoothstep(PUSHBACK_V0, PUSHBACK_V1, speed)
+	)
+	var target_lean := lean_cap * demand * (1.0 + DEMAND_KNEE) / (absf(demand) + DEMAND_KNEE)
+
+	# Counter-steer: a quick input at speed first kicks the wheels the wrong
+	# way, so the bike falls into the lean instead of being placed in it. A
+	# slow press charges nothing — it decays faster than a gentle ramp can
+	# feed it — and on release the same kick is what stands the bike back up.
+	counter_steer -= steer_rate * COUNTER_GAIN * smoothstep(COUNTER_V0, COUNTER_V1, speed) * delta
+	counter_steer *= exp(-delta / COUNTER_TAU)
+
+	# A bar flick still tips the bike faster than a held lean — that first
+	# bite is what makes a café feel willing instead of delayed. The kick is
+	# roll speed now, so a sharp press drops the bike in harder.
+	_lean_vel += steer_delta * LEAN_FLICK_VEL
+	_lean_vel = clampf(_lean_vel, -9.0, 9.0)
+
+	# The rider's weight arrives a beat after the bars: the demand filters
+	# through a short lag before the sprung mass chases it, which is what lets
+	# the counter-steer jink land first.
+	_lean_demand = lerpf(_lean_demand, target_lean, 1.0 - exp(-delta / LEAN_LAG))
+
+	# The frame is a sprung mass rolling toward the demand. Under-damped going
+	# in gives the drop its weight; dead-settled coming out stands the bike up
+	# clean on release.
+	var entering := absf(_lean_demand) > absf(lean)
+	var omega := (lean_in_rate_deg if entering else lean_out_rate_deg) * LEAN_OMEGA_PER_RATE
+	omega *= lerpf(1.0, high_speed_lean_rate, smoothstep(20.0, 48.0, speed))
+	_lean_vel += (
+		(_lean_demand - lean) * omega * omega
+		- 2.0 * (LEAN_ZETA_IN if entering else LEAN_ZETA_OUT) * omega * _lean_vel
+	) * delta
+	lean += _lean_vel * delta
+	var lean_limit := deg_to_rad(max_lean_deg) * LEAN_OVERSHOOT
+	lean = clampf(lean, -lean_limit, lean_limit)
+	# Right at the limit the pegs are down — a tremble, not a jolt.
+	if absf(lean) > deg_to_rad(max_lean_deg) * (1.0 - LEAN_LIMIT_BAND):
+		_shake = maxf(_shake, LEAN_LIMIT_SHAKE)
+
+	# Lean asks for side force; the tyre answers up to its budget. The same
+	# budget pays for braking, so trail-braking into a corner leaves the bike
+	# less to lean on — and near the edge the answer sags progressively
+	# instead of holding firm and then letting go.
+	var lean_force := lean_grip * tan(lean)
+	var budget := GRIP_BUDGET * sqrt(maxf(0.0, 1.0 - pow(_long_accel / GRIP_BUDGET, 2.0)))
+	var a_lat := budget * tanh(lean_force / budget)
+	a_lat += counter_steer
+	# The road's own curve throws you the other way.
 	a_lat -= _path.curvature_at(track_z) * speed * speed * corner_load
 	# Shut the throttle and the bike tucks in; feed it and it runs a little wide.
 	# Coasting (the usual state) stays almost 1:1 so the old line still holds.
@@ -549,6 +689,9 @@ func kill() -> void:
 	alive = false
 	speed = 0.0
 	lat_vel = 0.0
+	_lean_vel = 0.0
+	counter_steer = 0.0
+	_long_accel = 0.0
 	cruise_on = false
 	_cruise_speed = 0.0
 	_throttle_load = 0.0
@@ -582,6 +725,14 @@ func reset_run() -> void:
 	_throttle_load = 0.0
 	_horn_env = 0.0
 	_prev_steer = 0.0
+	_lean_vel = 0.0
+	_lean_demand = 0.0
+	counter_steer = 0.0
+	_long_accel = 0.0
+	_head_roll = 0.0
+	_head_roll_vel = 0.0
+	_transfer = 0.0
+	_transfer_vel = 0.0
 	_road_pitch = _path.pitch_at(0.0)
 	camera_pivot.position = _pivot_base
 	camera_pivot.rotation = Vector3(0.0, PI, 0.0)
@@ -608,7 +759,18 @@ func set_night_lighting(darkness: float) -> void:
 
 
 func _update_view(delta: float) -> void:
-	var frame_pitch := -wheelie * deg_to_rad(wheelie_pitch_deg)
+	# Braking dives the fork, throttle lifts it — a sprung pitch so the dip
+	# settles instead of hinging on and off the lever.
+	var transfer_target := clampf(
+		-_long_accel * TRANSFER_PER_MS2, -TRANSFER_LIFT_MAX, TRANSFER_DIVE_MAX
+	)
+	_transfer_vel += (
+		(transfer_target - _transfer) * TRANSFER_W * TRANSFER_W
+		- 2.0 * TRANSFER_Z * TRANSFER_W * _transfer_vel
+	) * delta
+	_transfer += _transfer_vel * delta
+
+	var frame_pitch := -wheelie * deg_to_rad(wheelie_pitch_deg) + _transfer
 	visual.rotation.z = -lean * VISUAL_LEAN  # +lean is toward body +X; +Z roll tilts up toward -X
 	visual.rotation.x = frame_pitch
 
@@ -635,15 +797,29 @@ func _update_view(delta: float) -> void:
 	#
 	# That angle is a good deal less than the bike's. A rider looks where they are
 	# going and their neck does most of the work of keeping the horizon level: the
-	# frame goes over 32 degrees, the eye about fourteen. Bolting the view to the
+	# frame goes over 32 degrees, the eye about half that. Bolting the view to the
 	# frame is technically what a helmet cam sees and is unwatchable for an hour,
 	# which is the complaint this number answers.
-	var head_lean := lean * (1.0 - HEAD_UPRIGHT)
-	var frame_basis := Basis(Vector3.RIGHT, frame_pitch) * Basis(Vector3.BACK, -head_lean)
-	camera_pivot.position = frame_basis * (_pivot_base + Vector3(0.0, look_amount * 0.28, 0.0))
-	# Slower than the rest of the rig on purpose: the neck settles into a corner
-	# rather than snapping to it, and it is the snap that reads as camera shake.
-	camera_pivot.rotation.z = lerpf(camera_pivot.rotation.z, head_lean, 1.0 - exp(-6.0 * delta))
+	# While the bike is actively falling in, the head rolls a touch further —
+	# that small extra is the weight going over — then it settles back to its
+	# share of the lean.
+	var head_target := lean * (1.0 - HEAD_UPRIGHT) + clampf(
+		_lean_vel * HEAD_RATE_FEED, -HEAD_FEED_MAX, HEAD_FEED_MAX
+	)
+	# The eye trails the frame by a beat and settles with it, which reads as a
+	# neck rather than as camera shake.
+	_head_roll_vel += (
+		(head_target - _head_roll) * HEAD_ROLL_W * HEAD_ROLL_W
+		- 2.0 * HEAD_ROLL_Z * HEAD_ROLL_W * _head_roll_vel
+	) * delta
+	_head_roll += _head_roll_vel * delta
+	var frame_basis := Basis(Vector3.RIGHT, frame_pitch) * Basis(Vector3.BACK, -_head_roll)
+	# The rider tucks lower and further over the tank as speed builds.
+	var tuck := smoothstep(TUCK_V0, TUCK_V1, speed)
+	camera_pivot.position = frame_basis * (
+		_pivot_base + Vector3(0.0, look_amount * 0.28 - tuck * TUCK_DROP, tuck * TUCK_FWD)
+	)
+	camera_pivot.rotation.z = _head_roll
 	camera_pivot.rotation.y = PI + _look_yaw
 
 	# Speed still opens the lens, but less far than it did. Fourteen degrees of
@@ -709,6 +885,7 @@ func _update_seat(delta: float) -> void:
 
 func _update_audio(delta: float) -> void:
 	_update_horn(delta)
+	_update_scrape(delta)
 	if _engine == null:
 		return
 	# Fake gearbox: pitch climbs through each gear and drops on the shift. Gear
@@ -724,6 +901,18 @@ func _update_audio(delta: float) -> void:
 	if not alive:
 		base_vol = -28.0
 	_engine.volume_db = lerpf(_engine.volume_db, base_vol, 1.0 - exp(-6.0 * delta))
+
+
+func _update_scrape(delta: float) -> void:
+	if _scrape == null:
+		return
+	# Gain rides only the last band of lean travel, so the scrape stays a
+	# warning at the limit rather than a soundtrack for every bend.
+	var limit := deg_to_rad(max_lean_deg)
+	var t := clampf((absf(lean) / maxf(limit, 0.01) - (1.0 - LEAN_LIMIT_BAND)) / LEAN_LIMIT_BAND, 0.0, 1.0)
+	if speed < steer_authority_speed or not alive or seated:
+		t = 0.0
+	_scrape.volume_db = lerpf(_scrape.volume_db, -80.0 + t * (80.0 + SCRAPE_DB), 1.0 - exp(-10.0 * delta))
 
 
 func _update_horn(delta: float) -> void:

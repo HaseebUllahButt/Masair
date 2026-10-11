@@ -50,6 +50,7 @@ func _initialize() -> void:
 	cap.world_seed = int(opts.get("seed", 0))
 	cap.park_z = float(opts.get("z", -1.0))
 	cap.start_z = float(opts.get("startz", -1.0))
+	cap.weave = float(opts.get("weave", 0.0))
 	cap.shot_name = String(opts.get("name", ""))
 	cap.nohud = opts.has("nohud")
 	cap.catalog = opts.has("catalog")
@@ -145,6 +146,9 @@ class Capture:
 	## Riding starts this far along the route — for detour runs that must reach
 	## the junction before an unlucky lorry ends them.
 	var start_z: float = -1.0
+	## Slalom steering input while riding, so stills catch the bike banked:
+	## amplitude 0..1, flipping sides every few seconds. Steering-feel captures.
+	var weave: float = 0.0
 	var tree_ref: SceneTree
 
 	var bench: bool = false
@@ -496,6 +500,14 @@ class Capture:
 			_autopilot()
 		elif not is_nan(hold_lane):
 			_lanehold()
+		elif weave > 0.0 and _elapsed > warmup * 0.5 \
+		and not (menu or catalog or seated or viewpoint or overview != "") and park_z < 0.0:
+			# Flip the press every few seconds so a run of stills catches the
+			# bike banked both ways at a readable lean.
+			var seg := int((_elapsed - warmup * 0.5) / 3.0)
+			Input.action_release("steer_left")
+			Input.action_release("steer_right")
+			Input.action_press("steer_right" if seg % 2 == 0 else "steer_left", weave)
 		if _ignore_next_frame:
 			# PNG encoding is deliberately synchronous and is not gameplay work.
 			_ignore_next_frame = false
@@ -617,7 +629,10 @@ class Capture:
 		_ignore_next_frame = true
 		var p := get_tree().root.find_child("Player", true, false)
 		if p:
-			print("shot ", path, " z=%.0f lat=%.1f" % [float(p.track_z), float(p.lateral)])
+			print(
+				"shot ", path,
+				" z=%.0f lat=%.1f lean=%.1fdeg" % [float(p.track_z), float(p.lateral), rad_to_deg(float(p.lean))]
+			)
 		else:
 			print("shot ", path)
 		_taken += 1
