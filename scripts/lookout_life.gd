@@ -188,7 +188,20 @@ func _build(centre: float, key: Vector2i) -> void:
 	_make_materials()
 	_make_spray()
 	_make_rings()
-	_ambient()
+	# Sit-down is not a moment to spend a whole frame in: the seat camera is
+	# still blending in, so the ambient pieces can arrive over the next few
+	# frames instead of in one ~40 ms lump. `_ambient` and what it calls yield
+	# between their pieces; a stand-up frees `_root` mid-build, so bail the
+	# moment the seat is gone rather than dressing air. The guard is the node
+	# itself: a reseat builds a new `_root`, so a stale coroutine parked on a
+	# frame boundary can always tell it is no longer dressing the live view.
+	var seat_root := _root
+	await get_tree().process_frame
+	if _root != seat_root:
+		return
+	await _ambient(seat_root)
+	if _root != seat_root:
+		return
 	_events = _event_cycle()
 	_event_index = 0
 	_next_event = FIRST_EVENT
@@ -249,20 +262,22 @@ func _start_event(id: StringName) -> void:
 			_crossing(18, _dark_bird(), 1.4, _rng.randf_range(80.0, 140.0), _rng.randf_range(2.0, 9.0), 12.0, false)
 
 
-func _ambient() -> void:
+func _ambient(owner: Node3D) -> void:
 	## What is always there while you sit. The events come and go over it.
 	var before: int = _actors.size()
 	match _theme:
 		MOUNTAIN:
 			_soarers(2, Color("3b2e24"), 4.6, Vector2(90.0, 150.0), Vector2(12.0, 30.0), 11.0)
-			_mist(5)
+			await _mist(5, owner)
 		FOREST:
-			_mist(6)
+			await _mist(6, owner)
 			_soarers(1, Color("3b2e24"), 3.8, Vector2(110.0, 160.0), Vector2(18.0, 30.0), 10.0)
 		_:
-			_balloons()
+			await _balloons(owner)
 			if _mood == Mood.DUSK:
 				_murmuration()
+	if _root != owner:
+		return
 	if _mood != Mood.DAY and (_theme == FOREST or _theme == COUNTRY):
 		_fireflies(46 if _mood == Mood.NIGHT else 30)
 	for k in range(before, _actors.size()):
@@ -361,7 +376,7 @@ func _make_materials() -> void:
 	_bird_mat = bird_material()
 	_body_mat = body_material()
 	if _bird_mesh == null:
-		_bird_mesh = _make_bird_mesh()
+		_bird_mesh = bird_mesh()
 
 
 ## Every material the life here can draw, in the form it draws it. Compatibility
@@ -372,6 +387,75 @@ static var _bird_shared: ShaderMaterial
 static var _body_shared: StandardMaterial3D
 static var _spray_shared: StandardMaterial3D
 static var _ring_shared: StandardMaterial3D
+static var _fish_shared: ArrayMesh
+static var _bird_mesh_shared: ArrayMesh
+static var _balloon_shared: Dictionary = {}
+
+
+static func bird_mesh() -> ArrayMesh:
+	## The road's `ride_life` and the bench both draw this body; one build
+	## serves every flock in the game.
+	if _bird_mesh_shared == null:
+		_bird_mesh_shared = _make_bird_mesh()
+	return _bird_mesh_shared
+
+
+static func fish_mesh() -> ArrayMesh:
+	## The trout jumps every few seconds; its SurfaceTool body is the same
+	## every time, so the first one is the only one ever built.
+	if _fish_shared == null:
+		_fish_shared = _make_fish_mesh(1.1, Color("6f7a72"), Color("d9d6c8"))
+	return _fish_shared
+
+
+static var _spray_mesh_shared: ArrayMesh
+static var _ring_mesh_shared: ArrayMesh
+
+
+static func spray_mesh() -> ArrayMesh:
+	## The droplet octahedron is identical every sit-down; build it once.
+	if _spray_mesh_shared == null:
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		var pts := [Vector3.UP, Vector3.DOWN, Vector3.LEFT, Vector3.RIGHT, Vector3.FORWARD, Vector3.BACK]
+		for y_i in [0, 1]:
+			var apex: Vector3 = pts[y_i]
+			var ring := [pts[2], pts[4], pts[3], pts[5]]
+			for k in 4:
+				var a: Vector3 = ring[k]
+				var b: Vector3 = ring[(k + 1) % 4]
+				_tri(st, apex, a, b, Color.WHITE, apex + a + b)
+		_spray_mesh_shared = st.commit()
+	return _spray_mesh_shared
+
+
+static func ring_mesh() -> ArrayMesh:
+	## The ripple ring is identical every sit-down; build it once.
+	if _ring_mesh_shared == null:
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		var sides: int = 28
+		for i in sides:
+			var a0 := TAU * float(i) / float(sides)
+			var a1 := TAU * float(i + 1) / float(sides)
+			var o0 := Vector3(cos(a0), 0.0, sin(a0))
+			var o1 := Vector3(cos(a1), 0.0, sin(a1))
+			_tri(st, o0, o1, o1 * 0.84, Color.WHITE, Vector3.UP)
+			_tri(st, o0, o1 * 0.84, o0 * 0.84, Color.WHITE, Vector3.UP)
+		_ring_mesh_shared = st.commit()
+	return _ring_mesh_shared
+
+
+static func _balloon_mesh(palette_key: int, palette: Array, style: int) -> ArrayMesh:
+	## Four envelopes per vale, each a SurfaceTool build. The palettes are the
+	## fixed set above, so (palette, style) is a small closed key space: cache
+	## per combination and a second country overlook pays nothing.
+	var key := Vector2i(palette_key, style)
+	var mesh: ArrayMesh = _balloon_shared.get(key)
+	if mesh == null:
+		mesh = _make_balloon_mesh(palette, style)
+		_balloon_shared[key] = mesh
+	return mesh
 
 
 static func bird_material() -> ShaderMaterial:
@@ -487,6 +571,12 @@ static func warm_into(parent: Node3D) -> void:
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		parent.add_child(mi)
 		x += 3.0
+	# The cached bodies the first sit-down would otherwise pay for inside its
+	# build: the shared bird, the trout, and the pooled splash meshes.
+	bird_mesh()
+	fish_mesh()
+	spray_mesh()
+	ring_mesh()
 
 
 static func _tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, color: Color, outward: Vector3) -> void:
@@ -940,7 +1030,7 @@ func _fish_jump() -> void:
 	if spot == Vector3.INF:
 		return
 	var heading := Vector3(_rng.randf_range(-1.0, 1.0), 0.0, _rng.randf_range(-1.0, 1.0)).normalized()
-	var fish := _body_node(_make_fish_mesh(1.1, Color("6f7a72"), Color("d9d6c8")))
+	var fish := _body_node(fish_mesh())
 	fish.visible = false
 	_actors.append({"fn": _step_fish, "t": 0.0, "node": fish, "at": spot, "dir": heading, "cue": 0})
 
@@ -976,22 +1066,12 @@ func _step_fish(a: Dictionary, dt: float) -> bool:
 
 
 func _make_spray() -> void:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var pts := [Vector3.UP, Vector3.DOWN, Vector3.LEFT, Vector3.RIGHT, Vector3.FORWARD, Vector3.BACK]
-	for y_i in [0, 1]:
-		var apex: Vector3 = pts[y_i]
-		var ring := [pts[2], pts[4], pts[3], pts[5]]
-		for k in 4:
-			var a: Vector3 = ring[k]
-			var b: Vector3 = ring[(k + 1) % 4]
-			_tri(st, apex, a, b, Color.WHITE, apex + a + b)
 	var mat := spray_material()
 	mat.emission_energy_multiplier = 0.35 if _mood == Mood.NIGHT else 0.6
 	_spray = MultiMesh.new()
 	_spray.transform_format = MultiMesh.TRANSFORM_3D
 	_spray.use_colors = true
-	_spray.mesh = st.commit()
+	_spray.mesh = spray_mesh()
 	_spray.instance_count = SPRAY_POOL
 	_spray.custom_aabb = _big_aabb()
 	var mi := MultiMeshInstance3D.new()
@@ -1071,21 +1151,11 @@ func _step_spray(dt: float) -> void:
 
 
 func _make_rings() -> void:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var sides: int = 28
-	for i in sides:
-		var a0: float = TAU * float(i) / float(sides)
-		var a1: float = TAU * float(i + 1) / float(sides)
-		var o0 := Vector3(cos(a0), 0.0, sin(a0))
-		var o1 := Vector3(cos(a1), 0.0, sin(a1))
-		_tri(st, o0, o1, o1 * 0.84, Color.WHITE, Vector3.UP)
-		_tri(st, o0, o1 * 0.84, o0 * 0.84, Color.WHITE, Vector3.UP)
 	var mat := ring_material()
 	_rings = MultiMesh.new()
 	_rings.transform_format = MultiMesh.TRANSFORM_3D
 	_rings.use_colors = true
-	_rings.mesh = st.commit()
+	_rings.mesh = ring_mesh()
 	_rings.instance_count = RING_POOL
 	_rings.custom_aabb = _big_aabb()
 	var mi := MultiMeshInstance3D.new()
@@ -1140,7 +1210,7 @@ func _step_rings(dt: float) -> void:
 # ---------------------------------------------------------------- weather
 
 
-func _mist(count: int) -> void:
+func _mist(count: int, owner: Node3D) -> void:
 	## Mist lying on the lake: a few feathered sheets stacked a few metres apart
 	## over open water, each carrying wisps that flow downwind. Stacked, the
 	## layers part and close over each other, which is what gives it depth.
@@ -1158,6 +1228,13 @@ func _mist(count: int) -> void:
 	var wind := (_right if _rng.randf() < 0.5 else -_right) * _rng.randf_range(1.4, 2.4) + _fwd * _rng.randf_range(-0.4, 0.4)
 	var sheets: Array = []
 	for i in count:
+		# Six sheets of ShaderMaterial + water-spot rejection sampling was the
+		# bulk of the sit-down frame; two a frame lands the haze while the
+		# seat blend is still settling. A stand-up mid-build frees `_root`.
+		if i > 0 and i % 2 == 0:
+			await get_tree().process_frame
+			if _root != owner:
+				return
 		var spot := _water_spot(110.0, 300.0, 40.0, 25.0)
 		if spot == Vector3.INF:
 			continue
@@ -1194,7 +1271,7 @@ func _step_mist(a: Dictionary, _dt: float) -> bool:
 	return true
 
 
-func _balloons() -> void:
+func _balloons(owner: Node3D) -> void:
 	## Hot-air balloons drifting over the vale. At dusk and after dark the burners
 	## light the envelopes from inside.
 	var palettes := [
@@ -1232,11 +1309,18 @@ func _balloons() -> void:
 		order[i] = order[j]
 		order[j] = swap
 	for i in slots.size():
+		# Four balloon meshes through SurfaceTool was most of a country
+		# sit-down; one a frame, and cached so the next vale pays nothing.
+		if i > 0:
+			await get_tree().process_frame
+			if _root != owner:
+				return
 		var slot: Array = slots[i]
-		var palette: Array = palettes[order[i] % palettes.size()]
+		var pkey: int = order[i] % palettes.size()
+		var palette: Array = palettes[pkey]
 		var mat := balloon_material()
 		var mi := MeshInstance3D.new()
-		mi.mesh = _make_balloon_mesh(palette, _rng.randi_range(0, 2))
+		mi.mesh = _balloon_mesh(pkey, palette, _rng.randi_range(0, 2))
 		mi.material_override = mat
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		LowPoly.cheap_draw(mi)

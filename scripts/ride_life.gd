@@ -39,7 +39,7 @@ func _ready() -> void:
 	_player = _main.get_node_or_null("Player") if _main else null
 	_rng.seed = 0x51DE
 	_bird_mat = LookoutLifeGD.bird_material()
-	_bird_mesh = LookoutLifeGD._make_bird_mesh()
+	_bird_mesh = LookoutLifeGD.bird_mesh()
 
 
 func _process(delta: float) -> void:
