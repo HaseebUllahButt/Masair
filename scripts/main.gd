@@ -67,8 +67,12 @@ const MOODS := {
 	LightingMode.DUSK:
 	{
 		"zenith_color": Color("12183c"),
-		"mid_color": Color("cf6681"),
-		"horizon_color": Color("f7a76a"),
+		# cf6681 was a pink band across half the sky — pretty, but the whole
+		# sunset read as one saturated wash. The warm drama lives in the low
+		# band; above it the air cools to a steel-mauve that lets the warm
+		# horizon read as a band of light instead of the whole dome.
+		"mid_color": Color("7d6f92"),
+		"horizon_color": Color("f0a05c"),
 		"ground_color": Color("1e2a30"),
 		"band_low": 0.08,
 		"band_high": 0.50,
@@ -105,7 +109,11 @@ const MOODS := {
 		# Halved when the sun's shadow came on: in this renderer a shadowed
 		# directional lands roughly twice the light of a shadowless one at the
 		# same energy, so all three moods' keys re-centre on the old exposure.
-		"light_energy": 3.1,
+		# The 2x guess overshot — at 3.1 the warm key died before the mid rings
+		# and the dusk lost its alpenglow (bisect: 321eeb7 warm vs b546198 flat
+		# violet at identical mood values). 4.6 puts the warmth back on the
+		# upward faces while the shadow path still earns the contrast.
+		"light_energy": 4.6,
 		"light_angle": Vector3(-15.0, 14.0, 0.0),
 		"angular_distance": 0.8,
 		# The warning at the top of this table is about exactly this row. A violet
@@ -151,6 +159,7 @@ const MOODS := {
 		# inside that band, which is why half the view arrived greyed out. The
 		# vista ranges are fog-disabled and carry their own air; the engine fog
 		# only needs to bed the streamed edge in, not repainted as milk.
+		"fog_enabled": 1.0,
 		"fog_density": 0.00052,
 		# The dusk sun sits low and dead ahead. Strong sun scatter plus a ground
 		# fog layer therefore lit the tarmac itself into a bright wedge that
@@ -172,7 +181,7 @@ const MOODS := {
 		# mobile-game primary look the note in the day row warns about. With the
 		# key/exposure trade above supplying real separation, saturation goes to
 		# neutral and lets the sunset's own colours do the work.
-		"saturation": 1.08,
+		"saturation": 1.02,
 		# The road's own counter-tint, pushed to tarmac_tint each mood change.
 		# Dusk lights the tarmac with a ff9e62 key and a violet shade at once —
 		# red plus purple is the maroon the road kept arriving in. The tint buys
@@ -182,6 +191,9 @@ const MOODS := {
 		# same orange back, so half the win was losing it.
 		"road_tint": Color(0.74, 1.20, 1.26),
 		"road_sheen": 0.13,
+		# Long shadows are half the dusk look (3-6x object height). The shared
+		# 40 m map only reaches the verge posts; dusk gets its own reach.
+		"shadow_distance": 90.0,
 	},
 	LightingMode.DAY:
 	{
@@ -191,21 +203,33 @@ const MOODS := {
 		# and warm, and that warm band is what makes the distance look like air
 		# instead of paint. It also feeds the sky ambient, so it warms the light
 		# on every shaded face in the world at the same time.
-		# Mid blue is much deeper than it looks. The grade (LUT + the bright-
-		# range warm split in grade.gdshader) pulls any pale or half-saturated
-		# blue toward sage — a mid like 5590e0 renders mint. 2e68cc survives the
-		# curve with blue still on top, so the band between zenith and horizon
-		# reads as sky instead of shallow water.
-		"zenith_color": Color("2a5aa8"),
-		"mid_color": Color("2e68cc"),
-		"horizon_color": Color("f4d2a0"),
+		# Mid blue used to mint through the post chain (LUT + warm split-tone),
+		# which is what pushed the row to cobalt in the first place.
+		# Cobalt (2a5aa8/2e68cc) was the fix for mint — deep enough that the
+		# grade could not pull it to sage — but it overshot into the primary-
+		# colour zone NORTHSTAR warns against. With the LUT's mid anchor
+		# holding blue above green and the grade's blue-lead guard, a pale
+		# steel blue survives the post chain now: ~#8fb4d9 zenith per spec,
+		# fed a touch deeper so the curve lands it on target.
+		# Probe-verified: the zenith owns ~85% of the rider's dome (red-paint
+		# test), so its post-chain output IS the sky read. Fed light enough
+		# that ACES + LUT + vignette land it near NORTHSTAR's #8fb4d9.
+		"zenith_color": Color("5da8d0"),
+		"mid_color": Color("7fafd0"),
+		# NORTHSTAR day horizon is pale grey-blue (cfd9de), not cream — the
+		# warm horizon band is a dusk idea. The day's warmth belongs on the
+		# sunlit land, and a cool air band is what separates the ranges.
+		"horizon_color": Color("cfd9de"),
 		"ground_color": Color("505e57"),
 		"band_low": 0.10,
-		# The zenith has to reach low. A wide mid band (0.78) held the gradient
-		# at exactly the luminance the split-tone mints; pulling the ramp down to
-		# 0.50 keeps the crossover dark enough to stay blue.
-		"band_high": 0.50,
-		"horizon_glow": 0.26,
+		# The zenith has to reach low. band_high is the elevation where the
+		# zenith blend completes — a rider's eye-line tops out near ~25°, so
+		# the steel read has to be in place by then or the whole visible dome
+		# stays horizon-warm. 0.34 finishes the blend at ~20°.
+		"band_high": 0.34,
+		# The glow skirt paints the horizon colour back up the dome — at 0.26
+		# it was a second warm band in a sky that is meant to be cool.
+		"horizon_glow": 0.10,
 		"energy": 1.0,
 		"sun_color": Color(1.70, 1.58, 1.30),
 		"sun_radius": 0.019,
@@ -215,19 +239,28 @@ const MOODS := {
 		"moon_face": 0.0,
 		"cloud_lit": Color("f4e6cc"),
 		# 6f88a2 graded to sage — the shadowed sides of clouds were the most
-		# visible mint in the frame. Needs a strong blue lead before the LUT to
-		# land as blue-grey instead of green: its blend with the warm lit side
-		# must cross grey, and only a deep blue keeps that crossover saturated.
-		"cloud_dark": Color("36549c"),
-		"cloud_cover": 0.46,
-		"cloud_sharpness": 0.44,
+		# visible mint in the frame, so it went deep navy (36549c) to keep a
+		# blue lead through the LUT. With the lead guard in the grade the
+		# undersides can come back to steel grey-blue: shaded cumulus reads as
+		# cloud, not as another slab of sky.
+		"cloud_dark": Color("7e92b4"),
+		# At 0.46 cover + a 0.62 bank the deck was one warm sheet — every sky
+		# sample on the z470 frame read cream-grey and the steel blue behind it
+		# never reached the eye. Discrete cumulus against open sky is the Cafe
+		# Racer day: fewer masses, a lower bank, less haze gluing it together.
+		"cloud_cover": 0.32,
+		# 0.44 made the alpha edge ~0.27 wide — half the sky sat at partial
+		# alpha and the deck became one warm veil (the "cream ceiling" every
+		# hide test kept returning). A hard edge is what separates discrete
+		# cumulus from open sky.
+		"cloud_sharpness": 0.62,
 		"cloud_scale": 1.18,
 		"cloud_speed": 0.009,
-		"cloud_opacity": 0.90,
-		"bank_cover": 0.62,
-		"bank_opacity": 0.90,
+		"cloud_opacity": 0.85,
+		"bank_cover": 0.45,
+		"bank_opacity": 0.80,
 		"bank_height": 0.16,
-		"bank_haze": 0.36,
+		"bank_haze": 0.28,
 		"star_intensity": 0.0,
 		"galaxy_color": Color("6b74b8"),
 		"light_color": Color("ffd59a"),
@@ -246,7 +279,11 @@ const MOODS := {
 		# 1.55 -> 1.75: the first halving left lit crowns a step dull — the
 		# shadow map needs a lit side to cut a shadow from, and the extra key
 		# is what makes the sun-facing halves read as sunlit.
-		"light_energy": 1.75,
+		# 1.75 -> 2.4: the shadowed-renderer halving went too deep — the bisect
+		# shows ca6af7e's golden wash was key energy, not fog. Part-way back
+		# keeps the golden hour the 3.3 shadowless key bought without
+		# re-blowing the exposure the halving was protecting.
+		"light_energy": 2.4,
 		# Lower than midday. A sun near the zenith lights the tops of everything
 		# and leaves the sides equal, which is the worst case for a world with no
 		# shadows: raking it gives every box, tree and hillside a lit side and a
@@ -292,15 +329,18 @@ const MOODS := {
 		# 1-2 km view, worst at the country seat, which faces the sun. Halved,
 		# with less sun scatter, so the vista reads clear and the ranges carry
 		# depth on their own aerial ladder (the ring is fog-free).
+		"fog_enabled": 0.0,
 		"fog_density": 0.00016,
 		"fog_sun_scatter": 0.05,
 		# Aerial perspective drags the fog colour toward the sky's pale horizon
 		# band. At 0.22 it read as a second, brighter fog layered over the first.
 		"fog_aerial": 0.12,
-		# Fog on the sky is a flat mix toward sage + sun-scatter, and 7% of it
-		# was enough to lay a mint veil over the whole blue. A whisper keeps the
-		# horizon band joined to the land's air without tinting the dome.
-		"fog_sky": 0.02,
+		# Fog on the sky is not a whisper-scale effect: the dome is the fog's
+		# full-distance target, so even 0.02 converges the whole sky toward
+		# the near-white air colour (probe: fog_sky OFF is the only stage that
+		# returned steel blue). Zero — the horizon band stays joined via the
+		# sky shader's own warm horizon_colour.
+		"fog_sky": 0.0,
 		"fog_height": 6.0,
 		# Halved: over the lake basin the sightline runs hundreds of metres
 		# through the low band and the water drowned in it.
@@ -312,12 +352,18 @@ const MOODS := {
 		# image is what gives a scene the primary-colour look of a mobile game;
 		# what it was actually missing was separation between light and dark.
 		"contrast": 1.16,
-		"saturation": 1.14,
+		# 1.14 is the mobile-game saturation the note above warns about — with
+		# the key doing the separation again the chroma comes back toward
+		# NORTHSTAR's muted flat palette.
+		"saturation": 1.05,
 		# Measured to land neutral grey asphalt (R=G=B within 1%) under the warm
 		# day key and grade: less red and a touch more green, not more blue,
 		# which only turned the road violet.
 		"road_tint": Color(0.925,1.035,1.01),
 		"road_sheen": 0.20,
+		# Day sun sits high: shadows are short anyway, so the 40-45 m map covers
+		# the props that need grounding. Kept tight for the iGPU's shadow pass.
+		"shadow_distance": 45.0,
 	},
 	LightingMode.NIGHT:
 	{
@@ -393,6 +439,7 @@ const MOODS := {
 		"fog_energy": 1.8,
 		# Night fog is a navy, not a milk — density here dims the streamed edge
 		# rather than bleaching it, so it can stay inside the tested band.
+		"fog_enabled": 1.0,
 		"fog_density": 0.00105,
 		"fog_sun_scatter": 0.20,
 		# Aerial takes the fog toward the sky's colour, and the night sky's
@@ -418,6 +465,9 @@ const MOODS := {
 		# not read as painted blue.
 		"road_tint": Color(1.14, 1.02, 0.94),
 		"road_sheen": 0.16,
+		# Moon shadows are short-range grounding only — the beam and the lamps
+		# carry the night frame, the map just keeps props from floating.
+		"shadow_distance": 50.0,
 	},
 }
 
@@ -579,8 +629,11 @@ func _build_environment() -> void:
 	# levels, let 5 carry a little spill, and leave the widest two alone.
 	_environment.glow_enabled = true
 	_environment.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
-	# Only genuinely-HDR pixels bloom. Below ~1.2 the lit sky itself qualifies.
-	_environment.glow_hdr_threshold = 1.20
+	# Only genuinely-HDR pixels bloom. Below ~1.2 the lit sky itself qualifies;
+	# at 1.2 the sun's halo (a soft ~0.7 HDR skirt tens of degrees wide) bloomed
+	# through the wide levels and washed the whole dome warm. 2.0 leaves the
+	# disc and the lamps glowing and keeps the atmosphere out of it.
+	_environment.glow_hdr_threshold = 2.00
 	_environment.glow_hdr_scale = 2.0
 	_environment.glow_intensity = 0.55
 	_environment.glow_strength = 1.0
@@ -714,7 +767,12 @@ func _grade_lut() -> ImageTexture:
 			# tone keep chipping at the lead. Warm midtones are unaffected —
 			# their red lead still decides the hue.
 			Color(0.605, 0.566, 0.590),
-			Color(1.000, 0.945, 0.845),
+			# Highlight anchor. Still apricot-warm for sunlit surfaces, but
+			# blue raised from 0.845: the ramp up to it used to grow green
+			# faster than blue, so a pale steel sky arrived at this stage
+			# with its blue lead already spent and the split-tones minted
+			# what was left.
+			Color(1.000, 0.945, 0.885),
 		]
 	)
 	const WIDTH := 256
@@ -815,6 +873,7 @@ static func _overcast(mood: Dictionary, r: float) -> Dictionary:
 	out["angular_distance"] = lerpf(mood["angular_distance"], 3.0, r)
 	# Thicker air, not a wall: at 3.8x a lake view a kilometre deep was gone
 	# entirely, and a ride in the rain should still show the next hill.
+	out["fog_enabled"] = lerpf(float(mood.get("fog_enabled", 1.0)), 1.0, r)
 	out["fog_density"] = mood["fog_density"] * (1.0 + r * 1.5)
 	# A closed sky is grey: the tarmac counter-tint eases back toward the day
 	# neutral as the weather takes the colour out of the light.
@@ -958,7 +1017,7 @@ func _build_rain() -> void:
 	# dashes showed as a column of broken marks against the magenta band. Real
 	# rain doesn't go away at distance, it stops resolving: fade the drops out
 	# so the far ones dissolve into the haze the weather already lays down.
-	material.distance_fade = BaseMaterial3D.DISTANCE_FADE_PIXEL_ALPHA
+	material.distance_fade_mode = BaseMaterial3D.DISTANCE_FADE_PIXEL_ALPHA
 	material.distance_fade_min_distance = 6.0
 	material.distance_fade_max_distance = 14.0
 
@@ -1097,6 +1156,9 @@ func _apply_lighting() -> void:
 	# One air for the whole ride. Parked at an overlook the fog used to clear
 	# and the forward scatter drop, which read as the lighting jumping brighter
 	# the moment the rider reached the top.
+	# Fog rides as a mood key like everything else: 0/1 lerps across the clock,
+	# so the air can fade in with the light instead of snapping.
+	_environment.fog_enabled = float(mood.get("fog_enabled", 1.0)) > 0.5
 	_environment.fog_density = mood["fog_density"]
 	_environment.fog_aerial_perspective = mood["fog_aerial"]
 	_environment.fog_sun_scatter = mood["fog_sun_scatter"]
@@ -1112,6 +1174,10 @@ func _apply_lighting() -> void:
 	sun.light_energy = mood["light_energy"]
 	sun.rotation_degrees = mood["light_angle"]
 	sun.light_angular_distance = mood["angular_distance"]
+	# Shadow reach rides with the hour: a low sun throws shadows three times
+	# its height or more, and a 40 m map cut dusk's long shadows at the verge.
+	# Day keeps the tight map — short shadows never leave it.
+	sun.directional_shadow_max_distance = mood["shadow_distance"]
 	_fill.light_color = mood["fill_color"]
 	_fill.light_energy = mood["fill_energy"]
 	# The lake is a mirror before it is water: at the grazing angle a seated

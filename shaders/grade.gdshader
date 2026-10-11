@@ -85,7 +85,12 @@ void fragment() {
 	// blue leads, apply each tint as a luminance-only multiplier so the frame
 	// keeps its exposure shaping while the hue stays put. Warm pixels (clouds,
 	// fields, the sunset itself) are unaffected: they get the full tints.
-	float blue_lead = clamp((c.b - max(c.r, c.g)) * 6.0, 0.0, 1.0);
+	// b>r is the reliable signature of a blue surface: a pale steel sky
+	// arrives with b only a shade over r — the LUT spends the b-g lead
+	// first — while warm pixels keep b<r. The probe showed dome leads as
+	// thin as 0.03, so the gain is high on purpose; a weaker gain left half
+	// the warm tints applied and the mint came back.
+	float blue_lead = clamp((c.b - c.r) * 30.0, 0.0, 1.0);
 
 	// Luminance split-tone: dusk-pastel shadows, warm-cream highlights.
 	vec3 lum_tint = mix(dark_tint, light_tint, smoothstep(0.06, 0.62, lum)) * (1.0 + lum_split) - lum_split;
