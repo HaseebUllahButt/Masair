@@ -20,6 +20,8 @@ const DIMS := [
 	Vector2(1.2, 3.3),
 	Vector2(1.25, 3.5),
 ]
+## Real traffic is mostly monochrome — silvers, greys, white — with colour as
+## the accent, so the back rows outweigh the bright ones.
 const BODY_COLORS: Array[Color] = [
 	Color("c0392b"),
 	Color("2f6fa8"),
@@ -31,11 +33,24 @@ const BODY_COLORS: Array[Color] = [
 	Color("d2621d"),
 	Color("36485c"),
 	Color("d96a94"),
+	Color("dfe3e6"),
+	Color("b9bfc4"),
+	Color("7d848c"),
+	Color("3a4048"),
+	Color("f4f5f2"),
+	Color("5d6d7e"),
 ]
 const LANE_CLEARANCE_AHEAD := 15.0
 const LANE_CLEARANCE_BEHIND := 12.0
 const MIN_FOLLOW_GAP := 7.0
 const FOLLOW_TIME := 1.05
+## Seconds to materialise. A car that simply *is* there is a pop; one that
+## fades in a few hundred metres out reads as cresting the last dip.
+const FADE_IN := 1.5
+## Cruise is a band, not a set speed: each driver creeps a couple of percent
+## either side of it over tens of seconds, which is what separates a queue of
+## cars from a freight train.
+const CRUISE_DRIFT := 0.03
 ## A lane change is a manoeuvre, not a sideways translation. The old fixed
 ## 3.2 m/s step crossed one of these wide lanes in about 1.7 seconds and began
 ## at full lateral speed on the decision frame, which made cars scurry aside.
@@ -67,6 +82,12 @@ var speed: float = 14.0
 var base_speed: float = 14.0
 var lane: int = 1
 var lateral: float = 0.0
+## +1 runs with the rider's flow, -1 is the opposing stream on the outer lane
+## past the solid centre line (screen-left — this road drives on the right).
+## The group contract remote riders already satisfy — `direction` is part of
+## it, defaulting to +1 there too.
+var direction: int = 1
+var _oncoming_lane: int = 2
 
 var _target_lateral: float = 0.0
 var _lane_timer: float = 6.0
@@ -81,6 +102,20 @@ var _lane_change_duration: float = 3.0
 var _horn_reaction_timer: float = -1.0
 var _horn_from_lateral: float = 0.0
 var _horn_cooldown: float = 0.0
+## In-lane wander — every driver holds a slightly different line, drifting a
+## hand's width either way over seconds. Applied to the drawn transform only:
+## `lateral` stays the lane logic coordinate so follow and clearance maths are
+## never noised by it.
+var _wander: float = 0.0
+var _wander_t: float = 0.0
+var _wander_amp: float = 0.14
+var _wander_w1: float = 0.45
+var _wander_w2: float = 1.4
+var _wander_p1: float = 0.0
+var _wander_p2: float = 0.0
+var _drawn_lateral: float = 0.0
+var _cruise_phase: float = 0.0
+var _fade: float = 1.0
 var _player: Node3D
 var _half_w: float = 0.95
 var _half_len: float = 2.1
@@ -97,14 +132,16 @@ var _blinkers: Array[MeshInstance3D] = []
 var _blink_phase: float = 0.0
 
 
-func setup(vehicle_kind: int, start_lane: int, z: float, cruise: float, color_index: int) -> void:
+func setup(vehicle_kind: int, start_lane: int, z: float, cruise: float, color_index: int, dir: int = 1) -> void:
 	kind = vehicle_kind
 	lane = start_lane
 	track_z = z
 	speed = maxf(cruise, 2.0)
 	base_speed = speed
+	direction = dir
 	_path = get_node("/root/RoadPath")
 	_game = get_node_or_null("/root/GameManager")
+	_oncoming_lane = int(_path.LANE_COUNT) - 1
 	lateral = _path.lane_x(lane)
 	_target_lateral = lateral
 	_signal_lateral = lateral
@@ -121,6 +158,18 @@ func setup(vehicle_kind: int, start_lane: int, z: float, cruise: float, color_in
 	_near_miss_given = false
 
 	_blink_phase = randf()
+	# Wide vehicles hold their lane tighter: a lorry has under a metre to the
+	# paint either side, a hatchback has a lane and a half.
+	_wander_amp = randf_range(0.07, 0.24) * clampf((1.35 - _half_w) / 0.45, 0.3, 1.0)
+	_wander_w1 = randf_range(0.30, 0.62)
+	_wander_w2 = randf_range(1.1, 1.9)
+	_wander_p1 = randf() * TAU
+	_wander_p2 = randf() * TAU
+	_wander_t = randf() * 100.0
+	_cruise_phase = randf() * TAU
+	_update_wander(0.0)
+	_drawn_lateral = lateral + _wander
+	_fade = 0.0
 
 	if _mesh_instance == null:
 		_mesh_instance = MeshInstance3D.new()
@@ -130,7 +179,7 @@ func setup(vehicle_kind: int, start_lane: int, z: float, cruise: float, color_in
 		# clean — the dotted screen-door that killed shadow maps the first time
 		# was the old kilometre-wide map's texel size, not the cars.
 		_mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-		_mesh_instance.visibility_range_end = 380.0
+		_mesh_instance.visibility_range_end = 560.0
 		LowPoly.cheap_draw(_mesh_instance)
 		add_child(_mesh_instance)
 	_mesh_instance.mesh = _mesh_for(kind, color_index)
@@ -147,6 +196,7 @@ func setup(vehicle_kind: int, start_lane: int, z: float, cruise: float, color_in
 		_blinkers[i].mesh = _blinker_mesh(kind, -1.0 if i == 0 else 1.0)
 		_blinkers[i].visible = false
 	add_to_group("traffic")
+	_apply_fade(0.0)
 	_place()
 
 
@@ -182,7 +232,7 @@ func _lamp_child(node_name: String) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.name = node_name
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	mi.visibility_range_end = 380.0
+	mi.visibility_range_end = 560.0
 	LowPoly.cheap_draw(mi)
 	add_child(mi)
 	return mi
@@ -199,7 +249,8 @@ func can_hear_horn(rider_z: float, rider_lateral: float) -> bool:
 	## every visible car. Cars already committed to a manoeuvre keep doing it.
 	var gap := track_z - rider_z
 	return (
-		gap >= 4.0
+		direction > 0
+		and gap >= 4.0
 		and gap <= HORN_HEARING_DISTANCE
 		and absf(rider_lateral - lateral) <= HORN_ALIGNMENT
 		and _horn_cooldown <= 0.0
@@ -225,11 +276,16 @@ func _physics_process(delta: float) -> void:
 	_lane_timer -= delta
 	_lane_change_lock = maxf(0.0, _lane_change_lock - delta)
 	_horn_cooldown = maxf(0.0, _horn_cooldown - delta)
-	_update_horn_response(delta)
-	_update_lane_plan(delta)
+	_update_wander(delta)
+	_apply_fade(delta)
+	if direction > 0:
+		# Only same-direction drivers react to the horn or juggle lanes —
+		# opposing traffic holds its lane and its nerve.
+		_update_horn_response(delta)
+		_update_lane_plan(delta)
 
 	var lead := _nearest_lead()
-	if lead != null and _can_plan_lane_change():
+	if direction > 0 and lead != null and _can_plan_lane_change():
 		var gap: float = float(lead.track_z) - track_z - float(lead.get_half_length()) - _half_len
 		if gap < speed * FOLLOW_TIME + MIN_FOLLOW_GAP and _try_escape_lane():
 			lead = _nearest_lead()
@@ -241,9 +297,11 @@ func _physics_process(delta: float) -> void:
 		if randf() < 0.12:
 			_try_escape_lane()
 
-	var target_speed := base_speed
+	# The driver's own cruise this second — a slow wander around base_speed.
+	var cruise := base_speed * (1.0 + CRUISE_DRIFT * sin(_wander_t * 0.11 + _cruise_phase))
+	var target_speed := cruise
 	if lead != null:
-		var gap: float = float(lead.track_z) - track_z - float(lead.get_half_length()) - _half_len
+		var gap: float = (float(lead.track_z) - track_z) * float(direction) - float(lead.get_half_length()) - _half_len
 		var safe_gap := MIN_FOLLOW_GAP + speed * FOLLOW_TIME
 		if gap < safe_gap:
 			# Braking is proportional to the closing gap and the lead's speed. This
@@ -251,7 +309,7 @@ func _physics_process(delta: float) -> void:
 			target_speed = maxf(2.0, float(lead.speed) - maxf(0.0, safe_gap - gap) * 1.7)
 		elif gap < safe_gap + 30.0:
 			target_speed = minf(target_speed, float(lead.speed) + (gap - safe_gap) * 0.22)
-	if _player != null and _player.alive:
+	if direction > 0 and _player != null and _player.alive:
 		var player_gap: float = float(_player.track_z) - track_z - _half_len - float(_player.half_length)
 		if player_gap > 0.0 and absf(float(_player.lateral) - lateral) < 2.25:
 			var player_safe := MIN_FOLLOW_GAP + speed * FOLLOW_TIME
@@ -267,20 +325,44 @@ func _physics_process(delta: float) -> void:
 	var rate := 11.0 if target_speed < speed else 4.0
 	# Brake lights come from the demand, not from the achieved speed: they light as
 	# the car decides to slow, which is the half second of warning that makes
-	# traffic ahead readable instead of a wall that appears.
-	_brake_lamps.visible = target_speed < speed - 0.4
+	# traffic ahead readable instead of a wall that appears. Measured against
+	# this driver's own cruise so the wander above can never flicker them.
+	_brake_lamps.visible = target_speed < speed - 0.4 and target_speed < cruise - 0.5
 	speed = move_toward(speed, target_speed, rate * delta)
-	track_z = _path.advance(track_z, speed * delta)
+	track_z = _path.advance(track_z, float(direction) * speed * delta)
 
-	var before := lateral
+	var before := _drawn_lateral
 	_advance_lane_change(delta)
 	_signal(delta)
-	_place((lateral - before) / maxf(speed * delta, 0.25))
+	_drawn_lateral = lateral + _wander
+	_place((_drawn_lateral - before) / maxf(speed * delta, 0.25))
+
+
+func _update_wander(_delta: float) -> void:
+	_wander_t += _delta
+	# Rolling speed gates the drift — a stationary queue does not wander.
+	var settle := smoothstep(2.0, 9.0, speed)
+	_wander = _wander_amp * settle * (
+		sin(_wander_t * _wander_w1 + _wander_p1) + 0.45 * sin(_wander_t * _wander_w2 + _wander_p2)
+	)
+
+
+func _apply_fade(delta: float) -> void:
+	if _fade >= 1.0:
+		return
+	_fade = minf(_fade + delta / FADE_IN, 1.0)
+	var tr := (1.0 - _fade) * 0.85
+	_mesh_instance.transparency = tr
+	_contact_shadow.transparency = tr
+	_brake_lamps.transparency = tr
+	for blinker in _blinkers:
+		blinker.transparency = tr
 
 
 func _can_plan_lane_change() -> bool:
 	return (
-		_lane_timer <= 0.0
+		direction > 0
+		and _lane_timer <= 0.0
 		and _lane_change_lock <= 0.0
 		and _pending_lane < 0
 		and not _lane_change_active
@@ -353,13 +435,20 @@ func _nearest_lead() -> Node3D:
 		var vehicle := other as Node3D
 		if vehicle == null or vehicle == self or not ("track_z" in vehicle):
 			continue
+		# Only the flow going your way can be a lead: a remote rider or a car
+		# coming at you is for the rider to read, not for this car to follow.
+		var other_dir := 1
+		if "direction" in vehicle:
+			other_dir = int(vehicle.direction)
+		if other_dir != direction:
+			continue
 		if absf(float(vehicle.lateral) - lane_centre) > 2.25:
 			continue
-		var gap: float = float(vehicle.track_z) - track_z
+		var gap: float = (float(vehicle.track_z) - track_z) * float(direction)
 		if gap > 0.0 and gap < closest_gap:
 			closest = vehicle
 			closest_gap = gap
-	if _player != null and _player.alive and absf(float(_player.lateral) - lane_centre) <= 2.25:
+	if direction > 0 and _player != null and _player.alive and absf(float(_player.lateral) - lane_centre) <= 2.25:
 		var player_gap: float = float(_player.track_z) - track_z
 		if player_gap > 0.0 and player_gap < closest_gap:
 			closest = _player
@@ -372,7 +461,9 @@ func _try_escape_lane(preferred_away_from: float = NAN) -> bool:
 	var candidates: Array[int] = []
 	if lane > 0:
 		candidates.append(lane - 1)
-	if lane < _path.LANE_COUNT - 1:
+	# The outer lane is the oncoming flow — an escape is a pass through the
+	# lanes going your way, never a dart into headlights.
+	if lane < _oncoming_lane - 1:
 		candidates.append(lane + 1)
 	if candidates.size() > 1:
 		if is_nan(preferred_away_from):
@@ -403,6 +494,8 @@ func _begin_lane_change(next: int) -> void:
 
 func _lane_is_clear(candidate: int) -> bool:
 	if candidate < 0 or candidate >= _path.LANE_COUNT:
+		return false
+	if direction > 0 and candidate == _oncoming_lane:
 		return false
 	var lane_centre: float = _path.lane_x(candidate)
 	for other in get_tree().get_nodes_in_group("traffic"):
@@ -435,9 +528,15 @@ func can_change_to_lane(candidate: int) -> bool:
 func _place(drift: float = 0.0) -> void:
 	# Traffic uses the same map-owned tarmac query as the rider. Lane centres are
 	# already inset, but the API keeps future map profiles from placing a large
-	# bus beyond a narrowed road edge.
-	var road_transform: Transform3D = _path.road_transform_at(track_z, lateral, _half_w)
-	road_transform.basis = road_transform.basis.rotated(road_transform.basis.y, atan(clampf(drift * 1.25, -0.42, 0.42)))
+	# bus beyond a narrowed road edge. The drawn lateral carries the in-lane
+	# wander; the logical one stays riveted for everyone else's maths.
+	var road_transform: Transform3D = _path.road_transform_at(track_z, _drawn_lateral, _half_w)
+	# Opposing traffic faces back down the route; the drift term then flips with
+	# the travel direction so a veer still points the nose where it is going.
+	var facing := 0.0 if direction > 0 else PI
+	road_transform.basis = road_transform.basis.rotated(
+		road_transform.basis.y, facing + atan(clampf(drift * float(direction) * 1.25, -0.42, 0.42))
+	)
 	global_transform = road_transform
 
 

@@ -228,13 +228,24 @@ func _run() -> void:
 	_start_server()
 	await _wait_frames(120)
 
+	# The spawned server needs a couple of wall-clock seconds to bind; a frame
+	# budget in a fast-ticking headless run can elapse before the port is even
+	# listening, which used to fail the test with the server mid-boot. Retry the
+	# handshake on a wall-clock deadline instead.
 	var raw := WebSocketPeer.new()
-	raw.connect_to_url("ws://127.0.0.1:%d" % WS_PORT)
-	if not await _wait_until(
-		func() -> bool:
-			raw.poll()
-			return raw.get_ready_state() == WebSocketPeer.STATE_OPEN,
-		WAIT, "raw socket never opened"):
+	var raw_deadline := Time.get_ticks_msec() + 15000
+	var raw_open := false
+	while Time.get_ticks_msec() < raw_deadline:
+		if raw.get_ready_state() == WebSocketPeer.STATE_CLOSED:
+			raw = WebSocketPeer.new()
+			raw.connect_to_url("ws://127.0.0.1:%d" % WS_PORT)
+		raw.poll()
+		if raw.get_ready_state() == WebSocketPeer.STATE_OPEN:
+			raw_open = true
+			break
+		OS.delay_msec(15)
+	check(raw_open, "raw socket never opened")
+	if not raw_open:
 		return _finish()
 	for i in 5:
 		raw.send_text(JSON.stringify({"t": "join", "name": "burst", "bike": 0}))
