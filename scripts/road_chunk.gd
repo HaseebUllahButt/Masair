@@ -11784,7 +11784,7 @@ func _belvedere_pave(b: LowPoly, za: float, zb: float, color: Color) -> void:
 		var b0: float = _platform_lateral(float(pair[1]), zb)
 		var b1: float = _platform_lateral(float(pair[0]), zb)
 		b.add_quad(
-			_p(za, minf(a0, a1), -0.05), _p(za, maxf(a0, a1), -0.05), _p(zb, maxf(b0, b1), -0.05), _p(zb, minf(b0, b1), -0.05), course.darkened(float(pair[2]))
+			_p_flat(za, minf(a0, a1), -0.05), _p_flat(za, maxf(a0, a1), -0.05), _p_flat(zb, maxf(b0, b1), -0.05), _p_flat(zb, minf(b0, b1), -0.05), course.darkened(float(pair[2]))
 		)
 	# Joints sit a finger below the flags so they read as shadow, not paint.
 	var j0: float = _platform_lateral(mid - 0.045, za)
@@ -11792,13 +11792,24 @@ func _belvedere_pave(b: LowPoly, za: float, zb: float, color: Color) -> void:
 	var k0: float = _platform_lateral(mid - 0.045, zb)
 	var k1: float = _platform_lateral(mid + 0.045, zb)
 	b.add_quad(
-		_p(za, minf(j0, j1), -0.028), _p(za, maxf(j0, j1), -0.028), _p(zb, maxf(k0, k1), -0.028), _p(zb, minf(k0, k1), -0.028), course.darkened(0.24)
+		_p_flat(za, minf(j0, j1), -0.028), _p_flat(za, maxf(j0, j1), -0.028), _p_flat(zb, maxf(k0, k1), -0.028), _p_flat(zb, minf(k0, k1), -0.028), course.darkened(0.24)
 	)
 	var e0: float = _platform_lateral(inner, zb)
 	var e1: float = _platform_lateral(outer, zb)
 	b.add_quad(
-		_p(zb - 0.10, minf(e0, e1), -0.028), _p(zb - 0.10, maxf(e0, e1), -0.028), _p(zb, maxf(e0, e1), -0.028), _p(zb, minf(e0, e1), -0.028), course.darkened(0.24)
+		_p_flat(zb - 0.10, minf(e0, e1), -0.028), _p_flat(zb - 0.10, maxf(e0, e1), -0.028), _p_flat(zb, maxf(e0, e1), -0.028), _p_flat(zb, minf(e0, e1), -0.028), course.darkened(0.24)
 	)
+
+
+func _p_flat(z: float, lateral: float, drop: float) -> Vector3:
+	## A point on the flag plane: `_p` drapes every vert by its own terrain_drop,
+	## and past the shelf lip that tips a "flat" flagstone onto its edge — the
+	## cream slat curtain the across shots kept finding under the balcony.
+	## Flagstones lie on a flat deck, so they keep their plan position but take
+	## their height from the inner shelf band.
+	var p := _p(z, lateral, drop)
+	p.y = _p(z, _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 0.5, z), drop).y
+	return p
 
 
 func _belvedere_deck_pave(b: LowPoly, streamed: bool = false) -> void:
@@ -11827,8 +11838,8 @@ func _belvedere_deck_pave(b: LowPoly, streamed: bool = false) -> void:
 	var m_i1 := _platform_lateral(inner, z1)
 	var m_o1 := _platform_lateral(outer, z1)
 	b.add_quad(
-		_p(z0, minf(m_i0, m_o0), -0.135), _p(z0, maxf(m_i0, m_o0), -0.135),
-		_p(z1, maxf(m_i1, m_o1), -0.135), _p(z1, minf(m_i1, m_o1), -0.135),
+		_p_flat(z0, minf(m_i0, m_o0), -0.135), _p_flat(z0, maxf(m_i0, m_o0), -0.135),
+		_p_flat(z1, maxf(m_i1, m_o1), -0.135), _p_flat(z1, minf(m_i1, m_o1), -0.135),
 		mortar
 	)
 	# Three courses, the outer one a darker border against the rail foot. The
@@ -11859,8 +11870,8 @@ func _belvedere_deck_pave(b: LowPoly, streamed: bool = false) -> void:
 			if border:
 				col = kerb.lightened(jit * 0.08)
 			b.add_quad(
-				_p(fz, minf(a0, a1), -0.15), _p(fz, maxf(a0, a1), -0.15),
-				_p(fe, maxf(b0, b1), -0.15), _p(fe, minf(b0, b1), -0.15),
+				_p_flat(fz, minf(a0, a1), -0.15), _p_flat(fz, maxf(a0, a1), -0.15),
+				_p_flat(fe, maxf(b0, b1), -0.15), _p_flat(fe, minf(b0, b1), -0.15),
 				col
 			)
 			# Worn edge: a thin weathered line down one side of some flags —
@@ -11869,8 +11880,8 @@ func _belvedere_deck_pave(b: LowPoly, streamed: bool = false) -> void:
 				var w0: float = _platform_lateral(c_in + 0.07, fz)
 				var w1: float = _platform_lateral(c_in + 0.07, fe)
 				b.add_quad(
-					_p(fz, minf(a0, w0), -0.152), _p(fz, maxf(a0, w0), -0.152),
-					_p(fe, maxf(b1, w1), -0.152), _p(fe, minf(b1, w1), -0.152),
+					_p_flat(fz, minf(a0, w0), -0.152), _p_flat(fz, maxf(a0, w0), -0.152),
+					_p_flat(fe, maxf(b1, w1), -0.152), _p_flat(fe, minf(b1, w1), -0.152),
 					col.darkened(0.10)
 				)
 			fz += FLAG + JOINT
@@ -11881,8 +11892,8 @@ func _belvedere_deck_pave(b: LowPoly, streamed: bool = false) -> void:
 	var k0: float = _platform_lateral(outer - 0.34, z0)
 	var k1: float = _platform_lateral(outer - 0.34, z1)
 	b.add_quad(
-		_p(z0, minf(k0, m_o0), -0.175), _p(z0, maxf(k0, m_o0), -0.175),
-		_p(z1, maxf(k1, m_o1), -0.175), _p(z1, minf(k1, m_o1), -0.175),
+		_p_flat(z0, minf(k0, m_o0), -0.175), _p_flat(z0, maxf(k0, m_o0), -0.175),
+		_p_flat(z1, maxf(k1, m_o1), -0.175), _p_flat(z1, minf(k1, m_o1), -0.175),
 		kerb
 	)
 	# The balcony's floor is the same kit sheet — a bare eight-by-three metre
@@ -11897,8 +11908,8 @@ func _belvedere_deck_pave(b: LowPoly, streamed: bool = false) -> void:
 	var bi1 := _platform_lateral(b_in, bc1)
 	var bo1 := _platform_lateral(b_out, bc1)
 	b.add_quad(
-		_p(bc0, minf(bi0, bo0), -0.135), _p(bc0, maxf(bi0, bo0), -0.135),
-		_p(bc1, maxf(bi1, bo1), -0.135), _p(bc1, minf(bi1, bo1), -0.135),
+		_p_flat(bc0, minf(bi0, bo0), -0.135), _p_flat(bc0, maxf(bi0, bo0), -0.135),
+		_p_flat(bc1, maxf(bi1, bo1), -0.135), _p_flat(bc1, minf(bi1, bo1), -0.135),
 		mortar
 	)
 	var pz := bc0
@@ -11916,8 +11927,8 @@ func _belvedere_deck_pave(b: LowPoly, streamed: bool = false) -> void:
 		elif wear > 0.9:
 			col = col.lightened(0.07)
 		b.add_quad(
-			_p(pz, minf(a0, a1), -0.15), _p(pz, maxf(a0, a1), -0.15),
-			_p(pe, maxf(a0e, a1e), -0.15), _p(pe, minf(a0e, a1e), -0.15),
+			_p_flat(pz, minf(a0, a1), -0.15), _p_flat(pz, maxf(a0, a1), -0.15),
+			_p_flat(pe, maxf(a0e, a1e), -0.15), _p_flat(pe, minf(a0e, a1e), -0.15),
 			col
 		)
 		pz += FLAG + JOINT
@@ -11928,8 +11939,8 @@ func _belvedere_deck_pave(b: LowPoly, streamed: bool = false) -> void:
 	var e0: float = _platform_lateral(b_out, bc0)
 	var e1: float = _platform_lateral(b_out, bc1)
 	b.add_quad(
-		_p(bc0, minf(l0, e0), -0.15), _p(bc0, maxf(l0, e0), -0.15),
-		_p(bc1, maxf(l1, e1), -0.15), _p(bc1, minf(l1, e1), -0.15),
+		_p_flat(bc0, minf(l0, e0), -0.15), _p_flat(bc0, maxf(l0, e0), -0.15),
+		_p_flat(bc1, maxf(l1, e1), -0.15), _p_flat(bc1, minf(l1, e1), -0.15),
 		kerb
 	)
 

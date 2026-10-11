@@ -589,11 +589,24 @@ class Capture:
 	func _shoot() -> void:
 		if hide != "":
 			for node_name in hide.split(","):
-				# Chunk meshes repeat the same node name once per chunk —
-				# find_child hides one copy and leaves the rest, which reads as
-				# "not the culprit". Hide every match.
-				for node in get_tree().root.find_children(node_name.strip_edges(), "Node3D", true, false):
-					(node as Node3D).visible = false
+				var pattern := node_name.strip_edges()
+				if pattern.ends_with("*"):
+					# Prefix wildcard: "@MultiMeshInstance3D@*" hides every
+					# auto-named batch, which is how unnamed prop commits get
+					# ablated when their id changes per run.
+					var prefix := pattern.trim_suffix("*")
+					var stack: Array[Node] = [get_tree().root]
+					while not stack.is_empty():
+						var n: Node = stack.pop_back()
+						if n is Node3D and String(n.name).begins_with(prefix):
+							(n as Node3D).visible = false
+						stack.append_array(n.get_children())
+				else:
+					# Chunk meshes repeat the same node name once per chunk —
+					# find_child hides one copy and leaves the rest, which reads as
+					# "not the culprit". Hide every match.
+					for node in get_tree().root.find_children(pattern, "Node3D", true, false):
+						(node as Node3D).visible = false
 		# Two frames: the one where the new seat yaw lands in _update_seat, and
 		# the one that is actually drawn. A single post_draw can race the rig.
 		await RenderingServer.frame_post_draw
@@ -677,10 +690,26 @@ class Capture:
 						best_pos = wp
 				i += 3
 			if local_best < INF:
-				hits.append({"d": local_best, "name": batch["name"], "pos": best_pos})
+				var h := {"d": local_best, "name": batch["name"], "pos": best_pos}
+				if batch.has("mmi"):
+					var mmi: MultiMeshInstance3D = batch["mmi"]
+					var mm := mmi.multimesh
+					var xf2: Transform3D = batch["xf"]
+					h["extra"] = " scale=%s col=%s mat=%s" % [
+						xf2.basis.get_scale().snapped(Vector3.ONE * 0.05),
+						(mm.get_instance_color(batch["idx"]).to_html(false)
+							if mm.use_colors else "-"),
+						(mmi.material_override.get_class()
+							if mmi.material_override else "none")
+					]
+				hits.append(h)
 		hits.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a["d"]) < float(b["d"]))
 		for h in hits.slice(0, 8):
-			print("trace %.0f,%.0f -> %.1f %s @%s" % [px.x, px.y, float(h["d"]), h["name"], (h["pos"] as Vector3).snapped(Vector3.ONE)])
+			print("trace %.0f,%.0f -> %.1f %s @%s%s" % [
+				px.x, px.y, float(h["d"]), h["name"],
+				(h["pos"] as Vector3).snapped(Vector3.ONE),
+				String(h.get("extra", ""))
+			])
 
 	func _pick_report() -> void:
 		## Screen-space mesh census: cast the current camera's rays on a coarse
@@ -754,6 +783,8 @@ class Capture:
 						"tris": faces,
 						"aabb": aabb,
 						"xf": xf,
+						"mmi": node,
+						"idx": i,
 					}
 				)
 		elif node is MeshInstance3D and node.visible and node.mesh:
