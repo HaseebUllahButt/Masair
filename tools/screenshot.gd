@@ -485,6 +485,13 @@ class Capture:
 			_settle_wait += delta
 			_settled = _settle_frames >= 6 or _settle_wait > 300.0
 			holding = not _settled
+			if Engine.get_process_frames() % 120 == 0:
+				print(
+					"settle: wait=%.0f frames=%d idle=%s state=%s" % [
+						_settle_wait, _settle_frames, str(idle),
+						s.call("debug_state") if s and s.has_method("debug_state") else "?",
+					]
+				)
 		if not holding:
 			_elapsed += delta
 		if dry:

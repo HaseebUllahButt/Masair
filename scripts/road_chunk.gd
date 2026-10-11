@@ -8064,28 +8064,34 @@ func _build_islet() -> void:
 	var hand := 1.0 if posmod(
 		hash(Vector2i(int(round(_vp_centre)), int(_path.world_seed) ^ 0x51ed)), 2
 	) == 0 else -1.0
-	var z: float = _vp_centre + hand * 110.0
+	var z: float = _vp_centre + hand * 55.0
 	var near: float = float(_path.viewpoint_near_shore(z))
 	var far: float = float(_path.viewpoint_far_shore(z, _vp_centre))
 	if far - near < 110.0:
 		return
-	var out: float = lerpf(near + 34.0, far - 44.0, 0.5)
+	# The deck stands eighty-odd metres over the water, so anything parked in
+	# the middle of the lake vanishes under the rail — the island has to sit
+	# well out and stand tall to earn its place in the frame, the way Bled's
+	# island reads from the castle terrace and not from the shore.
+	var out: float = far - 60.0
+	if out - near < 80.0:
+		return
 	var lat: float = _vp_side * out
 	var wy: float = _vp_water_y - _origin.y
 	var rock := Color("414a3e")
 	var rock_wet := Color("2b332c")
-	var moss := Color("4a6239")
+	var moss := Color("3a4c2e")
 	var plaster := Color("ddd3bd")
 	var slate := Color("37332f")
 	var leaf := Color("24402d")
 	var b := LowPoly.new()
 	const SIDES := 9
 	var rings := [
-		{"y": wy - 0.7, "r": 16.5, "c": rock_wet},
-		{"y": wy + 1.4, "r": 11.5, "c": rock},
-		{"y": wy + 2.9, "r": 6.6, "c": moss.darkened(0.14)},
+		{"y": wy - 0.9, "r": 30.0, "c": rock_wet},
+		{"y": wy + 2.6, "r": 21.0, "c": rock},
+		{"y": wy + 5.2, "r": 12.0, "c": moss.darkened(0.14)},
 	]
-	var apex := _far_point(z, lat, wy + 4.1)
+	var apex := _far_point(z, lat, wy + 7.4)
 	b.hull_origin = _far_point(z, lat, wy + 2.0)
 	for i in SIDES:
 		var a0: float = TAU * float(i) / SIDES + 0.17
@@ -8138,39 +8144,39 @@ func _build_islet() -> void:
 		# islet carries, drawn one ring out so it sits on the sheet, not in it.
 		b.hull_origin = apex - Vector3(0.0, 30.0, 0.0)
 		b.add_hull_quad(
-			_far_point(z + sin(a0) * 17.2 * wob0, lat + cos(a0) * 17.2 * wob0, wy + 0.05),
-			_far_point(z + sin(a1) * 17.2 * wob1, lat + cos(a1) * 17.2 * wob1, wy + 0.05),
-			_far_point(z + sin(a1) * 20.5 * wob1, lat + cos(a1) * 20.5 * wob1, wy + 0.05),
-			_far_point(z + sin(a0) * 20.5 * wob0, lat + cos(a0) * 20.5 * wob0, wy + 0.05),
+			_far_point(z + sin(a0) * 31.0 * wob0, lat + cos(a0) * 31.0 * wob0, wy + 0.05),
+			_far_point(z + sin(a1) * 31.0 * wob1, lat + cos(a1) * 31.0 * wob1, wy + 0.05),
+			_far_point(z + sin(a1) * 36.5 * wob1, lat + cos(a1) * 36.5 * wob1, wy + 0.05),
+			_far_point(z + sin(a0) * 36.5 * wob0, lat + cos(a0) * 36.5 * wob0, wy + 0.05),
 			_water_color().lightened(0.09)
 		)
 		b.hull_origin = _far_point(z, lat, wy + 2.0)
 	# The beacon: a squat nave with a hipped cap and a slim belfry — the Bled
 	# chapel silhouette. Pale plaster catches the key where bare rock would
 	# dissolve into the water tone at three hundred metres.
-	var top := wy + 4.0
+	var top := wy + 7.2
 	var vb := _vista_basis
 	b.add_box(
-		Transform3D(vb, _far_point(z + 1.8, lat - _vp_side * 1.6, top + 1.7)),
-		Vector3(3.0, 3.4, 2.3),
+		Transform3D(vb, _far_point(z + 2.6, lat - _vp_side * 2.4, top + 2.4)),
+		Vector3(4.4, 4.8, 3.4),
 		plaster
 	)
 	b.add_cone(
-		Transform3D(vb.rotated(vb.y, PI * 0.25), _far_point(z + 1.8, lat - _vp_side * 1.6, top + 3.4)),
-		2.2, 1.5, 4, slate
+		Transform3D(vb.rotated(vb.y, PI * 0.25), _far_point(z + 2.6, lat - _vp_side * 2.4, top + 4.8)),
+		3.2, 2.2, 4, slate
 	)
 	b.add_box(
-		Transform3D(vb, _far_point(z + 1.0, lat - _vp_side * 3.0, top + 2.4)),
-		Vector3(1.0, 4.8, 1.0),
+		Transform3D(vb, _far_point(z + 1.4, lat - _vp_side * 4.4, top + 3.4)),
+		Vector3(1.4, 6.8, 1.4),
 		plaster.lightened(0.05)
 	)
 	b.add_cone(
-		Transform3D(vb.rotated(vb.y, PI * 0.25), _far_point(z + 1.0, lat - _vp_side * 3.0, top + 4.8)),
-		0.9, 1.2, 4, slate
+		Transform3D(vb.rotated(vb.y, PI * 0.25), _far_point(z + 1.4, lat - _vp_side * 4.4, top + 6.8)),
+		1.2, 1.6, 4, slate
 	)
 	# The copse: a handful of dark crowns holding the tower in the middle of
 	# the rock — bare it reads as a chimney, wooded it reads as a place.
-	for t in [[0.0, 2.8, 2.1, 6.8], [-3.4, -1.0, 1.8, 5.2], [3.0, -3.2, 2.4, 7.4], [-1.5, 4.2, 1.5, 4.4]]:
+	for t in [[0.0, 4.0, 3.0, 9.5], [-4.8, -1.4, 2.6, 7.2], [4.2, -4.6, 3.4, 10.5], [-2.2, 6.0, 2.2, 6.2]]:
 		b.add_cone(
 			Transform3D(vb, _far_point(z + float(t[0]), lat + _vp_side * float(t[1]), top)),
 			float(t[2]), float(t[3]), 6, leaf.lerp(moss, _rng.randf() * 0.3)
@@ -8184,26 +8190,42 @@ func _build_spires() -> void:
 	## The Tre Cime signature — a group of jagged towers standing on the far
 	## ground between the shore and the painted skyline. Every range in the
 	## view is a smooth brow; a rock tooth is the silhouette a pass is famous
-	## for. Downland gets the same architecture squatter — a tor group, which
-	## is the same photograph at a different scale.
+	## for.
 	var b := LowPoly.new()
 	var specs := [
 		# z offset from the axis, out beyond the far shore, height, half-width, lean
-		[-150.0, 300.0, 118.0, 26.0, -7.0],
-		[-80.0, 350.0, 150.0, 30.0, 5.0],
-		[8.0, 290.0, 96.0, 22.0, 10.0],
+		[-150.0, 300.0, 100.0, 30.0, -7.0],
+		[-80.0, 350.0, 125.0, 34.0, 5.0],
+		[8.0, 290.0, 80.0, 26.0, 10.0],
 	]
+	# One ridge system, one architecture — the teeth are the same massif on
+	# either side of the pass; only the stone tint shifts with the biome. The
+	# tones sit well under everything the dusk key can throw at them: rock
+	# teeth silhouette dark against the ranges, never pale obelisks.
+	var stone := Color("1e242c")
+	var stone_hi := Color("3a444f")
 	if _vp_theme == Env.COUNTRY:
-		specs = [
-			[-150.0, 300.0, 62.0, 34.0, -5.0],
-			[-80.0, 350.0, 78.0, 40.0, 4.0],
-			[8.0, 290.0, 52.0, 28.0, 8.0],
-		]
-	var stone := Color("5d6a75")
-	var stone_hi := Color("8d99a4")
-	if _vp_theme == Env.COUNTRY:
-		stone = Color("646d5c")
-		stone_hi = Color("8a917e")
+		stone = Color("272e22")
+		stone_hi = Color("46503c")
+	# The shared talus apron: one long dark shoulder running under all three
+	# towers, so the group reads as a massif with pinnacles, not three
+	# standing stones parked on a lawn.
+	var apron_z: float = _vp_centre - 70.0
+	var apron_out: float = float(_path.viewpoint_far_shore(apron_z, _vp_centre)) + 300.0
+	var apron_y: float = _far_ground_y(apron_z, apron_out) - 8.0 - _origin.y
+	b.hull_origin = _far_point(apron_z, _vp_side * apron_out, apron_y + 20.0)
+	for i in 7:
+		var a0: float = TAU * float(i) / 7.0
+		var a1: float = TAU * float(i + 1) / 7.0
+		var r0 := 120.0 * (1.0 + 0.18 * sin(float(i) * 2.3 + _vp_phase))
+		var r1 := 120.0 * (1.0 + 0.18 * sin(float(i + 1) * 2.3 + _vp_phase))
+		b.add_hull_quad(
+			_far_point(apron_z + sin(a0) * r0, _vp_side * apron_out + cos(a0) * r0 * 0.45, apron_y),
+			_far_point(apron_z + sin(a1) * r1, _vp_side * apron_out + cos(a1) * r1 * 0.45, apron_y),
+			_far_point(apron_z + sin(a1) * r1 * 0.42, _vp_side * apron_out + cos(a1) * r1 * 0.19, apron_y + 38.0),
+			_far_point(apron_z + sin(a0) * r0 * 0.42, _vp_side * apron_out + cos(a0) * r0 * 0.19, apron_y + 38.0),
+			_facet_tone(stone, 0.12 * sin(float(i) * 1.9))
+		)
 	for s in specs:
 		var z: float = _vp_centre + float(s[0])
 		var out: float = float(_path.viewpoint_far_shore(z, _vp_centre)) + float(s[1])
@@ -8232,8 +8254,8 @@ func _spire(
 	## column, the way a dolomite tower never stands plumb. A pale cap band
 	## near the summit is the lit crest the eye finds first.
 	const SIDES := 5
-	const FRACS := [0.0, 0.34, 0.62, 0.86, 1.0]
-	const WID := [1.0, 0.62, 0.38, 0.20, 0.015]
+	const FRACS := [0.0, 0.45, 0.75, 0.92, 1.0]
+	const WID := [1.0, 0.88, 0.70, 0.55, 0.22]
 	var spin := _vp_phase * 0.7
 	b.hull_origin = _far_point(z, lat, base_y + height * 0.5)
 	for k in FRACS.size() - 1:
@@ -8260,54 +8282,68 @@ func _spire(
 func _build_bastion() -> void:
 	## The crag the terrace stands on. From across the water the belvedere's
 	## plinth met the face as a single thin course over a smooth dome — a
-	## shelf, not a place. Three stepped rock buttresses continue the masonry
-	## down the chord under the platform span, so the terrace reads as a
-	## bastion on bedrock the way Bled castle or Glacier Point does — the
-	## drop you can see is what makes the rail worth leaning on.
+	## shelf, not a place. Stepped rock benches run the platform span down the
+	## face, so the terrace reads as a bastion on bedrock the way Bled castle
+	## or Glacier Point does — the drop you can see is what makes the rail
+	## worth leaning on.
 	var pal := _face_scarp_palette()
 	var rock: Color = pal["rock_lo"]
 	var lip: Color = pal["lip"]
 	var b := LowPoly.new()
 	var half: float = RoadPathGD.PLATFORM_HALF_LENGTH
 	var placed := 0
-	for zoff in [-0.72, -0.34, 0.0, 0.36, 0.72]:
-		var z: float = _vp_centre + zoff * half
+	# The bastion is one stepped apron, not a row of blocks: hull strips run
+	# continuously along the platform span, each course's bottom edge pushed
+	# a touch further out than its top — the battered profile of a retaining
+	# crag the way Bled's promontory reads from the lake. Every strip stays
+	# inside the live arc; past the fall line the chord bridges drowned apron
+	# and a wall keyed to it stands on air.
+	var zs: Array[float] = []
+	var profs: Array[Dictionary] = []
+	for i in 9:
+		var z: float = _vp_centre + lerpf(-0.82, 0.82, float(i) / 8.0) * half
 		var prof := _face_profile(z)
 		if prof.is_empty() or not _face_is_face(prof):
 			continue
+		zs.append(z)
+		profs.append(prof)
+	if zs.size() < 2:
+		return
+	var fmaxs := PackedFloat32Array()
+	for p in profs:
+		fmaxs.append(minf(0.85, _face_live_arc(p) / float(p["total"]) * 0.9))
+	b.hull_origin = _face_chord_point(zs[0], _profile_out(profs[0], 0.3)) + Vector3(0.0, 8.0, 0.0)
+	const COURSES := 3
+	for s in COURSES:
+		var ft0: float = 0.10 + 0.75 * float(s) / float(COURSES)
+		var ft1: float = 0.10 + 0.75 * float(s + 1) / float(COURSES)
+		var proud := float(s) * 2.0 + 1.2
+		for j in range(zs.size() - 1):
+			var fa := minf(ft0, fmaxs[j])
+			var fb := minf(ft1, fmaxs[j])
+			var fc := minf(ft1, fmaxs[j + 1])
+			var fd := minf(ft0, fmaxs[j + 1])
+			var pa := _face_chord_point(zs[j], _profile_out(profs[j], fa)) + _vista_basis.x * (_vp_side * proud)
+			var pb := _face_chord_point(zs[j], _profile_out(profs[j], fb)) + _vista_basis.x * (_vp_side * (proud + 1.4))
+			var pc := _face_chord_point(zs[j + 1], _profile_out(profs[j + 1], fc)) + _vista_basis.x * (_vp_side * (proud + 1.4))
+			var pd := _face_chord_point(zs[j + 1], _profile_out(profs[j + 1], fd)) + _vista_basis.x * (_vp_side * proud)
+			var shade := 0.09 * sin(float(s) * 2.1 + float(j) * 1.3) - 0.04 * float(s)
+			b.add_hull_quad(pd, pc, pb, pa, _facet_tone(rock, shade))
+		# A turf lip along the top edge of each course — the strata line that
+		# reads at two hundred metres and keeps the apron geology, not masonry.
+		for j in range(zs.size() - 1):
+			var fa := minf(ft0, fmaxs[j])
+			var fd := minf(ft0, fmaxs[j + 1])
+			var pa := _face_chord_point(zs[j], _profile_out(profs[j], fa)) + _vista_basis.x * (_vp_side * (proud + 0.35))
+			var pd := _face_chord_point(zs[j + 1], _profile_out(profs[j + 1], fd)) + _vista_basis.x * (_vp_side * (proud + 0.35))
+			b.add_hull_quad(
+				pd + Vector3(0.0, 0.5, 0.0),
+				pa + Vector3(0.0, 0.5, 0.0),
+				pa - _vista_basis.x * (_vp_side * 0.9) - Vector3(0.0, 0.35, 0.0),
+				pd - _vista_basis.x * (_vp_side * 0.9) - Vector3(0.0, 0.35, 0.0),
+				lip.darkened(0.06)
+			)
 		placed += 1
-		# Courses step out as they drop — the battered profile of a retaining
-		# crag, not a curtain. Each block is keyed to the drawn chord and sunk
-		# a third into it so the mass grows out of the face.
-		var f := 0.16
-		var step := 0
-		while f < 0.78 and step < 4:
-			var out: float = _profile_out(prof, f)
-			var chord := _face_chord_point(z, out)
-			if chord.y + _origin.y < _vp_water_y + 1.2:
-				break
-			var w := 8.5 - float(step) * 1.1
-			var h := 5.2 - float(step) * 0.5
-			var col := rock if step > 0 else rock.lightened(0.06)
-			var bx := Transform3D(
-				_vista_basis,
-				chord + _vista_basis.x * (-_vp_side * (w * 0.28)) + Vector3(0.0, -h * 0.18, 0.0)
-			)
-			b.add_box(bx, Vector3(w, h, 6.5 - float(step)), col.darkened(_rng.randf() * 0.08))
-			# A lip of the face's own turf over the course top — the crag stays
-			# geology, not dressed masonry.
-			b.add_box(
-				Transform3D(
-					_vista_basis,
-					chord + _vista_basis.x * (-_vp_side * (w * 0.10)) + Vector3(0.0, h * 0.42, 0.0)
-				),
-				Vector3(w * 0.72, 0.55, 5.6 - float(step)),
-				lip.darkened(0.08)
-			)
-			f += 0.17
-			step += 1
-		if step == 0:
-			continue
 	if placed == 0:
 		return
 	var mesh: MeshInstance3D = b.commit_to(self, "ViewpointBastion")
@@ -8343,10 +8379,13 @@ func _build_face_path() -> void:
 	var f := 0.14
 	var last_out := 0.0
 	var prof := _face_profile(z)
-	while f < 0.96 and step_i < 44:
+	var fmax: float = _face_live_arc(prof) / float(prof["total"]) * 0.92
+	while f < fmax and step_i < 44:
 		var out: float = _profile_out(prof, f)
 		var chord := _face_chord_point(z + jog, out)
-		if chord.y + _origin.y < _vp_water_y + 0.9:
+		# Past the fall line the chord bridges drowned apron — the flight
+		# stops where the face does, and the jetty finishes the reach.
+		if _terrain_surface_at(z + jog, _vp_side * out).y < _vp_water_y + 0.6:
 			break
 		last_out = out
 		var tread_basis := _vista_basis.rotated(_vista_basis.y, 0.25 * jog_dir)
