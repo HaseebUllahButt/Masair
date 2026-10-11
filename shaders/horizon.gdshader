@@ -124,7 +124,12 @@ void fragment() {
 	// noise octave was too fine to survive the ride and only inflated fill cost.
 	float patch = vnoise(vec2(along_v * 0.006, band_v * 0.008));
 	float couloir = vnoise(vec2(along_v * 0.017, band_v * 0.004));
-	float relief = patch * 0.58 + couloir * 0.42;
+	// A third, finer striation the massif flanks need: the DEM skylines give
+	// broad smooth slopes where the old tents gave constant curvature, so the
+	// rocky grain — gully shadows a few dozen metres wide running down the
+	// fall line — has to live in the fragment pass or the face reads as card.
+	float stria = vnoise(vec2(along_v * 0.038, band_v * 0.011));
+	float relief = patch * 0.44 + couloir * 0.34 + stria * 0.22;
 
 	// Two-tone light. A long smooth half-Lambert ramp is what made every face
 	// the same soft pink gradient: at two kilometres the eye reads a range by
@@ -153,10 +158,12 @@ void fragment() {
 	float lum = mix(0.62, 1.04, lit);
 	lum += 0.16 * dome * dome;
 	lum *= mix(0.90, 1.08, grit_v);
-	// Wider rock-tone spread: (0.80+0.10*ls, 1.12). Front-lit faces have the
+	// Wider rock-tone spread: (0.74+0.10*ls, 1.16). Front-lit faces have the
 	// least geometry in their light, so the patch/couloir texture carries the
-	// read of scree ribs and shaded gullies the key cannot.
-	lum *= mix(0.80 + 0.10 * light_soft, 1.12, relief);
+	// read of scree ribs and shaded gullies the key cannot. Widened again for
+	// the DEM skylines: real massif flanks are broad and smooth, so the face
+	// relies on this striation for its rocky grain rather than on silhouette.
+	lum *= mix(0.72 + 0.10 * light_soft, 1.19, relief);
 
 	// Granite, not gradient: a linear foot->crest mix left half the face at
 	// half scrub-green, and under the warm grade that olive is what returned
