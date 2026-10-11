@@ -130,11 +130,24 @@ const MOODS := {
 		# of the work, the fill and ambient are back to being the *shade* colour
 		# rather than the light's share of the picture, and the cool/warm split
 		# between them is the whole of the dusk look on a shaded hillside.
-		"fill_color": Color("5b7ea0"),
+		# 5b7ea0 was saturated enough to hue every crown it touched — the
+		# pine pairs that read as unevenly lit were the fill picking crowns
+		# unevenly, and the hue carried the inconsistency. Greyer steel keeps
+		# the shade cool without tinting the variance.
+		"fill_color": Color("63788f"),
 		"fill_energy": 0.52,
-		"ambient": 0.70,
-		"ambient_color": Color("46426e"),
-		"ambient_sky_mix": 0.30,
+		# 0.70 left the deep-gore wall a 30 m black cutout: any face outside
+		# the key and the fill's reach had only this to see by. Raised a step —
+		# still shade, not light.
+		"ambient": 0.78,
+		# Day-saturated greens at dusk are ambient that is too violet to sit
+		# the foliage down. Mauve-grey is the NORTHSTAR steel-mauve ambience —
+		# it dulls green toward the air it sits in instead of painting it.
+		"ambient_color": Color("4c4f6e"),
+		# More of the ambient's colour comes from the sky itself — the
+		# steel-mauve mid — so shade follows the air's hue rather than a
+		# hand-picked violet.
+		"ambient_sky_mix": 0.36,
 		"exposure": 0.96,
 		# Pulled down from 1.62 to pay for the key energy above. Exposure here is
 		# the ACES white point: lower is more headroom, and the extra key light
@@ -152,7 +165,11 @@ const MOODS := {
 		# also pushes the `daylight` term the shader uses to blend biome colour
 		# back in towards its cap. Day's 9b9f92 (hue 78, near-zero chroma) is
 		# the model here — a mood's air should be a value, not a colour.
-		"fog_color": Color("8a7a86"),
+		# 8a7a86 still leans violet — RangeMaterial derives the ranges' six
+		# colours from this, and the dusk flats' single-tone read starts here.
+		# A step toward neutral keeps the haze cool without deciding the
+		# mountains' hue for them.
+		"fog_color": Color("867f88"),
 		"fog_energy": 0.90,
 		# Down from 0.0010. Exponential fog reaches 65% at a kilometre and 86% at
 		# two, and an overlook's whole mid-ground — lake, far shore, fells — sits
@@ -189,8 +206,13 @@ const MOODS := {
 		# the day's charcoal with only a sunset's worth of warmth left in it.
 		# Sheen is cut with it: at grazing angles the wet-look streak adds the
 		# same orange back, so half the win was losing it.
-		"road_tint": Color(0.74, 1.20, 1.26),
-		"road_sheen": 0.13,
+		# Tuned when the key was 3.1: at 4.6 the warm key reaches the tarmac
+		# again, so the counter-tint can loosen its grip — the old cyan flip
+		# (0.74/1.20/1.26) plus the blue shade stack is what read as navy.
+		"road_tint": Color(0.82, 1.10, 1.10),
+		# And half of the wet-look was this: 0.13 sheen streaks across a dry
+		# dusk road at grazing angle. Halved — sheen is rain's property now.
+		"road_sheen": 0.07,
 		# Long shadows are half the dusk look (3-6x object height). The shared
 		# 40 m map only reaches the verge posts; dusk gets its own reach.
 		"shadow_distance": 90.0,
@@ -352,10 +374,11 @@ const MOODS := {
 		# image is what gives a scene the primary-colour look of a mobile game;
 		# what it was actually missing was separation between light and dark.
 		"contrast": 1.16,
-		# 1.14 is the mobile-game saturation the note above warns about — with
-		# the key doing the separation again the chroma comes back toward
-		# NORTHSTAR's muted flat palette.
-		"saturation": 1.05,
+		# 1.14 is the mobile-game saturation the note above warns about; the
+		# catalog still reads the palette 2-3x hot even at 1.05. Neutral —
+		# the key/exposure split now supplies the separation chroma was
+		# standing in for.
+		"saturation": 1.00,
 		# Measured to land neutral grey asphalt (R=G=B within 1%) under the warm
 		# day key and grade: less red and a touch more green, not more blue,
 		# which only turned the road violet.
