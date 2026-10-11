@@ -54,6 +54,7 @@ func _initialize() -> void:
 	cap.hide = String(opts.get("hide", ""))
 	cap.pick = opts.has("pick")
 	cap.hitch = opts.has("hitch")
+	cap.settle = opts.has("settle")
 	cap.tree_ref = self
 	if cap.hitch:
 		RoadChunkGD.set("hitch_trace", true)
@@ -132,6 +133,11 @@ class Capture:
 	## bike was, and the streamer's job/queue state, so a spike can be blamed on
 	## a build stage instead of guessed at.
 	var hitch := false
+	## Hold the warmup clock until the streamer reports itself idle. Chunks
+	## arrive one job per frame, so a fixed warmup races the build queue on a
+	## loaded box and photographs a half-missing vista; --settle waits the real
+	## world out, then counts warmup on a finished one.
+	var settle := false
 	var _catalog_jobs: Array[Dictionary] = []
 	var _cam: Camera3D
 	## Pin the world so a ride and a parked shot are of the same landscape. The
@@ -149,6 +155,9 @@ class Capture:
 	var speed_limit: float = 0.0
 
 	var _elapsed := 0.0
+	var _settled := false
+	var _settle_frames := 0
+	var _settle_wait := 0.0
 	var _taken := 0
 	var _busy := false
 	var _frames := 0
@@ -466,7 +475,18 @@ class Capture:
 			look = "right" if side > 0.0 else "left"
 
 	func _process(delta: float) -> void:
-		_elapsed += delta
+		var holding := false
+		if settle and not _settled:
+			# _idle_current is set to the player's chunk once the streamer has
+			# nothing left to build, dress or unload; -1 while work is pending.
+			var s := get_tree().root.find_child("RoadStreamer", true, false)
+			var idle := s != null and int(s.get("_idle_current")) >= 0
+			_settle_frames = _settle_frames + 1 if idle else 0
+			_settle_wait += delta
+			_settled = _settle_frames >= 6 or _settle_wait > 300.0
+			holding = not _settled
+		if not holding:
+			_elapsed += delta
 		if dry:
 			var world := get_tree().root.find_child("Main", true, false)
 			if world:
