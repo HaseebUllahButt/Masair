@@ -1238,7 +1238,7 @@ func _inland_woods(pace: Callable) -> void:
 			var species: int = int(stand[1])
 			if _rng.randf() < 0.12:
 				species = _stand_accent(species)
-			_tree(species, z, lx, float(stand[2]) * _rng.randf_range(0.84, 1.14), tint)
+			_tree(species, z, lx, _stand_member_height(stand, 0.84, 1.14), tint)
 			if pace.is_valid() and _slice_spent() and not await pace.call():
 				return
 
@@ -1342,7 +1342,7 @@ func _build_spur_woodland(
 				var species: int = int(stand[1])
 				if _rng.randf() < 0.10:
 					species = _stand_accent(species)
-				var height: float = float(stand[2]) * _rng.randf_range(0.84, 1.14) * crown_scale
+				var height: float = _stand_member_height(stand, 0.84, 1.14) * crown_scale
 				var tint: Color
 				if _vp_theme == Env.MOUNTAIN:
 					tint = Color("243830").lerp(
@@ -1375,7 +1375,7 @@ func _build_spur_woodland(
 						pair_half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(2.2, 4.4)
 					)
 					if not _on_tarmac(pair_z, pair_lateral, 1.4):
-						var pair_height: float = float(stand[2]) * _rng.randf_range(0.8, 1.05) * crown_scale
+						var pair_height: float = _stand_member_height(stand, 0.8, 1.05) * crown_scale
 						var pair_species: int = int(stand[1])
 						if _rng.randf() < 0.22:
 							pair_species = _stand_accent(pair_species)
@@ -1455,7 +1455,7 @@ func _build_spur_woodland(
 					mid_species,
 					mid_z,
 					mid_lateral,
-					float(stand[2]) * _rng.randf_range(0.9, 1.18),
+					_stand_member_height(stand, 0.9, 1.18),
 					Color("2a4634").lerp(
 						Color("4a6840"), clampf(float(stand[3]) * 0.5 + _rng.randf() * 0.12, 0.0, 0.42)
 					).darkened(0.06),
@@ -1497,7 +1497,7 @@ func _build_spur_woodland(
 							deep_species,
 							deep_z,
 							deep_lateral,
-							float(stand[2]) * _rng.randf_range(0.75, 1.05),
+							_stand_member_height(stand, 0.75, 1.05),
 							Color("1a3024").lerp(Color("3a5a44"), _rng.randf())
 						)
 					else:
@@ -1793,15 +1793,15 @@ func _stand_cell(side_i: int, z: float, theme_id: int) -> Array:
 	if theme_id == Env.MOUNTAIN:
 		# Fellside timber runs shorter and tighter than the lowland stand.
 		height = lerpf(7.0, 11.0, h.call(29)) if hr < 0.62 else lerpf(11.0, 15.0, h.call(29))
+	elif hr < 0.66:
+		# Canopy classes only — the cell decides mid or tall, never "dwarf":
+		# whole cells of 4.5-7.5 m timber beside a tall stand were the 3-4x
+		# toy-town spread at the road edge. The NORTHSTAR short layer lives in
+		# single trees *inside* the stand (_stand_member_height), keeping the
+		# ~60/30/10 population without a dwarf row in any frame.
+		height = lerpf(8.5, 12.0, h.call(29))
 	else:
-		# ~60% mid, ~30% tall, ~10% short fill — an even-aged stand keeps one
-		# height class, so a tall tree is never a lone pole beside its juniors.
-		if hr < 0.58:
-			height = lerpf(8.5, 12.0, h.call(29))
-		elif hr < 0.88:
-			height = lerpf(12.5, 16.5, h.call(29))
-		else:
-			height = lerpf(4.5, 7.5, h.call(29))
+		height = lerpf(12.5, 16.5, h.call(29))
 	var info: Array = [h.call(0) < 0.64, species, height, h.call(37)]
 	_stand_cells[key] = info
 	return info
@@ -1818,6 +1818,18 @@ func _stand_accent(species: int) -> int:
 			return Flora.BROADLEAF
 		_:
 			return Flora.CONIFER
+
+
+func _stand_member_height(stand: Array, lo: float, hi: float) -> float:
+	## One member's height: the stand's canopy class with a small jitter —
+	## except the odd understory tree (~one in nine), which is where the
+	## NORTHSTAR short class lives. A short grown *inside* a stand reads as
+	## the young layer of a real margin; a short grown as its own stand read
+	## as toy town.
+	var h := float(stand[2]) * _rng.randf_range(lo, hi)
+	if _rng.randf() < 0.11:
+		h = maxf(4.8, float(stand[2]) * _rng.randf_range(0.45, 0.62))
+	return h
 
 
 func _field_edges_at(z: float, side_i: int) -> PackedFloat64Array:
@@ -3542,11 +3554,24 @@ func _grow_conifer(frame: Transform3D, height: float, color: Color) -> void:
 	var bark: Color = BARK.darkened(_rng.randf_range(0.1, 0.3))
 	var skirt: float = height * _rng.randf_range(0.08, 0.16)
 	_limb(frame, Vector3.ZERO, Vector3(0, height * 0.42, 0), height * 0.05, bark)
-	var width: float = height * _rng.randf_range(0.3, 0.42)
-	var basis := Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(
-		Vector3(width, height - skirt, width * _rng.randf_range(0.88, 1.12))
+	# Two stepped tiers rather than one cone: a single apex-to-skirt cone
+	# reads as a flat cardboard triangle beside the rounder broadleaf crowns
+	# (fully 2D at dusk). A wide lower skirt under a narrower leader gives a
+	# spruce silhouette and takes the light in two bands.
+	var needle_h := height - skirt
+	var lower_h := needle_h * _rng.randf_range(0.52, 0.6)
+	var lower_w := height * _rng.randf_range(0.34, 0.46)
+	var lower_basis := Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(
+		Vector3(lower_w, lower_h, lower_w * _rng.randf_range(0.88, 1.12))
 	)
-	_conifers.append(frame * Transform3D(basis, Vector3(0, skirt, 0)))
+	_conifers.append(frame * Transform3D(lower_basis, Vector3(0, skirt, 0)))
+	_conifer_cols.append(color.darkened(0.05))
+	var upper_h := needle_h * _rng.randf_range(0.56, 0.66)
+	var upper_w := lower_w * _rng.randf_range(0.58, 0.72)
+	var upper_basis := Basis(Vector3.UP, _rng.randf_range(0.0, TAU)).scaled(
+		Vector3(upper_w, upper_h, upper_w * _rng.randf_range(0.88, 1.12))
+	)
+	_conifers.append(frame * Transform3D(upper_basis, Vector3(0, height - upper_h, 0)))
 	_conifer_cols.append(color)
 
 
@@ -3561,11 +3586,13 @@ func _grow_birch(frame: Transform3D, height: float, color: Color) -> void:
 		# Leafed from two fifths of the way up, not three fifths. With the small
 		# high crown, three pale stems and a tuft read as bare white sticks.
 		var top := Vector3(cos(a) * out, tall * 0.6, sin(a) * out)
-		_limb(frame, Vector3.ZERO, top, tall * 0.05, BARK_PALE.darkened(_rng.randf() * 0.3))
-		# Old crown size, seated lower: leafed from the same point without the
-		# extra leaf fill a bigger crown cost.
-		var width: float = tall * _rng.randf_range(0.42, 0.56)
-		_canopy(frame, top - Vector3(0, tall * 0.16, 0), width, tall * 0.5, color.lightened(_rng.randf() * 0.12))
+		# Still the palest bark on the verge, but a step off fluorescent —
+		# bare bright stems among dark conifers were what read as white sticks.
+		_limb(frame, Vector3.ZERO, top, tall * 0.05, BARK_PALE.darkened(0.18 + _rng.randf() * 0.22))
+		# And a fuller crown carried further down the stem: leaf over most of
+		# the tree is a birch's drift of green; a tuft on a wand is not.
+		var width: float = tall * _rng.randf_range(0.48, 0.62)
+		_canopy(frame, top - Vector3(0, tall * 0.22, 0), width, tall * _rng.randf_range(0.54, 0.62), color.lightened(_rng.randf() * 0.12))
 
 
 func _grow_pine(frame: Transform3D, height: float, color: Color) -> void:
@@ -5030,7 +5057,7 @@ func _forest_back_band(z0: float, side: float, mood: float, pace: Callable = Cal
 		# the skyline.
 		var stand: Array = _stand_cell(int(side), z, theme)
 		var species: int = int(stand[1])
-		var tall := float(stand[2]) * _rng.randf_range(1.05, 1.3)
+		var tall := _stand_member_height(stand, 1.05, 1.3)
 		# Past ~80 m a grown tree is limbs the eye cannot pick out against the
 		# canopy wall behind it: a trunk, boughs and tiered skirts a hundred
 		# metres off is four to six instances where a single crown mass reads
@@ -5370,7 +5397,7 @@ func _scenery_mountain() -> void:
 			for _i in _rng.randi_range(6, 10):
 				var z := _rng.randf_range(lo, hi)
 				var lx: float = side * (HALF_WIDTH + 5.0 + _rng.randf_range(0.0, 60.0))
-				var h := float(stand[2]) * _rng.randf_range(0.82, 1.16)
+				var h := _stand_member_height(stand, 0.82, 1.16)
 				var species: int = int(stand[1])
 				if _rng.randf() < 0.14:
 					species = _stand_accent(species)
@@ -5614,7 +5641,7 @@ func _scenery_country(streamed: bool = false) -> void:
 				var species: int = int(stand[1])
 				if _rng.randf() < 0.14:
 					species = _stand_accent(species)
-				var h := float(stand[2]) * _rng.randf_range(0.82, 1.14)
+				var h := _stand_member_height(stand, 0.82, 1.14)
 				if species == Flora.BIRCH:
 					h *= 0.8
 				_tree(species, z, lx, h, tint.darkened(_rng.randf() * 0.14))
@@ -6758,7 +6785,7 @@ func _build_highway_spur_screen(streamed: bool = false) -> void:
 		var species: int = int(stand[1])
 		if _rng.randf() < 0.1:
 			species = _stand_accent(species)
-		var height: float = float(stand[2]) * _rng.randf_range(0.86, 1.12)
+		var height: float = _stand_member_height(stand, 0.86, 1.12)
 		_tree(
 			species,
 			z,
@@ -6796,7 +6823,11 @@ func _build_basin_roadside(streamed: bool = false) -> void:
 		var cx: float = _vp_side * out
 		if _height_above_water(cz, out) < 2.0:
 			continue
-		var tint: Color = woody.lerp(deep, _rng.randf() * 0.6).darkened(_rng.randf() * 0.2)
+		# Foliage deep, not raw prop_c: the country prop_c is cut-hay gold kept
+		# for the bales — copse crowns lerped toward it were the pale-gold
+		# islands jumping off the green slope.
+		var leaf_deep: Color = deep if _vp_theme != Env.COUNTRY else Color("2e4a2c")
+		var tint: Color = woody.lerp(leaf_deep, _rng.randf() * 0.6).darkened(_rng.randf() * 0.2)
 		if _vp_theme == Env.COUNTRY and _rng.randf() < 0.3:
 			# A hedge line out on the pasture shelf — the country side reads as
 			# worked fields, not a plantation.
