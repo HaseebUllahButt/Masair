@@ -59,7 +59,9 @@ func _initialize() -> void:
 	cap.pitch = float(opts.get("pitch", 0.0))
 	cap.hide = String(opts.get("hide", ""))
 	cap.pick = opts.has("pick")
+	cap.trace = String(opts.get("trace", ""))
 	cap.hitch = opts.has("hitch")
+	cap.settle = opts.has("settle")
 	cap.tree_ref = self
 	if cap.hitch:
 		RoadChunkGD.set("hitch_trace", true)
@@ -138,6 +140,13 @@ class Capture:
 	## bike was, and the streamer's job/queue state, so a spike can be blamed on
 	## a build stage instead of guessed at.
 	var hitch := false
+	## "x,y" pixel to trace a single ray through: prints every batch it crosses.
+	var trace: String = ""
+	## Hold the warmup clock until the streamer reports itself idle. Chunks
+	## arrive one job per frame, so a fixed warmup races the build queue on a
+	## loaded box and photographs a half-missing vista; --settle waits the real
+	## world out, then counts warmup on a finished one.
+	var settle := false
 	var _catalog_jobs: Array[Dictionary] = []
 	var _cam: Camera3D
 	## Pin the world so a ride and a parked shot are of the same landscape. The
@@ -161,6 +170,9 @@ class Capture:
 	var hold_lane: float = NAN
 
 	var _elapsed := 0.0
+	var _settled := false
+	var _settle_frames := 0
+	var _settle_wait := 0.0
 	var _taken := 0
 	var _busy := false
 	var _frames := 0
@@ -482,7 +494,25 @@ class Capture:
 			look = "right" if side > 0.0 else "left"
 
 	func _process(delta: float) -> void:
-		_elapsed += delta
+		var holding := false
+		if settle and not _settled:
+			# _idle_current is set to the player's chunk once the streamer has
+			# nothing left to build, dress or unload; -1 while work is pending.
+			var s := get_tree().root.find_child("RoadStreamer", true, false)
+			var idle := s != null and int(s.get("_idle_current")) >= 0
+			_settle_frames = _settle_frames + 1 if idle else 0
+			_settle_wait += delta
+			_settled = _settle_frames >= 6 or _settle_wait > 300.0
+			holding = not _settled
+			if Engine.get_process_frames() % 120 == 0:
+				print(
+					"settle: wait=%.0f frames=%d idle=%s state=%s" % [
+						_settle_wait, _settle_frames, str(idle),
+						s.call("debug_state") if s and s.has_method("debug_state") else "?",
+					]
+				)
+		if not holding:
+			_elapsed += delta
 		if dry:
 			var world := get_tree().root.find_child("Main", true, false)
 			if world:
@@ -612,7 +642,10 @@ class Capture:
 		# the one that is actually drawn. A single post_draw can race the rig.
 		await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw
-		if pick:
+		if trace != "":
+			_trace_ray()
+			_taken += 1
+		elif pick:
 			_pick_report()
 			_taken += 1
 			_busy = false
@@ -643,6 +676,58 @@ class Capture:
 			tree_ref.quit(0)
 		elif catalog:
 			_apply_catalog_job(_taken)
+
+	func _trace_ray() -> void:
+		## One ray through --trace=x,y: every batch it crosses, nearest first,
+		## so a pixel's real owner shows even through overlapping geometry.
+		var cam := get_viewport().get_camera_3d()
+		if cam == null:
+			print("trace: no active camera")
+			return
+		var pixels: Array[Vector2] = []
+		for pair in trace.split(";"):
+			var xy := pair.split(",")
+			pixels.append(Vector2(float(xy[0]), float(xy[1])))
+		var batches: Array = []
+		_pick_collect(get_tree().root, batches, false)
+		_pick_collect(get_tree().root, batches, true)
+		for px in pixels:
+			_trace_one(cam, px, batches)
+
+	func _trace_one(cam: Camera3D, px: Vector2, batches: Array) -> void:
+		var origin := cam.project_ray_origin(px)
+		var dir := cam.project_ray_normal(px)
+		var hits: Array = []
+		for batch in batches:
+			var xf: Transform3D = batch["xf"]
+			if absf(xf.basis.determinant()) < 1e-9:
+				continue
+			var inv := xf.affine_inverse()
+			var lo := inv * origin
+			var ld := inv.basis * dir
+			var box: AABB = batch["aabb"]
+			if not box.intersects_ray(lo, ld):
+				continue
+			var tris: PackedVector3Array = batch["tris"]
+			var i := 0
+			var local_best := INF
+			var best_pos := Vector3.ZERO
+			while i < tris.size():
+				var hit: Variant = Geometry3D.ray_intersects_triangle(
+					lo, ld.normalized(), tris[i], tris[i + 1], tris[i + 2]
+				)
+				if hit != null:
+					var wp: Vector3 = xf * hit
+					var d: float = origin.distance_to(wp)
+					if d < local_best:
+						local_best = d
+						best_pos = wp
+				i += 3
+			if local_best < INF:
+				hits.append({"d": local_best, "name": batch["name"], "pos": best_pos})
+		hits.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a["d"]) < float(b["d"]))
+		for h in hits.slice(0, 8):
+			print("trace %.0f,%.0f -> %.1f %s @%s" % [px.x, px.y, float(h["d"]), h["name"], (h["pos"] as Vector3).snapped(Vector3.ONE)])
 
 	func _pick_report() -> void:
 		## Screen-space mesh census: cast the current camera's rays on a coarse
