@@ -199,7 +199,7 @@ enum Field { GRAZED, PASTURE, CROP, MOWN, FALLOW }
 ## read as the same green lollipops going past.
 ## PINE is the timberline tree: a high, wind-shaped crown on a clean stem. It
 ## replaced a leafless snag, which from the saddle read as a burnt forest.
-enum Flora { BROADLEAF, CONIFER, BIRCH, PINE, VAULT }
+enum Flora { BROADLEAF, CONIFER, BIRCH, PINE }
 
 ## Bark colours. Wood is never the same green-brown twice, and a birch stand is
 ## recognisable at 200 m purely from the pale trunks.
@@ -1494,28 +1494,6 @@ func _build_spur_woodland(
 							0.0,
 							false
 						)
-			if _arch_window(z) and _rng.randf() < 0.8:
-				# Cathedral-arch moment: on the window reaches of the upper
-				# climb, plant one high-crowned vault tree a step off the lane
-				# edge. Its underside is grown above FOLIAGE_OVERHANG_HEIGHT —
-				# the only height at which the corridor sweep already lets a
-				# crown lean over tarmac — so overlapping crowns from both
-				# verges read as a canopy closing overhead, ~10 m up.
-				var vault_z: float = z + _rng.randf_range(-2.4, 2.4)
-				var vault_half: float = float(_path.spur_half_width(vault_z))
-				var vault_centre: float = _vp_side * float(_path.spur_offset(vault_z))
-				var vault_lateral: float = vault_centre + road_side * (
-					vault_half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(1.2, 2.0)
-				)
-				if not (view_side and corridor > 0.35) and not _on_tarmac(vault_z, vault_lateral, 1.4):
-					_spur_tree(
-						Flora.VAULT,
-						vault_z,
-						vault_lateral,
-						_rng.randf_range(16.0, 19.0) * crown_scale,
-						Color("2a4634").lerp(Color("4a6840"), _rng.randf() * 0.42).darkened(0.04),
-						escape
-					)
 			if _rng.randf() > 0.5:
 				continue
 			var under_z: float = z + _rng.randf_range(-2.6, 2.6)
@@ -2867,20 +2845,6 @@ func _band_hit(z: float, slat: float, need: float) -> bool:
 	)
 
 
-func _arch_window(z: float) -> bool:
-	## Where vault trees may plant: sparse ~32 m reaches of the upper climb,
-	## deterministic so neighbouring chunks plant the same stand. Never near
-	## the platform (the seated corridor keeps its full clear skyline) and only
-	## on the spur. The corridor rule itself never relaxes — a vault crown is
-	## grown so its underside clears FOLIAGE_OVERHANG_HEIGHT by design.
-	if not _on_spur:
-		return false
-	var d := absf(z - _vp_centre)
-	if d < 260.0 or d > RoadPathGD.SPUR_HALF_SPAN * 0.58:
-		return false
-	return posmod(int(z / 96.0), 3) == 0
-
-
 func _foliage_road_push(world_pos: Vector3, reach: float, bottom_y: float, sways: bool = true) -> float:
 	## How far to slide a plant along the road's lateral axis so none of it dips
 	## into the corridor: 0.0 when it already clears, a signed lateral delta to
@@ -3397,8 +3361,6 @@ func _tree(
 				_grow_birch(frame, height, color)
 			Flora.PINE:
 				_grow_pine(frame, height, color)
-			Flora.VAULT:
-				_grow_vault(frame, height, color)
 			_:
 				_grow_broadleaf(frame, height, color)
 		if not corridor_near or not measure:
@@ -3522,26 +3484,6 @@ func _grow_pine(frame: Transform3D, height: float, color: Color) -> void:
 	var bough := top + Vector3(cos(a) * reach, -crown_h * _rng.randf_range(0.35, 0.5), sin(a) * reach)
 	_limb(frame, top - Vector3(0, crown_h * 0.45, 0), bough, thickness * 0.45, bark.darkened(0.1))
 	_canopy(frame, bough - Vector3(0, crown_h * 0.15, 0), width * 0.55, crown_h * 0.5, color.darkened(0.08))
-
-
-func _grow_vault(frame: Transform3D, height: float, color: Color) -> void:
-	## The arch tree: a tall clean stem carrying one broad, flat crown mass
-	## whose underside is grown to sit above FOLIAGE_OVERHANG_HEIGHT — the only
-	## height at which the corridor sweep already lets foliage cross the spur
-	## band. No low boughs: anything under the floor would walk the whole tree
-	## back off the lane, so the shape is a pollarded vault, not a weeper.
-	var bark: Color = BARK.lerp(BARK_PALM, 0.35).lightened(_rng.randf() * 0.1)
-	var stem_h: float = height * _rng.randf_range(0.64, 0.70)
-	var thickness: float = height * _rng.randf_range(0.05, 0.065)
-	var lean := Vector3(_rng.randf_range(-0.05, 0.05), 0.0, _rng.randf_range(-0.05, 0.05)) * height
-	var top := lean + Vector3(0, stem_h, 0)
-	_limb(frame, Vector3.ZERO, top, thickness, bark)
-	var width: float = height * _rng.randf_range(0.95, 1.15)
-	var crown_h: float = (height - stem_h) * _rng.randf_range(1.05, 1.25)
-	# Underside = stem_h - crown_h * 0.08 ≈ 0.60-0.66 of the height; for the
-	# 16-19 m planting range that lands 9.7-11.5 m up — over the lane the way
-	# a pollarded lime crowns a cathedral close, never inside the corridor.
-	_canopy(frame, top - Vector3(0, crown_h * 0.08, 0), width, crown_h, color)
 
 
 func _glow_light(z: float, lateral: float, lift: float, color: Color, radius: float, energy: float) -> void:
