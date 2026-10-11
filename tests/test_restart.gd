@@ -10,6 +10,7 @@ var game: Node
 var path: Node
 var main: Node
 var old_seed: int
+var old_cars: Array
 
 
 func check(ok: bool, what: String) -> void:
@@ -28,6 +29,7 @@ func _process(_delta: float) -> bool:
 		current_scene = main
 		old_seed = path.world_seed
 	if frames == 10:
+		old_cars = (main.get_node("TrafficManager").get("_cars") as Array).duplicate()
 		var restart_started := Time.get_ticks_usec()
 		game.restart()
 		var restart_ms := float(Time.get_ticks_usec() - restart_started) / 1000.0
@@ -71,7 +73,11 @@ func _process(_delta: float) -> bool:
 			),
 			"the road ahead is already planted at the start of a run"
 		)
-		check((traffic.get("_cars") as Array).is_empty(), "traffic is cleared")
+		var stale := 0
+		for car in old_cars:
+			if is_instance_valid(car):
+				stale += 1
+		check(stale == 0, "traffic is cleared")
 		# Committing to the scenic spur must retain both junctions while riding it.
 		# Parked on the platform the camera looks at the lake, so only the basin
 		# stays loaded — the old long ring drew fifty chunks the view never saw.

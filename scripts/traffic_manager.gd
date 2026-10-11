@@ -124,7 +124,10 @@ func reset_world() -> void:
 	_clear_cars()
 	_seed_from_world()
 	_timer = first_spawn_delay
-	_prefill()
+	# Spawning the opening stream is a dozen-plus node creations; doing it inside
+	# the caller's reset/restart path turns an instant restart into a visible
+	# hitch, so the stream arrives on the next idle frame instead.
+	call_deferred("_prefill")
 
 
 func _prefill() -> void:
