@@ -127,7 +127,10 @@ func _process(_delta: float) -> bool:
 		vehicle_mesh.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_ON,
 		"traffic casts into the short-range directional shadow box"
 	)
-	check(vehicle_mesh.visibility_range_end <= 380.0, "distant traffic leaves the far fog without a draw")
+	# The draw range moved out with the spawn band: cars now only ever appear
+	# 300-520 m ahead, where the fade-in covers the materialise, and the mesh
+	# still stops drawing far short of the horizon fog line.
+	check(vehicle_mesh.visibility_range_end <= 560.0, "distant traffic leaves the far fog without a draw")
 	var contact_shadow := follower.get_node_or_null("ContactShadow") as MeshInstance3D
 	check(contact_shadow != null, "traffic has a smooth lightweight contact shadow")
 	check(

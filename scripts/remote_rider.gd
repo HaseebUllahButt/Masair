@@ -26,9 +26,11 @@ var track_z: float = 0.0
 var lateral: float = 0.0
 var lane: int = -1
 # traffic_car.gd probes these via .get() — a remote rider never lane-changes,
-# but the fields must exist or int(null) throws inside the lane-clear check
+# but the fields must exist or int(null) throws inside the lane-clear check.
+# direction is part of the same contract: riders always run with the flow.
 var _pending_lane := -1
 var _lane_change_active := false
+var direction := 1
 
 var _tz := 0.0
 var _lat := 0.0

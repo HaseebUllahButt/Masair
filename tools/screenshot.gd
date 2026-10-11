@@ -34,6 +34,11 @@ func _initialize() -> void:
 	cap.seated = opts.has("seated")
 	cap.detour = opts.has("detour")
 	cap.with_traffic = opts.has("traffic")
+	## Traffic-proof rides: --invuln keeps the autopilot alive through whatever
+	## it meets, --lanehold=<x> pins it to a painted lane so the cars — not the
+	## bike's wandering line — are what the frame is about.
+	cap.invuln = opts.has("invuln")
+	cap.hold_lane = float(opts.get("lanehold", "nan"))
 	cap.spur = opts.has("spur")
 	cap.notraffic = opts.has("notraffic")
 	cap.overview = String(opts.get("overview", ""))
@@ -147,6 +152,9 @@ class Capture:
 	## dress queue and photographs streaming lag rather than the road a player
 	## on a twisty spur actually sees.
 	var speed_limit: float = 0.0
+	var invuln := false
+	## Lateral to hold on the carriageway, NaN = free ride (no autopilot input).
+	var hold_lane: float = NAN
 
 	var _elapsed := 0.0
 	var _taken := 0
@@ -220,6 +228,10 @@ class Capture:
 				if streamer and streamer.has_method("reset_world"):
 					streamer.call("reset_world")
 			Input.action_press("throttle")
+			if invuln:
+				var rider := get_tree().root.find_child("Player", true, false)
+				if rider:
+					rider.set("_invuln", 1e9)
 		if look != "":
 			Input.action_press("look_%s" % look)
 		# Select the requested authored look directly. Simulating T here was order-
@@ -482,6 +494,8 @@ class Capture:
 
 		if detour:
 			_autopilot()
+		elif not is_nan(hold_lane):
+			_lanehold()
 		if _ignore_next_frame:
 			# PNG encoding is deliberately synchronous and is not gameplay work.
 			_ignore_next_frame = false
@@ -554,6 +568,24 @@ class Capture:
 			# Body +X is screen-left, so the action that moves lateral up is
 			# steer_left. Reading it off the sign here keeps the tool honest if
 			# that convention ever changes.
+			Input.action_press("steer_left" if error > 0.0 else "steer_right")
+
+	func _lanehold() -> void:
+		## Hold a painted lane on the main carriageway — same input a player
+		## gives, so a traffic capture shows queues and overtakes around the
+		## rider rather than a bike riding the edge lines.
+		var player := get_tree().root.find_child("Player", true, false)
+		if player == null:
+			return
+		var error: float = hold_lane - float(player.lateral)
+		if speed_limit > 0.0:
+			if float(player.speed) * 3.6 > speed_limit:
+				Input.action_release("throttle")
+			else:
+				Input.action_press("throttle")
+		Input.action_release("steer_left")
+		Input.action_release("steer_right")
+		if absf(error) > 0.25 and absf(float(player.lat_vel)) < absf(error) * 1.2:
 			Input.action_press("steer_left" if error > 0.0 else "steer_right")
 
 	func _shoot() -> void:

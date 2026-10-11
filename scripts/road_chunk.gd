@@ -2655,8 +2655,8 @@ func _build_markings(b: LowPoly, z0: float, streamed: bool = false) -> void:
 		if streamed and _slice_spent() and not await _keep_streaming():
 			return
 
-	# Dashed lane dividers. Phase comes from world z, so dashes run unbroken
-	# across chunk seams.
+	# Dashed lane dividers between the same-direction lanes. Phase comes from
+	# world z, so dashes run unbroken across chunk seams.
 	var lanes: int = _path.LANE_COUNT
 	var dz := 0.5
 	var z := z0
@@ -2664,7 +2664,7 @@ func _build_markings(b: LowPoly, z0: float, streamed: bool = false) -> void:
 	while z < z0 + LENGTH - 0.001:
 		if fposmod(z + dz * 0.5, DASH_PERIOD) < DASH_ON:
 			var worn := _worn_stripe(stripe, z + dz * 0.5)
-			for lane in range(1, lanes):
+			for lane in range(1, lanes - 1):
 				var lx: float = (_path.lane_x(lane - 1) + _path.lane_x(lane)) * 0.5
 				b.add_quad(
 					_p(z, lx - 0.09, -LIFT),
@@ -2678,6 +2678,23 @@ func _build_markings(b: LowPoly, z0: float, streamed: bool = false) -> void:
 		# ~80 dashes of path samples was the head of `_finish_ribbon` — the whole
 		# stripe pass in one slice. Streamed builds get a boundary mid-run.
 		if marks % 4 == 0 and streamed and _slice_spent() and not await _keep_streaming():
+			return
+
+	# The last boundary is not a lane line but the centre line of a two-way
+	# road: the lane past it is the oncoming flow. Solid and slightly wider —
+	# the only paint that says the far lane runs at the rider.
+	var centre_lx: float = (_path.lane_x(lanes - 2) + _path.lane_x(lanes - 1)) * 0.5
+	for i in STEPS:
+		var za := z0 + float(i) * step
+		var zb := za + step
+		b.add_quad(
+			_p(za, centre_lx - 0.13, -LIFT),
+			_p(za, centre_lx + 0.13, -LIFT),
+			_p(zb, centre_lx + 0.13, -LIFT),
+			_p(zb, centre_lx - 0.13, -LIFT),
+			_worn_stripe(stripe, za)
+		)
+		if i % 4 == 3 and streamed and _slice_spent() and not await _keep_streaming():
 			return
 
 
