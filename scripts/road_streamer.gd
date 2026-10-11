@@ -155,6 +155,11 @@ func theme_for_chunk(index: int) -> int:
 
 
 func _sync(build_all: bool) -> void:
+	# Parked at an overlook, the queued dressing has no deadline — the rider is
+	# watching the vista, not the road. Thin each slice so the same backlog
+	# drains over more frames and the seated frames stay for the view.
+	var chunk_gd: GDScript = RoadChunkGD
+	chunk_gd.slice_budget_usec = 1400 if bool(_player.get("seated")) else RoadChunkGD.STREAM_SLICE_USEC
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
 	var keep_bounds := _desired_bounds(current)
 	# The platform owner renders the full lake independently of road chunks.

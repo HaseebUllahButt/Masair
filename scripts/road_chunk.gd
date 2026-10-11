@@ -92,6 +92,10 @@ const RIBBON_STEPS_PER_FRAME := 1
 ## the frame's slice is spent keeps the same per-frame ceiling while finishing a
 ## chunk in as many frames as its real cost needs.
 const STREAM_SLICE_USEC := 4000
+## How much one build slice may spend in a frame. The streamer drops it while
+## the rider is seated: parked work has no deadline, so the same queue drains
+## over more frames and leaves the lookout's frame time to the view instead.
+static var slice_budget_usec: int = STREAM_SLICE_USEC
 const HALF_WIDTH := 8.0
 ## Asphalt is one continuous road, even when the surrounding biome changes.
 ## Keeping this outside the palettes prevents visible colour seams at run edges.
@@ -968,7 +972,7 @@ func _keep_streaming() -> bool:
 	## mesh into a world the bike has already left.
 	if not is_instance_valid(self) or not is_inside_tree():
 		return false
-	if Time.get_ticks_usec() - _slice_started_usec < STREAM_SLICE_USEC:
+	if Time.get_ticks_usec() - _slice_started_usec < slice_budget_usec:
 		return true
 	if hitch_trace:
 		var stack := get_stack()
@@ -991,7 +995,7 @@ func _slice_spent() -> bool:
 	## that yield on a fixed count drain the stream queues slower than the work
 	## needs — the restart test's frame windows felt that before the bike did —
 	## so small batches yield only once the slice is already past its budget.
-	return Time.get_ticks_usec() - _resumed_usec > 4000
+	return Time.get_ticks_usec() - _resumed_usec > slice_budget_usec
 
 
 func _configure(index: int, theme_id: int) -> void:
