@@ -41,7 +41,7 @@ const LAYERS := [
 	{
 		"radius": 1460.0,
 		"face": 360.0,
-		"high": 300.0,
+		"high": 330.0,
 		"segments": 256,
 		"haze": 0.05,
 		## No collar on the foothills. At fifteen hundred metres a puff sized
@@ -57,7 +57,7 @@ const LAYERS := [
 	{
 		"radius": 1760.0,
 		"face": 320.0,
-		"high": 450.0,
+		"high": 540.0,
 		"segments": 208,
 		"haze": 0.24,
 		"clouds": true,
@@ -68,7 +68,7 @@ const LAYERS := [
 	{
 		"radius": 2080.0,
 		"face": 270.0,
-		"high": 650.0,
+		"high": 700.0,
 		"segments": 160,
 		"haze": 0.45,
 		"clouds": true,
