@@ -117,14 +117,29 @@ void fragment() {
 	float dome = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
 	vec3 across = normalize(cross(sun, vec3(0.0, 1.0, 0.0)) + vec3(1e-4));
 	float rake = clamp(dot(n, across) * 0.5 + 0.5, 0.0, 1.0);
+	// "Day" in this material is a cool key over a bright horizon — dusk's key
+	// is warm and night's horizon is dark, so their looks pass untouched.
+	// Hoisted ahead of `lit`: the cross-sun split is the only term that can
+	// give a backlit face two sides, and dusk needs it wider than day does.
+	float day_gate = clamp((key_tint.b - key_tint.r) * 8.0, 0.0, 1.0)
+		* smoothstep(0.45, 0.75, dot(haze_color, vec3(0.3333)));
 
 	// Two broad octaves in the face's own frame: one carries rock patches, the
 	// other stretches down the fall line so snow, scree and the treeline follow
 	// the land instead of forming kilometre-wide rectangles. The old third
 	// noise octave was too fine to survive the ride and only inflated fill cost.
+	// Relief octaves stay near-isotropic: the old 4:1 along:band stretch drew
+	// thin pale vertical streaks down every wide face — rain-curtain columns
+	// with no rain. Gullies are elongated a little, not four times, and the
+	// light ones read as rock lips, not sheets of white water.
 	float patch = vnoise(vec2(along_v * 0.006, band_v * 0.008));
-	float couloir = vnoise(vec2(along_v * 0.017, band_v * 0.004));
-	float relief = patch * 0.58 + couloir * 0.42;
+	float couloir = vnoise(vec2(along_v * 0.014, band_v * 0.009));
+	// A third, finer striation the massif flanks need: the DEM skylines give
+	// broad smooth slopes where the old tents gave constant curvature, so the
+	// rocky grain — gully shadows a few dozen metres wide running down the
+	// fall line — has to live in the fragment pass or the face reads as card.
+	float stria = vnoise(vec2(along_v * 0.030, band_v * 0.020));
+	float relief = patch * 0.50 + couloir * 0.28 + stria * 0.22;
 
 	// Two-tone light. A long smooth half-Lambert ramp is what made every face
 	// the same soft pink gradient: at two kilometres the eye reads a range by
@@ -133,7 +148,14 @@ void fragment() {
 	// Rake at 0.42: a front-lit range keeps almost no key spread, so the
 	// cross-sun axis is what splits the two walls of every fold gully. At 0.30
 	// the rearward arcs shaded as one soft sheet — the "flat pale card".
-	float lit = smoothstep(0.40 - 0.22 * light_soft, 0.66 + 0.22 * light_soft, key + (rake - 0.5) * 0.42);
+	// Rake widens after sundown: at dusk the key sits three degrees up and
+	// every face the rider sees is backlit, so `key` alone leaves `lit` flat
+	// and the range arrives as a violet cutout. The cross-sun axis is what
+	// still separates a face turned toward the afterglow from one turned
+	// away — at 0.60 that split is the whole two-tone read.
+	float lit = smoothstep(
+		0.40 - 0.22 * light_soft, 0.66 + 0.22 * light_soft,
+		key + (rake - 0.5) * mix(0.42, 0.60, 1.0 - day_gate));
 	// Floor raised from 0.40. The terminator still has to be a decision — that
 	// is what makes a range read as two-sided form rather than a pink gradient —
 	// but 0.40 was low enough that a shaded face had almost no value left to
@@ -153,20 +175,18 @@ void fragment() {
 	float lum = mix(0.62, 1.04, lit);
 	lum += 0.16 * dome * dome;
 	lum *= mix(0.90, 1.08, grit_v);
-	// Wider rock-tone spread: (0.80+0.10*ls, 1.12). Front-lit faces have the
+	// Wider rock-tone spread: (0.74+0.10*ls, 1.16). Front-lit faces have the
 	// least geometry in their light, so the patch/couloir texture carries the
-	// read of scree ribs and shaded gullies the key cannot.
-	lum *= mix(0.80 + 0.10 * light_soft, 1.12, relief);
+	// read of scree ribs and shaded gullies the key cannot. Widened again for
+	// the DEM skylines: real massif flanks are broad and smooth, so the face
+	// relies on this striation for its rocky grain rather than on silhouette.
+	lum *= mix(0.72 + 0.10 * light_soft, 1.15, relief);
 
 	// Granite, not gradient: a linear foot->crest mix left half the face at
 	// half scrub-green, and under the warm grade that olive is what returned
 	// as tan dunes rearward of the rider. The green-grey belongs to the foot
 	// band; by a third of the way up the face the rock is slate.
 	vec3 rock = mix(foot_color, crest_color, smoothstep(0.18, 0.60, lift_v));
-	// "Day" in this material is a cool key over a bright horizon — dusk's key
-	// is warm and night's horizon is dark, so their looks pass untouched.
-	float day_gate = clamp((key_tint.b - key_tint.r) * 8.0, 0.0, 1.0)
-		* smoothstep(0.45, 0.75, dot(haze_color, vec3(0.3333)));
 	// Granite is grey before it is blue. The slate chroma in the crest is an
 	// aerial-perspective device and belongs to the back bands; on the near and
 	// mid rings it stacked with the cool key and the LUT's blue anchor into
@@ -337,9 +357,14 @@ void fragment() {
 	// far range eight percent of lit/shade difference — a flat pale card
 	// rearward of the rider. Fourteen percent keeps the tallest band's two
 	// faces legible through the air.
+	// At dusk the sun sits below the crest so nearly every face is backlit and
+	// `lit` huddles low — the veil then flattens what little two-tone is left
+	// and the far ranges arrive as flat violet cutouts. The non-day floor
+	// keeps a wider lit/shade spread (0.74..1.16) so alpenglow-caught facets
+	// still stand off the shaded wall behind them.
 	col = mix(col, air * mix(
-		mix(0.80, mix(0.85, 0.90, smoothstep(0.50, 0.70, haze_v)), day_gate),
-		1.10, lit), haze_w);
+		mix(0.74, mix(0.85, 0.90, smoothstep(0.50, 0.70, haze_v)), day_gate),
+		mix(1.16, 1.10, day_gate), lit), haze_w);
 	// Soften the ring into the air at the extreme edges of a wide lens, but
 	// keep the mountains when the rider looks aside.
 	vec3 cam = INV_VIEW_MATRIX[3].xyz;
