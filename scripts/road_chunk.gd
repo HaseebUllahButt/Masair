@@ -201,6 +201,13 @@ enum Field { GRAZED, PASTURE, CROP, MOWN, FALLOW }
 ## replaced a leafless snag, which from the saddle read as a burnt forest.
 enum Flora { BROADLEAF, CONIFER, BIRCH, PINE }
 
+## Length of one stand decision on the verge: the run of roadside a wood edge
+## treats as a single stand — wooded or open, one species family, one height
+## class — hashed off the world seed so a stand spanning a chunk boundary
+## grows the same from both chunks, and gaps open between stands the way a
+## real margin does instead of a metronome row of random specimens.
+const STAND_CELL := 46.0
+
 ## Bark colours. Wood is never the same green-brown twice, and a birch stand is
 ## recognisable at 200 m purely from the pale trunks.
 ## Pale bark is deliberately grey rather than white: at 150 m a true birch white
@@ -1194,38 +1201,42 @@ func _build_ordinary_theme_scenery_incremental() -> void:
 
 
 func _plant_inland_carriageway() -> void:
-	## Lake chunks skip the full biome so the bench stays a picture. The inland
-	## verge of the main road still wants a stand of trees so it does not go bare
-	## for the length of the basin if the rider stays on the highway.
-	var z0: float = float(chunk_index) * LENGTH
-	var inland: float = -_vp_side if _vp_side != 0.0 else -1.0
-	var tint: Color = (_pal["prop_a"] as Color).darkened(_rng.randf() * 0.2)
-	for _i in 22:
-		var z := z0 + _rng.randf_range(0.0, LENGTH)
-		var lx: float = inland * (HALF_WIDTH + 3.5 + _rng.randf_range(0.0, 22.0))
-		var species: int = (
-			Flora.CONIFER if theme == Env.FOREST or theme == Env.MOUNTAIN else Flora.BROADLEAF
-		)
-		var height := _rng.randf_range(5.5, 11.5)
-		_tree(species, z, lx, height, tint)
+	_inland_woods(Callable())
 
 
 func _plant_inland_carriageway_incremental() -> void:
-	## Same stand as `_plant_inland_carriageway`, eight trees then a frame so a
-	## lake-highway chunk does not plant twenty-two trunks in one hitch.
+	## Same stand as `_plant_inland_carriageway`, a few trees then a frame so a
+	## lake-highway chunk does not plant its wood edge in one hitch.
+	_inland_woods(Callable(self, "_keep_streaming"))
+
+
+func _inland_woods(pace: Callable) -> void:
+	## Lake chunks skip the full biome so the bench stays a picture. The inland
+	## verge of the main road still wants its stands so it does not go bare for
+	## the length of the basin if the rider stays on the highway — planted in
+	## cells like every other verge: wooded runs alternating with open ground,
+	## each run one species and one height class.
 	var z0: float = float(chunk_index) * LENGTH
 	var inland: float = -_vp_side if _vp_side != 0.0 else -1.0
+	var side_i := int(inland)
 	var tint: Color = (_pal["prop_a"] as Color).darkened(_rng.randf() * 0.2)
-	for i in 22:
-		var z := z0 + _rng.randf_range(0.0, LENGTH)
-		var lx: float = inland * (HALF_WIDTH + 3.5 + _rng.randf_range(0.0, 22.0))
-		var species: int = (
-			Flora.CONIFER if theme == Env.FOREST or theme == Env.MOUNTAIN else Flora.BROADLEAF
-		)
-		var height := _rng.randf_range(5.5, 11.5)
-		_tree(species, z, lx, height, tint)
-		if i % 4 == 3 and _slice_spent() and not await _keep_streaming():
-			return
+	var cell_a := int(floor((z0 + _stand_phase(side_i)) / STAND_CELL))
+	var cell_b := int(floor((z0 + LENGTH + _stand_phase(side_i)) / STAND_CELL))
+	for cell in range(cell_a, cell_b + 1):
+		var stand: Array = _stand_cell(side_i, (float(cell) + 0.5) * STAND_CELL - _stand_phase(side_i), theme)
+		if not stand[0]:
+			continue
+		var lo := maxf(z0, float(cell) * STAND_CELL - _stand_phase(side_i))
+		var hi := minf(z0 + LENGTH, float(cell + 1) * STAND_CELL - _stand_phase(side_i))
+		for _m in _rng.randi_range(3, 6):
+			var z := _rng.randf_range(lo, hi)
+			var lx: float = inland * (HALF_WIDTH + 3.5 + _rng.randf_range(0.0, 22.0))
+			var species: int = int(stand[1])
+			if _rng.randf() < 0.12:
+				species = _stand_accent(species)
+			_tree(species, z, lx, float(stand[2]) * _rng.randf_range(0.84, 1.14), tint)
+			if pace.is_valid() and _slice_spent() and not await pace.call():
+				return
 
 
 func _spur_tree(species: int, z: float, lateral: float, height: float, color: Color, escape: float = 0.0) -> void:
@@ -1278,7 +1289,6 @@ func _build_spur_woodland(
 		# clear wherever the two roads still run cheek by jowl.
 		if half < 1.6:
 			continue
-		var towards_summit: float = 1.0 - clampf((distance - 80.0) / 1100.0, 0.0, 1.0)
 		# Once the gore is wide, an inner-side reject has a whole hillside to
 		# step into; near the mouth it does not, and the wedge stays open.
 		var wide_gore: bool = float(_path.spur_gap(z)) > 28.0
@@ -1301,14 +1311,19 @@ func _build_spur_woodland(
 			# A rejected plant steps further out in the row's own direction —
 			# away from the lane — wherever the ground continues that way.
 			var escape: float = road_side if (view_side or wide_gore) else 0.0
-			# Near row on every station, the back row on most. The outer row
-			# carries more of the stand now that crowns may not lean over the
-			# spur — a tree slid back to clear the corridor still wants company
-			# beside it, not a gap.
+			# The stand cell decides whether this stretch of verge is wooded at
+			# all, and what grows on it: species, height class and tint are the
+			# stand's, the members' only their own jitter — groups of five to
+			# eight with open ground between, never a row of lone poles. The
+			# near edge plants every station inside a cell; the back row fills
+			# behind it on most.
+			var stand: Array = _stand_cell(int(road_side), z, _vp_theme)
 			for row in range(1 if phase == 2 else 0, 2):
 				if row == 1 and _rng.randf() > 0.6:
 					continue
 				if view_side and corridor > 0.0 and _rng.randf() < corridor:
+					continue
+				if not stand[0]:
 					continue
 				var jitter_z: float = z + _rng.randf_range(-2.0, 2.0)
 				# Sample the spur at the plant point, not the station. The apron
@@ -1317,42 +1332,35 @@ func _build_spur_woodland(
 				var plant_half: float = float(_path.spur_half_width(jitter_z))
 				var plant_centre: float = _vp_side * float(_path.spur_offset(jitter_z))
 				var setback: float = plant_half + RoadPathGD.SPUR_SHOULDER + 2.8 + float(row) * 7.2
-				var lateral: float = plant_centre + road_side * (setback + _rng.randf_range(-0.8, 1.1))
+				var lateral: float = plant_centre + road_side * (setback + _rng.randf_range(-1.0, 2.3))
 				if _on_tarmac(jitter_z, lateral, 1.4):
 					continue
-				match _vp_theme:
-					Env.MOUNTAIN:
-						var height: float = _rng.randf_range(8.0, 14.0) * crown_scale
-						var species: int = Flora.CONIFER if _rng.randf() < 0.78 + towards_summit * 0.15 else Flora.PINE
-						_spur_tree(species, jitter_z, lateral, height, Color("243830").lerp(Color("4a5640"), _rng.randf() * 0.35), escape)
-						if _rng.randf() < 0.4:
-							var rock_s := _rng.randf_range(1.2, 2.8)
-							_blob(
-								jitter_z,
-								lateral + road_side * _rng.randf_range(1.0, 3.0),
-								Vector3(rock_s * 1.6, rock_s * 0.9, rock_s * 1.4),
-								Color("7a7468").darkened(_rng.randf() * 0.2),
-								0.0,
-								false,
-								true
-							)
-					_:
-						var height: float = _rng.randf_range(12.0, 19.0) * crown_scale
-						if _vp_theme == Env.FOREST:
-							height *= 1.08
-						var tint: Color = Color("2a4634").lerp(Color("4a6840"), _rng.randf() * 0.42)
-						var species: int
-						if _vp_theme == Env.FOREST:
-							# Conifers carry the climb; birch breaks the wall up —
-							# the same stand mix the forest road itself grows.
-							var conifer_odds := 0.42 + towards_summit * 0.35
-							species = Flora.CONIFER if _rng.randf() < conifer_odds else Flora.BIRCH
-						else:
-							# Country climb: hedgerow oaks and beech, the same
-							# broadleaf shape the farmland verges grow.
-							species = Flora.BROADLEAF if _rng.randf() < 0.78 else Flora.BIRCH
-						_spur_tree(species, jitter_z, lateral, height, tint.darkened(float(row) * 0.14), escape)
-				# A companion beside the near row keeps the wall continuous —
+				var species: int = int(stand[1])
+				if _rng.randf() < 0.10:
+					species = _stand_accent(species)
+				var height: float = float(stand[2]) * _rng.randf_range(0.84, 1.14) * crown_scale
+				var tint: Color
+				if _vp_theme == Env.MOUNTAIN:
+					tint = Color("243830").lerp(
+						Color("4a5640"), clampf(float(stand[3]) * 0.4 + _rng.randf() * 0.12, 0.0, 0.35)
+					)
+				else:
+					tint = Color("2a4634").lerp(
+						Color("4a6840"), clampf(float(stand[3]) * 0.5 + _rng.randf() * 0.12, 0.0, 0.42)
+					)
+				_spur_tree(species, jitter_z, lateral, height, tint.darkened(float(row) * 0.14), escape)
+				if _vp_theme == Env.MOUNTAIN and _rng.randf() < 0.4:
+					var rock_s := _rng.randf_range(1.2, 2.8)
+					_blob(
+						jitter_z,
+						lateral + road_side * _rng.randf_range(1.0, 3.0),
+						Vector3(rock_s * 1.6, rock_s * 0.9, rock_s * 1.4),
+						Color("7a7468").darkened(_rng.randf() * 0.2),
+						0.0,
+						false,
+						true
+					)
+				# A companion beside the near row knits the stand's front —
 				# the sweep walks every fourth or fifth tree out of line and
 				# single spacing made each walked tree a visible hole.
 				if row == 0 and corridor < 0.5 and _rng.randf() < 0.5:
@@ -1363,17 +1371,15 @@ func _build_spur_woodland(
 						pair_half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(2.2, 4.4)
 					)
 					if not _on_tarmac(pair_z, pair_lateral, 1.4):
-						var pair_height: float = _rng.randf_range(9.0, 15.0) * crown_scale
-						var pair_species: int = Flora.BROADLEAF
-						if _vp_theme == Env.MOUNTAIN:
-							pair_species = Flora.CONIFER
-						elif _vp_theme == Env.FOREST:
-							pair_species = Flora.CONIFER if _rng.randf() < 0.5 else Flora.BIRCH
-						elif _rng.randf() < 0.6:
-							pair_species = Flora.BIRCH
+						var pair_height: float = float(stand[2]) * _rng.randf_range(0.8, 1.05) * crown_scale
+						var pair_species: int = int(stand[1])
+						if _rng.randf() < 0.22:
+							pair_species = _stand_accent(pair_species)
 						_spur_tree(
 							pair_species, pair_z, pair_lateral, pair_height,
-							Color("2e4c36").lerp(Color("52704a"), _rng.randf() * 0.4),
+							Color("2e4c36").lerp(
+								Color("52704a"), clampf(float(stand[3]) * 0.45 + _rng.randf() * 0.1, 0.0, 0.4)
+							),
 							escape
 						)
 				if pace.is_valid() and _slice_spent() and not await pace.call():
@@ -1429,26 +1435,26 @@ func _build_spur_woodland(
 			# The hillside between the carriageway and the spur is deliberately
 			# unreserved ground — trees on it are what the climb is ridden
 			# through, and the inward glance should meet a wood, not a meadow.
-			if not view_side and wide_gore and _rng.randf() < 0.6:
+			if not view_side and wide_gore and stand[0] and _rng.randf() < 0.6:
 				var mid_z: float = z + _rng.randf_range(-3.0, 3.0)
 				var mid_centre: float = _vp_side * float(_path.spur_offset(mid_z))
 				var mid_half: float = float(_path.spur_half_width(mid_z))
 				var gap: float = float(_path.spur_gap(mid_z))
 				var mid_reach: float = _rng.randf_range(15.0, maxf(minf(48.0, gap - 14.0), 15.5))
 				var mid_lateral: float = mid_centre + road_side * (mid_half + mid_reach)
-				var mid_species: int = Flora.BROADLEAF
-				if _vp_theme == Env.MOUNTAIN:
-					mid_species = Flora.CONIFER
-				elif _vp_theme == Env.FOREST and _rng.randf() < 0.6:
-					mid_species = Flora.CONIFER if _rng.randf() < 0.55 else Flora.BIRCH
-				elif _rng.randf() < 0.22:
-					mid_species = Flora.BIRCH
+				# The shelf's interior wood is the verge stand's own deep
+				# members — same family, looser about accents.
+				var mid_species: int = int(stand[1])
+				if _rng.randf() < 0.3:
+					mid_species = _stand_accent(mid_species)
 				_spur_tree(
 					mid_species,
 					mid_z,
 					mid_lateral,
-					_rng.randf_range(12.0, 19.0),
-					Color("2a4634").lerp(Color("4a6840"), _rng.randf() * 0.42).darkened(0.06),
+					float(stand[2]) * _rng.randf_range(0.9, 1.18),
+					Color("2a4634").lerp(
+						Color("4a6840"), clampf(float(stand[3]) * 0.5 + _rng.randf() * 0.12, 0.0, 0.42)
+					).darkened(0.06),
 					escape
 				)
 			# And the deep gore: once the shelf is really wide the reach cap
@@ -1477,11 +1483,17 @@ func _build_spur_woodland(
 							true
 						)
 					elif droll < 0.85:
+						# Deep shelf trunks are the verge stand's far members —
+						# same family whether the cell calls itself wooded or not.
+						var deep_species: int = (
+							int(stand[1]) if stand[0]
+							else (Flora.BROADLEAF if _vp_theme == Env.COUNTRY else Flora.CONIFER)
+						)
 						_tree(
-							Flora.BROADLEAF if _vp_theme == Env.COUNTRY else Flora.CONIFER,
+							deep_species,
 							deep_z,
 							deep_lateral,
-							_rng.randf_range(7.0, 13.0),
+							float(stand[2]) * _rng.randf_range(0.75, 1.05),
 							Color("1a3024").lerp(Color("3a5a44"), _rng.randf())
 						)
 					else:
@@ -1727,6 +1739,81 @@ var _field_edge_rows: Dictionary = {}  # Vector2(z, side) -> PackedFloat64Array
 var _field_phases: Dictionary = {}  # Vector2i(side_i, band) -> float
 var _field_cells: Dictionary = {}  # Vector3i(side_i, band, cell) -> [kind, hedged, lift, period]
 var _field_runs: Dictionary = {}  # Vector3i(side_i, edge_i, zseg) -> bool
+
+var _stand_phases: Dictionary = {}  # side_i -> float
+var _stand_cells: Dictionary = {}  # Vector3i(side_i, cell, theme_id) -> [active, species, height, tint]
+
+
+func _stand_phase(side_i: int) -> float:
+	## Each side's stand grid slides along the route so the gaps in the two wood
+	## edges never line up into a cross-section of bare road.
+	var cached: Variant = _stand_phases.get(side_i)
+	if cached != null:
+		return cached
+	var phase := (
+		float(posmod(hash(Vector2i(side_i * 41, int(_path.world_seed) ^ 0x71b3)), 1000))
+		* 0.001 * STAND_CELL
+	)
+	_stand_phases[side_i] = phase
+	return phase
+
+
+func _stand_cell(side_i: int, z: float, theme_id: int) -> Array:
+	## One STAND_CELL metres of roadside, answered the way a real stand is:
+	## [wooded at all, species family, stand height, tint roll]. Trees come and
+	## go inside a cell; the stand's own decisions do not — which is what stops
+	## the verge reading as individually random specimens on a metronome.
+	var cell := int(floor((z + _stand_phase(side_i)) / STAND_CELL))
+	var key := Vector3i(side_i, cell, theme_id)
+	var cached: Variant = _stand_cells.get(key)
+	if cached != null:
+		return cached
+	var seed := int(_path.world_seed)
+	var h := func(salt: int) -> float:
+		return float(posmod(hash(Vector3i(side_i * 173 + salt, cell, seed)), 1000)) * 0.001
+	var roll: float = h.call(11)
+	var species: int
+	match theme_id:
+		Env.MOUNTAIN:
+			# Montane conifer stands with real pine blocs and the rare birch seam.
+			species = Flora.CONIFER if roll < 0.7 else (Flora.PINE if roll < 0.94 else Flora.BIRCH)
+		Env.COUNTRY:
+			# Hedgerow oaks and beech, birch seams, the odd conifer shelterbelt.
+			species = Flora.BROADLEAF if roll < 0.62 else (Flora.BIRCH if roll < 0.78 else Flora.CONIFER)
+		_:
+			# Forest: the conifer wall, broken by birch seams and pine blocs —
+			# one species per stretch, shifting stand by stand, never per tree.
+			species = Flora.CONIFER if roll < 0.64 else (Flora.BIRCH if roll < 0.82 else (Flora.PINE if roll < 0.95 else Flora.BROADLEAF))
+	var hr: float = h.call(23)
+	var height: float
+	if theme_id == Env.MOUNTAIN:
+		# Fellside timber runs shorter and tighter than the lowland stand.
+		height = lerpf(7.0, 11.0, h.call(29)) if hr < 0.62 else lerpf(11.0, 15.0, h.call(29))
+	else:
+		# ~60% mid, ~30% tall, ~10% short fill — an even-aged stand keeps one
+		# height class, so a tall tree is never a lone pole beside its juniors.
+		if hr < 0.58:
+			height = lerpf(8.5, 12.0, h.call(29))
+		elif hr < 0.88:
+			height = lerpf(12.5, 16.5, h.call(29))
+		else:
+			height = lerpf(4.5, 7.5, h.call(29))
+	var info: Array = [h.call(0) < 0.64, species, height, h.call(37)]
+	_stand_cells[key] = info
+	return info
+
+
+func _stand_accent(species: int) -> int:
+	## The minority tree inside a stand: a conifer bloc carries the odd birch,
+	## an oak line the odd holly-dark conifer. What a stand never carries is a
+	## second random family per member.
+	match species:
+		Flora.CONIFER, Flora.PINE:
+			return Flora.BIRCH
+		Flora.BIRCH:
+			return Flora.BROADLEAF
+		_:
+			return Flora.CONIFER
 
 
 func _field_edges_at(z: float, side_i: int) -> PackedFloat64Array:
@@ -4857,13 +4944,22 @@ func _forest_stand(z0: float, side: float, mood: float, pace: Callable = Callabl
 		Flora.CONIFER if roll < 0.5 else (Flora.BIRCH if roll < 0.68 else (Flora.PINE if roll < 0.78 else Flora.BROADLEAF))
 	)
 	var tint: Color = (_pal["prop_a"] as Color).lerp(_pal["prop_c"], _rng.randf() * 0.7)
-	var tall: float = (
-		_rng.randf_range(9.0, 18.0) if species == Flora.CONIFER or species == Flora.PINE else _rng.randf_range(6.0, 12.0)
-	)
+	# Even-aged stands: most middling, some tall, the odd short thicket — a
+	# height class per stand, not a ladder of random poles beside the road.
+	var hr := _rng.randf()
+	var tall: float
+	if hr < 0.58:
+		tall = _rng.randf_range(8.5, 12.0)
+	elif hr < 0.88:
+		tall = _rng.randf_range(12.5, 16.5)
+	else:
+		tall = _rng.randf_range(5.0, 8.0)
+	if species == Flora.BIRCH or species == Flora.BROADLEAF:
+		tall *= 0.8
 	for _i in 7:
 		var z := stand_z + _rng.randf_range(-12.0, 12.0)
 		var lx: float = stand_x + _rng.randf_range(-12.0, 12.0)
-		_tree(species, z, lx, tall * _rng.randf_range(0.7, 1.18), tint.darkened(_rng.randf() * 0.2))
+		_tree(species, z, lx, tall * _rng.randf_range(0.82, 1.15), tint.darkened(_rng.randf() * 0.2))
 		# Each `_tree` sweeps the corridor for clearance; a whole stand in one
 		# slice was a ~20 ms block on forest chunks.
 		if pace.is_valid() and _slice_spent() and not await pace.call():
@@ -4907,11 +5003,13 @@ func _forest_back_band(z0: float, side: float, mood: float, pace: Callable = Cal
 	for _i in rows:
 		var z := z0 + _rng.randf_range(0.0, LENGTH)
 		var lx: float = side * (HALF_WIDTH + _rng.randf_range(near, far))
-		var roll := _rng.randf()
-		var species: int = (
-			Flora.CONIFER if roll < 0.62 else (Flora.PINE if roll < 0.78 else Flora.BROADLEAF)
-		)
-		var tall := _rng.randf_range(13.0, 21.0)
+		# The back wall is the verge stand's own deep timber — same cell, same
+		# family, one height class run up a size with depth. A scatter of
+		# per-tree rolls out here was what stacked the odd lone giant against
+		# the skyline.
+		var stand: Array = _stand_cell(int(side), z, theme)
+		var species: int = int(stand[1])
+		var tall := float(stand[2]) * _rng.randf_range(1.05, 1.3)
 		# Past ~80 m a grown tree is limbs the eye cannot pick out against the
 		# canopy wall behind it: a trunk, boughs and tiered skirts a hundred
 		# metres off is four to six instances where a single crown mass reads
@@ -5235,19 +5333,31 @@ func _scenery_forest_incremental() -> void:
 func _scenery_mountain() -> void:
 	var z0: float = float(chunk_index) * LENGTH
 	for side in [-1.0, 1.0]:
-		# Dark montane conifer, thinning into wind-shaped pine on the exposed ground.
-		for _i in 16:
-			var z := z0 + _rng.randf_range(0.0, LENGTH)
-			var lx: float = side * (HALF_WIDTH + 5.0 + _rng.randf_range(0.0, 60.0))
-			var h := _rng.randf_range(6.0, 15.0)
+		# Dark montane conifer in stands on the fellside — clumps keyed to the
+		# stand cells, thinning into wind-shaped pine on the exposed ground,
+		# never an even scatter of specimens.
+		var side_i := int(side)
+		var cell_a := int(floor((z0 + _stand_phase(side_i)) / STAND_CELL))
+		var cell_b := int(floor((z0 + LENGTH + _stand_phase(side_i)) / STAND_CELL))
+		for cell in range(cell_a, cell_b + 1):
+			var stand: Array = _stand_cell(side_i, (float(cell) + 0.5) * STAND_CELL - _stand_phase(side_i), theme)
+			if not stand[0]:
+				continue
+			var lo := maxf(z0, float(cell) * STAND_CELL - _stand_phase(side_i))
+			var hi := minf(z0 + LENGTH, float(cell + 1) * STAND_CELL - _stand_phase(side_i))
 			var tint: Color = (_pal["prop_a"] as Color).darkened(_rng.randf() * 0.3)
-			var roll := _rng.randf()
-			if roll < 0.76:
-				_tree(Flora.CONIFER, z, lx, h, tint)
-			elif roll < 0.9:
-				_tree(Flora.BIRCH, z, lx, h * 0.7, tint.lightened(0.12))
-			else:
-				_tree(Flora.PINE, z, lx, h * 0.75, tint.lightened(0.06))
+			for _i in _rng.randi_range(6, 10):
+				var z := _rng.randf_range(lo, hi)
+				var lx: float = side * (HALF_WIDTH + 5.0 + _rng.randf_range(0.0, 60.0))
+				var h := float(stand[2]) * _rng.randf_range(0.82, 1.16)
+				var species: int = int(stand[1])
+				if _rng.randf() < 0.14:
+					species = _stand_accent(species)
+				if species == Flora.BIRCH:
+					h *= 0.7
+				elif species == Flora.PINE:
+					h *= 0.9
+				_tree(species, z, lx, h, tint.lightened(_rng.randf() * 0.1))
 		for _i in 5:
 			var z := z0 + _rng.randf_range(0.0, LENGTH)
 			var lx: float = side * (HALF_WIDTH + 22.0 + _rng.randf_range(0.0, 75.0))
@@ -5463,22 +5573,32 @@ func _scenery_country(streamed: bool = false) -> void:
 				if streamed and _slice_spent() and not await _keep_streaming():
 					return
 
-	# Hedgerow oaks, pines, the odd birch clump, and one big field tree standing
-	# alone — a restrained English-country mix with no palms or tropical foliage.
+	# Hedgerow oaks, the odd birch clump or shelterbelt conifer, and one big
+	# field tree standing alone — grouped by the stand cells so they read as
+	# grown groups, not a scattering of specimens on a lawn.
 	for side in [-1.0, 1.0]:
-		for _i in 6:
-			var z := z0 + _rng.randf_range(0.0, LENGTH)
-			var lx: float = side * (HALF_WIDTH + 8.0 + _rng.randf_range(0.0, 74.0))
+		var side_i := int(side)
+		var cell_a := int(floor((z0 + _stand_phase(side_i)) / STAND_CELL))
+		var cell_b := int(floor((z0 + LENGTH + _stand_phase(side_i)) / STAND_CELL))
+		for cell in range(cell_a, cell_b + 1):
+			var stand: Array = _stand_cell(side_i, (float(cell) + 0.5) * STAND_CELL - _stand_phase(side_i), theme)
+			if not stand[0]:
+				continue
+			var lo := maxf(z0, float(cell) * STAND_CELL - _stand_phase(side_i))
+			var hi := minf(z0 + LENGTH, float(cell + 1) * STAND_CELL - _stand_phase(side_i))
 			var tint: Color = (_pal["prop_a"] as Color).darkened(0.05 + _rng.randf() * 0.24)
-			var species_roll := _rng.randf()
-			if species_roll < 0.62:
-				_tree(Flora.BROADLEAF, z, lx, _rng.randf_range(6.0, 11.0), tint)
-			elif species_roll < 0.88:
-				_tree(Flora.CONIFER, z, lx, _rng.randf_range(7.0, 12.0), tint.darkened(0.12))
-			else:
-				_tree(Flora.BIRCH, z, lx, _rng.randf_range(5.0, 8.0), tint.darkened(0.02))
-			if streamed and _slice_spent() and not await _keep_streaming():
-				return
+			for _i in _rng.randi_range(2, 5):
+				var z := _rng.randf_range(lo, hi)
+				var lx: float = side * (HALF_WIDTH + 8.0 + _rng.randf_range(0.0, 74.0))
+				var species: int = int(stand[1])
+				if _rng.randf() < 0.14:
+					species = _stand_accent(species)
+				var h := float(stand[2]) * _rng.randf_range(0.82, 1.14)
+				if species == Flora.BIRCH:
+					h *= 0.8
+				_tree(species, z, lx, h, tint.darkened(_rng.randf() * 0.14))
+				if streamed and _slice_spent() and not await _keep_streaming():
+					return
 		if _rng.randf() < 0.55:
 			_tree(
 				Flora.BROADLEAF,
@@ -6012,15 +6132,20 @@ func _landmark_copse() -> void:
 	var knoll := Color("3a4a38").lerp(_pal["ground"], 0.35)
 	_blob(z, lx, Vector3(16.0, 4.2, 13.0), knoll, 0.0, false, true)
 	var tint := Color("1a3026").lerp(Color("2a4a34"), 0.4)
+	# A copse is one planting: take the stand cell's family and height so the
+	# knoll reads as grown together, not eleven separate rolls on a mound.
+	var stand: Array = _stand_cell(int(side), z, theme)
+	var copse_species: int = int(stand[1])
+	var copse_tall := float(stand[2])
 	for i in 11:
 		var tz: float = z + _rng.randf_range(-6.5, 6.5)
 		var tlat: float = lx + _rng.randf_range(-7.0, 7.0)
 		if _on_tarmac(tz, tlat, 1.6):
 			continue
-		var species: int = Flora.CONIFER if _rng.randf() < 0.55 else Flora.BROADLEAF
-		if theme == Env.FOREST and _rng.randf() < 0.25:
-			species = Flora.BIRCH
-		_tree(species, tz, tlat, _rng.randf_range(9.0, 16.0), tint, true, 1.6)
+		var species: int = copse_species
+		if _rng.randf() < 0.18:
+			species = _stand_accent(species)
+		_tree(species, tz, tlat, copse_tall * _rng.randf_range(0.84, 1.14), tint, true, 1.6)
 	var marker := Node3D.new()
 	marker.name = "Copse"
 	add_child(marker)
@@ -6604,11 +6729,25 @@ func _build_highway_spur_screen(streamed: bool = false) -> void:
 			continue
 		if _on_tarmac(z, inner, 1.6):
 			continue
-		var height: float = _rng.randf_range(9.0, 15.0)
-		var species: int = Flora.PINE if _vp_theme == Env.MOUNTAIN else Flora.BROADLEAF
-		if _vp_theme == Env.FOREST:
-			species = Flora.CONIFER if _rng.randf() < 0.3 else Flora.BROADLEAF
-		_tree(species, z, inner, height, Color("2a4634").lerp(Color("4a6840"), _rng.randf() * 0.35), true)
+		# The screen grows where the verge's stand cells say wood grows —
+		# clumps and openings on the same grid the climb itself plants.
+		var stand: Array = _stand_cell(int(_vp_side), z, _vp_theme)
+		if not stand[0]:
+			continue
+		var species: int = int(stand[1])
+		if _rng.randf() < 0.1:
+			species = _stand_accent(species)
+		var height: float = float(stand[2]) * _rng.randf_range(0.86, 1.12)
+		_tree(
+			species,
+			z,
+			inner,
+			height,
+			Color("2a4634").lerp(
+				Color("4a6840"), clampf(float(stand[3]) * 0.4 + _rng.randf() * 0.1, 0.0, 0.35)
+			),
+			true
+		)
 
 
 func _build_basin_roadside(streamed: bool = false) -> void:
@@ -6654,29 +6793,23 @@ func _build_basin_roadside(streamed: bool = false) -> void:
 					false
 				)
 			continue
+		# One copse is one planting: a family and a size shared by its members,
+		# with the odd accent — not a fresh species roll for every trunk.
+		var clump_stand: Array = _stand_cell(int(_vp_side), cz, _vp_theme)
+		var clump_species: int = int(clump_stand[1])
+		var clump_tall := float(clump_stand[2]) * _rng.randf_range(0.75, 0.95)
 		for _i in _rng.randi_range(2, 5):
 			var z := cz + _rng.randf_range(-9.0, 9.0)
 			var lx: float = cx + _vp_side * _rng.randf_range(-8.0, 8.0)
 			# Ground to the drawn chord, not the analytic surface — the copse
 			# trees and their skirts were the floaters on the s1 face.
 			var lift := _face_ground_lift(z, absf(lx))
+			var species: int = clump_species
 			if _vp_theme == Env.COUNTRY:
-				_tree(Flora.BROADLEAF, z, lx, _rng.randf_range(5.5, 10.5), tint, false, lift)
-			else:
-				var roll := _rng.randf()
-				_tree(
-					(
-						Flora.CONIFER
-						if roll < 0.55
-						else (Flora.PINE if roll < 0.75 else Flora.BROADLEAF)
-					),
-					z,
-					lx,
-					_rng.randf_range(6.5, 13.0),
-					tint,
-					false,
-					lift
-				)
+				species = Flora.BROADLEAF
+			elif _rng.randf() < 0.2:
+				species = _stand_accent(species)
+			_tree(species, z, lx, clump_tall * _rng.randf_range(0.82, 1.12), tint, false, lift)
 			if streamed and _slice_spent() and not await _keep_streaming():
 				return
 		# The clump's skirt — a stand with no undergrowth is lollipops on a lawn.
