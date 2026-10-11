@@ -6347,7 +6347,10 @@ func _build_gore_hatch(hard: LowPoly, z0: float) -> void:
 	## paint at a time, which from the saddle read as slabs spilling over the
 	## red kerb and across both road edges rather than as a marking.
 	const PROUD := 0.07
-	var stripe: Color = _pal["stripe"]
+	# Grit and tyre wear take a gore's paint down long before the lines beside
+	# it. Fresh-line cream across the whole wedge was the brightest object in
+	# the junction frame — a sunlit triangle where the eye should find tarmac.
+	var stripe: Color = (_pal["stripe"] as Color).lerp(_pal["road"], 0.55).darkened(0.10)
 	var step := LENGTH / float(STEPS)
 	for i in STEPS:
 		var za := z0 + float(i) * step
@@ -6827,6 +6830,61 @@ func _build_junction() -> void:
 		_deck_cube(merge, lateral, Vector3(0.18, 1.7, 0.18), Color("626a70"), yaw, 0.0)
 		_deck_cube(merge, lateral, Vector3(2.3, 1.05, 0.16), Color("f0b33b"), yaw, 1.7)
 		_deck_cube(merge, lateral, Vector3(2.3, 0.14, 0.18), Color("2b2f36"), yaw, 2.2)
+	_build_summit_gate()
+
+
+func _build_summit_gate() -> void:
+	## A threshold where the climb empties onto the parking apron. The last
+	## hundred metres before the platform used to carry nothing at eye level —
+	## one milepost on a widening ribbon of bare tarmac. A real summit lays
+	## the arrival out: stone gate piers straddling the lane, a low wing wall
+	## leading the eye to the parapet, an interpretive board at the lip. The
+	## gate stands a few metres before the deck starts to widen, so it frames
+	## the widening rather than standing on the car park itself.
+	var z0 := float(chunk_index) * LENGTH
+	var apron: float = RoadPathGD.PLATFORM_HALF_LENGTH + RoadPathGD.PLATFORM_TAPER
+	var scarp := _face_scarp_palette()
+	var stone: Color = (scarp["rock_hi"] as Color).lerp(scarp["soil"], 0.35).darkened(0.10)
+	var cap: Color = (scarp["rock_hi"] as Color).darkened(0.04)
+	for gate in [_vp_centre - apron - 3.0, _vp_centre + apron + 3.0]:
+		if gate < z0 or gate >= z0 + LENGTH:
+			continue
+		var off: float = float(_path.spur_offset(gate))
+		var half: float = float(_path.spur_half_width(gate))
+		for side_i in [-1.0, 1.0]:
+			var pier_lat: float = _vp_side * (off + side_i * (half + 1.45))
+			if _on_tarmac(gate, pier_lat, 0.4):
+				continue
+			_deck_cube(gate, pier_lat, Vector3(0.95, 2.3, 0.95), stone, 0.0, 0.0)
+			_deck_cube(gate, pier_lat, Vector3(1.25, 0.26, 1.25), cap, 0.0, 2.3)
+			_deck_cube(gate, pier_lat, Vector3(0.62, 0.5, 0.62), stone.darkened(0.08), 0.0, 2.56)
+		# A wing wall on the drop side, leading in toward the parapet line.
+		var inward: float = signf(_vp_centre - gate)
+		var wall_lat: float = _vp_side * (off + half + 2.6)
+		var w_a: float = gate + inward * 1.5
+		var w_b: float = gate + inward * 11.5
+		_terrain_beam(w_a, w_b, wall_lat, 0.46, 0.9, stone, 0.42, true)
+		_terrain_beam(w_a, w_b, wall_lat, 0.6, 0.16, cap, 0.93, true)
+		# The board faces the vista: the gate says you have arrived, the board
+		# says what you are looking at. It stands inside the gate line — on the
+		# platform side whichever end of the apron this threshold marks.
+		_viewpoint_board(gate + signf(_vp_centre - gate) * 2.2, _vp_side, half + 3.6, cap)
+		# And a couple of bedded boulders so the threshold reads as built into
+		# the headland, not pinned onto it.
+		for b in 2:
+			var bz: float = gate + _rng.randf_range(-3.0, 4.0)
+			var bl: float = _vp_side * (off + half + _rng.randf_range(1.8, 3.4))
+			if _on_tarmac(bz, bl, 0.5):
+				continue
+			var s: float = _rng.randf_range(1.1, 2.0)
+			_deck_blob(
+				bz,
+				bl,
+				Vector3(s * 1.5, s * _rng.randf_range(0.55, 0.85), s * 1.2),
+				(scarp["rock_lo"] as Color).lerp(scarp["soil"], _rng.randf() * 0.3),
+				_rng.randf_range(-0.3, 0.0),
+				false
+			)
 
 
 func _spur_nose() -> float:
@@ -7471,6 +7529,68 @@ func _dress_vista_country(streamed: bool = false) -> void:
 			true,
 			_far_bank_lift(z, out) if _far_bank_rise(z, out) >= 0.0 else _far_ground_lift(z, out)
 		)
+	# The brow line, missing entirely: from the water the country headland used
+	# to read as one smooth green plate while the forest's crest carried trees
+	# and scree. A fell top is never bare — wind-bent hawthorns stand on the
+	# rim, an intermittent dry-stone wall follows the lip, and limestone breaks
+	# through the turf where the plateau ends. All of it sits on the plateau's
+	# own band, behind the brow, so the silhouette gains teeth without any
+	# prop standing on the face.
+	var scarp := _face_scarp_palette()
+	for _i in 16:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
+		var z: float = _vp_centre + _rng.randf_range(-RoadPathGD.LAKE_SPAN * 0.6, RoadPathGD.LAKE_SPAN * 0.6)
+		if absf(z - _vp_centre) < 38.0:
+			continue  # the seated sightline owns the open middle of the rim
+		var out: float = float(_path.headland_crest(z)) - _rng.randf_range(6.0, 26.0)
+		if (
+			not _face_dressing_ok(z)
+			or float(_path.spur_deck_blend(z, _vp_side * out)) > 0.1
+			or _on_tarmac(z, _vp_side * out, 2.0)
+		):
+			continue
+		# Ground to the plain surface — these stand on the plateau, not on the
+		# face the chord-lift helper is built for.
+		_tree(
+			Flora.BROADLEAF,
+			z,
+			_vp_side * out,
+			_rng.randf_range(5.0, 9.5),
+			Color("2a4630").lerp(Color("43603a"), _rng.randf() * 0.6),
+			true
+		)
+	for _i in 8:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
+		var wz: float = _vp_centre + _rng.randf_range(-RoadPathGD.LAKE_SPAN * 0.55, RoadPathGD.LAKE_SPAN * 0.55)
+		if absf(wz - _vp_centre) < 30.0:
+			continue
+		var out: float = float(_path.headland_crest(wz)) - _rng.randf_range(4.0, 18.0)
+		if (
+			not _face_dressing_ok(wz)
+			or float(_path.spur_deck_blend(wz, _vp_side * out)) > 0.1
+		):
+			continue
+		var wstone: Color = (scarp["rock_lo"] as Color).lerp(scarp["soil"], 0.4).darkened(0.05)
+		_terrain_beam(wz, wz + _rng.randf_range(7.0, 13.0), _vp_side * out, 0.42, 0.85, wstone, 0.44)
+	for _i in 12:
+		if streamed and _slice_spent() and not await _keep_streaming():
+			return
+		var z: float = _vp_centre + _rng.randf_range(-RoadPathGD.LAKE_SPAN * 0.55, RoadPathGD.LAKE_SPAN * 0.55)
+		if absf(z - _vp_centre) < 30.0:
+			continue
+		var out: float = float(_path.headland_crest(z)) - _rng.randf_range(2.0, 14.0)
+		if (
+			not _face_above_water(z, out, 2.0)
+			or not _face_dressing_ok(z)
+			or float(_path.spur_deck_blend(z, _vp_side * out)) > 0.1
+		):
+			continue
+		_vista_rock(
+			z, _vp_side * out, _rng.randf_range(1.6, 3.8),
+			_rng.randf_range(-0.5, 0.1)
+		)
 
 
 func _chunk_covers(z: float) -> bool:
@@ -7577,12 +7697,17 @@ func _face_scarp_palette() -> Dictionary:
 	## rock_hi/rock_lo — the two ends the beds swing between; seam — the shadowed
 	## underside of a bed; scree — the talus apron at the foot. Country is chalk
 	## and limestone with a grass lip, mountain and forest are greyer crag.
+	# Every value here fights the same battle: the face is the one slope in the
+	# world turned squarely into the key, and sun at ~1.4 warm saturates any
+	# albedo past about a third straight to cream. Values that would read as
+	# mid stone on flat ground have to live at a quarter of that on this face
+	# for the beds to land as mossed rock and not as a sunlit curtain.
 	match _vp_theme:
 		Env.MOUNTAIN:
 			return {
-				"lip": Color("5a6448"), "soil": Color("554f44"),
-				"rock_hi": Color("a4acb4"), "rock_lo": Color("5c646c"),
-				"seam": Color("454c54"), "scree": Color("6e6a5e"),
+				"lip": Color("3e4a30"), "soil": Color("38352e"),
+				"rock_hi": Color("566062"), "rock_lo": Color("3a4248"),
+				"seam": Color("2c3238"), "scree": Color("484840"),
 			}
 		Env.FOREST:
 			# The old warm set was the seed-1 cream dune: 96938a sky-fill over the
@@ -7590,18 +7715,19 @@ func _face_scarp_palette() -> Dictionary:
 			# the country set but a step deeper — shaded stone under a cedar
 			# canopy, with a wet moss toe at the waterline.
 			return {
-				"lip": Color("37452e"), "soil": Color("434a3c"),
-				"rock_hi": Color("71806d"), "rock_lo": Color("42503e"),
-				"seam": Color("2f382e"), "scree": Color("4d584a"),
+				"lip": Color("242e1e"), "soil": Color("2d332b"),
+				"rock_hi": Color("3d4c38"), "rock_lo": Color("29362a"),
+				"seam": Color("20281f"), "scree": Color("354035"),
 			}
 	# Greyed from the old warm chalk set: under the day key the soil band and
 	# the shaded beds rendered as solid ochre, ringing the lake in what read
 	# as orange sand. The greys still land as warm earth — the grade does the
-	# warming — but at half the saturation.
+	# warming — but at half the saturation. Deepened again for the face that
+	# stands square to the key: chalk survives as the lit caps, not the base.
 	return {
-		"lip": Color("6b754f"), "soil": Color("60635c"),
-		"rock_hi": Color("b6b6ac"), "rock_lo": Color("626660"),
-		"seam": Color("464a45"), "scree": Color("767b72"),
+		"lip": Color("485232"), "soil": Color("3c403a"),
+		"rock_hi": Color("55604a"), "rock_lo": Color("3a413a"),
+		"seam": Color("2c322b"), "scree": Color("4c5348"),
 	}
 
 
@@ -8367,7 +8493,9 @@ func _build_face_path() -> void:
 	if zs.is_empty():
 		return
 	var z: float = zs[0]
-	var tread := Color("9a9078")
+	# Weathered step stone off the same crag, not fresh limestone: at overlook
+	# distance the pale 9a9078 flight merged into a bright plank wall.
+	var tread: Color = (_face_scarp_palette()["rock_hi"] as Color).darkened(0.10)
 	var timber := Color("54452f")
 	var b := LowPoly.new()
 	# The flight: alternate straight runs with a jog — the stair's own
@@ -10994,10 +11122,15 @@ func _build_platform_gate(streamed: bool = false) -> void:
 	var centre := _vp_centre
 	var timber := Color("6d4f38")
 	# Painted bays and the brown board at the way in, when the kit has them.
+	# The bays share the deck's cooled family so the pergola does not keep the
+	# baked salmon of the old bake against the now-stone plaza.
 	var bays: PackedScene = _lookout_scene(LOOKOUT_BAYS)
 	if bays:
 		for at in [-8.0, 8.0]:
-			_place_lookout(bays, centre + at, RoadPathGD.PLATFORM_HALF_WIDTH, BAYS_LIFT, "LookoutBays_%d" % int(at))
+			_place_lookout(
+				bays, centre + at, RoadPathGD.PLATFORM_HALF_WIDTH, BAYS_LIFT,
+				"LookoutBays_%d" % int(at), Color(0.45, 0.66, 0.92)
+			)
 			if streamed and _slice_spent() and not await _keep_streaming():
 				return
 	var stop: PackedScene = _lookout_scene(LOOKOUT_STOP)
@@ -11394,9 +11527,19 @@ func _build_belvedere(streamed: bool = false) -> void:
 	var authored: bool = deck != null and rail != null
 	_terrace_floor = TERRACE_FLOOR if authored else 0.0
 	var b := LowPoly.new()
-	var limestone := Color("737568")
-	var mortar := Color("62685e")
-	var shadow := Color("4f4a43")
+	# Built from the crag's own stone: a real belvedere wall is quarried from
+	# the rock it stands on, and the fixed warm limestone used to read as a
+	# third, unrelated material — salmon masonry over a moss-olive face under
+	# a pale deck. Deriving from the scarp palette keeps one stone family from
+	# parapet to waterline on every theme.
+	var scarp := _face_scarp_palette()
+	# The wall face is the biggest flat surface in the overlook frame and it
+	# faces the key square on: scarp-stone at full value still renders as a
+	# cream curtain across the whole front. Half a step into the soil band and
+	# no lighten keeps it weathered masonry rather than a sunlit apron.
+	var limestone: Color = (scarp["rock_hi"] as Color).lerp(scarp["soil"], 0.5)
+	var mortar: Color = (scarp["rock_lo"] as Color).lerp(scarp["soil"], 0.5)
+	var shadow: Color = scarp["seam"]
 	var step := 2.4
 	var half: float = RoadPathGD.PLATFORM_HALF_LENGTH
 	var z := _vp_centre - half
@@ -11466,24 +11609,43 @@ func _build_authored_terrace(deck: PackedScene, rail: PackedScene, streamed: boo
 		if balcony == null or absf(offset) > TERRACE_PITCH * 0.75:
 			rail_zs.append(_vp_centre + offset)
 		offset += TERRACE_PITCH
-	await _place_lookout_run(deck, deck_zs, RoadPathGD.PLATFORM_HALF_WIDTH, TERRACE_FLOOR, "LookoutDeck", streamed)
+	# The kit's baked colours arrive as two more palettes: the flagstones pale
+	# and the parapet salmon — a third and fourth material language on top of
+	# the face and the wall. A gentle multiply still read as cream and rust, so
+	# the tint has to fight the bake: pull red hard, lift blue, and the plaza,
+	# parapet and crag land in the one weathered-stone family.
+	await _place_lookout_run(
+		deck, deck_zs, RoadPathGD.PLATFORM_HALF_WIDTH, TERRACE_FLOOR, "LookoutDeck", streamed,
+		Color(0.58, 0.70, 0.88)
+	)
 	if streamed and not is_inside_tree():
 		return
 	if streamed and _slice_spent() and not await _keep_streaming():
 		return
-	await _place_lookout_run(rail, rail_zs, rail_out, TERRACE_FLOOR, "LookoutRail", streamed)
+	await _place_lookout_run(rail, rail_zs, rail_out, TERRACE_FLOOR, "LookoutRail", streamed, Color(0.46, 0.68, 0.95))
 	if balcony:
-		_place_lookout(balcony, _vp_centre, rail_out, TERRACE_FLOOR, "LookoutBalcony")
+		_place_lookout(balcony, _vp_centre, rail_out, TERRACE_FLOOR, "LookoutBalcony", Color(0.52, 0.68, 0.92))
 	# A pier at each end of the run, so the rail stops on something.
 	var pier: PackedScene = _lookout_scene(LOOKOUT_PIER)
 	if pier:
 		for end in [-1.0, 1.0]:
-			_place_lookout(pier, _vp_centre + end * (half + 1.0), rail_out, TERRACE_FLOOR, "LookoutPier_%d" % int(end))
+			_place_lookout(
+				pier, _vp_centre + end * (half + 1.0), rail_out, TERRACE_FLOOR,
+				"LookoutPier_%d" % int(end), Color(0.52, 0.68, 0.92)
+			)
 			if streamed and _slice_spent() and not await _keep_streaming():
 				return
 
 
-func _place_lookout_run(packed: PackedScene, zs: Array[float], out: float, lift: float, node_name: String, streamed: bool = false) -> void:
+func _place_lookout_run(
+	packed: PackedScene,
+	zs: Array[float],
+	out: float,
+	lift: float,
+	node_name: String,
+	streamed: bool = false,
+	tint: Color = Color(1.0, 1.0, 1.0)
+) -> void:
 	## A run of identical kit modules as one MultiMesh, so twelve deck segments
 	## are one draw rather than twelve. A module that is not a single mesh falls
 	## back to one scene instance per station.
@@ -11512,13 +11674,19 @@ func _place_lookout_run(packed: PackedScene, zs: Array[float], out: float, lift:
 	var run := MultiMeshInstance3D.new()
 	run.name = node_name
 	run.multimesh = mm
-	run.material_override = source.material_override
+	var mat: Material = source.material_override
+	if mat == null and source.mesh.get_surface_count() > 0:
+		mat = source.mesh.surface_get_material(0)
+	run.material_override = _tinted_kit_material(mat, tint)
 	run.cast_shadow = source.cast_shadow
 	add_child(run)
 	proto.free()
 
 
-func _place_lookout(packed: PackedScene, z: float, out: float, lift: float, node_name: String) -> Node3D:
+func _place_lookout(
+	packed: PackedScene, z: float, out: float, lift: float, node_name: String,
+	tint: Color = Color(1.0, 1.0, 1.0)
+) -> Node3D:
 	## One kit piece `out` metres from the spur centreline, turned with the
 	## overlook's side exactly as the benches are.
 	var piece: Node3D = packed.instantiate()
@@ -11527,8 +11695,35 @@ func _place_lookout(packed: PackedScene, z: float, out: float, lift: float, node
 		Basis(flat.x * _vp_side, flat.y, flat.z * _vp_side), _p(z, _platform_lateral(out, z), -lift)
 	)
 	piece.name = node_name
+	_tint_lookout_kit(piece, tint)
 	add_child(piece)
 	return piece
+
+
+func _tint_lookout_kit(node: Node, tint: Color) -> void:
+	## The kit pieces are single baked-material meshes: the only way to shift
+	## their palette is an albedo multiply on a cloned material. Vertex colours
+	## multiply with it, so a cool tint keeps each face's authored shading.
+	if tint == Color(1.0, 1.0, 1.0):
+		return
+	var stack: Array[Node] = [node]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is MeshInstance3D:
+			var mi := n as MeshInstance3D
+			var mat: Material = mi.material_override
+			if mat == null and mi.mesh != null and mi.mesh.get_surface_count() > 0:
+				mat = mi.mesh.surface_get_material(0)
+			mi.material_override = _tinted_kit_material(mat, tint)
+		stack.append_array(n.get_children())
+
+
+func _tinted_kit_material(mat: Material, tint: Color) -> Material:
+	if tint == Color(1.0, 1.0, 1.0) or not (mat is StandardMaterial3D):
+		return mat
+	var tinted := (mat as StandardMaterial3D).duplicate() as StandardMaterial3D
+	tinted.albedo_color = tinted.albedo_color * tint
+	return tinted
 
 
 func _terrace_floor_at(z: float, lateral: float) -> float:
@@ -11765,7 +11960,7 @@ func _belvedere_wall(b: LowPoly, za: float, zb: float, limestone: Color, mortar:
 	var out_b := maxf(lip_b, face_b)
 	# Cap you can lean on.
 	b.add_quad(
-		_p(za, in_a, -cap), _p(za, out_a, -cap), _p(zb, out_b, -cap), _p(zb, in_b, -cap), limestone.lightened(0.12)
+		_p(za, in_a, -cap), _p(za, out_a, -cap), _p(zb, out_b, -cap), _p(zb, in_b, -cap), limestone.lightened(0.07)
 	)
 	# Inner face, toward the parking.
 	_wall_face(b, za, zb, lip_a, lip_b, 0.0, -cap, mortar)
