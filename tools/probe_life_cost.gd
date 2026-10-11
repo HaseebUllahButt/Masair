@@ -50,9 +50,12 @@ func _initialize() -> void:
 	var a2 := Time.get_ticks_usec()
 	life.call("_mist", 6, life.get("_root"))
 	print("_mist(6) call: %.1f ms (coroutine — frames still follow)" % ((Time.get_ticks_usec() - a2) / 1000.0))
-	var a3 := Time.get_ticks_usec()
-	life.call("_fish_jump")
-	print("_fish_jump: %.1f ms" % ((Time.get_ticks_usec() - a3) / 1000.0))
+	# Recurring cost is the honest number: the trout jumps every few seconds,
+	# so what matters is the warm call, not the first.
+	for jump in 3:
+		var a3 := Time.get_ticks_usec()
+		life.call("_fish_jump")
+		print("_fish_jump #%d: %.1f ms" % [jump, (Time.get_ticks_usec() - a3) / 1000.0])
 	var a4 := Time.get_ticks_usec()
 	life.call("_make_spray")
 	life.call("_make_rings")

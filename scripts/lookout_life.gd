@@ -408,6 +408,44 @@ static func fish_mesh() -> ArrayMesh:
 	return _fish_shared
 
 
+static var _spray_mesh_shared: ArrayMesh
+static var _ring_mesh_shared: ArrayMesh
+
+
+static func spray_mesh() -> ArrayMesh:
+	## The droplet octahedron is identical every sit-down; build it once.
+	if _spray_mesh_shared == null:
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		var pts := [Vector3.UP, Vector3.DOWN, Vector3.LEFT, Vector3.RIGHT, Vector3.FORWARD, Vector3.BACK]
+		for y_i in [0, 1]:
+			var apex: Vector3 = pts[y_i]
+			var ring := [pts[2], pts[4], pts[3], pts[5]]
+			for k in 4:
+				var a: Vector3 = ring[k]
+				var b: Vector3 = ring[(k + 1) % 4]
+				_tri(st, apex, a, b, Color.WHITE, apex + a + b)
+		_spray_mesh_shared = st.commit()
+	return _spray_mesh_shared
+
+
+static func ring_mesh() -> ArrayMesh:
+	## The ripple ring is identical every sit-down; build it once.
+	if _ring_mesh_shared == null:
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		var sides: int = 28
+		for i in sides:
+			var a0 := TAU * float(i) / float(sides)
+			var a1 := TAU * float(i + 1) / float(sides)
+			var o0 := Vector3(cos(a0), 0.0, sin(a0))
+			var o1 := Vector3(cos(a1), 0.0, sin(a1))
+			_tri(st, o0, o1, o1 * 0.84, Color.WHITE, Vector3.UP)
+			_tri(st, o0, o1 * 0.84, o0 * 0.84, Color.WHITE, Vector3.UP)
+		_ring_mesh_shared = st.commit()
+	return _ring_mesh_shared
+
+
 static func _balloon_mesh(palette_key: int, palette: Array, style: int) -> ArrayMesh:
 	## Four envelopes per vale, each a SurfaceTool build. The palettes are the
 	## fixed set above, so (palette, style) is a small closed key space: cache
@@ -534,9 +572,11 @@ static func warm_into(parent: Node3D) -> void:
 		parent.add_child(mi)
 		x += 3.0
 	# The cached bodies the first sit-down would otherwise pay for inside its
-	# build: the shared bird, and the trout that jumps every few seconds.
+	# build: the shared bird, the trout, and the pooled splash meshes.
 	bird_mesh()
 	fish_mesh()
+	spray_mesh()
+	ring_mesh()
 
 
 static func _tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, color: Color, outward: Vector3) -> void:
@@ -1026,22 +1066,12 @@ func _step_fish(a: Dictionary, dt: float) -> bool:
 
 
 func _make_spray() -> void:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var pts := [Vector3.UP, Vector3.DOWN, Vector3.LEFT, Vector3.RIGHT, Vector3.FORWARD, Vector3.BACK]
-	for y_i in [0, 1]:
-		var apex: Vector3 = pts[y_i]
-		var ring := [pts[2], pts[4], pts[3], pts[5]]
-		for k in 4:
-			var a: Vector3 = ring[k]
-			var b: Vector3 = ring[(k + 1) % 4]
-			_tri(st, apex, a, b, Color.WHITE, apex + a + b)
 	var mat := spray_material()
 	mat.emission_energy_multiplier = 0.35 if _mood == Mood.NIGHT else 0.6
 	_spray = MultiMesh.new()
 	_spray.transform_format = MultiMesh.TRANSFORM_3D
 	_spray.use_colors = true
-	_spray.mesh = st.commit()
+	_spray.mesh = spray_mesh()
 	_spray.instance_count = SPRAY_POOL
 	_spray.custom_aabb = _big_aabb()
 	var mi := MultiMeshInstance3D.new()
@@ -1121,21 +1151,11 @@ func _step_spray(dt: float) -> void:
 
 
 func _make_rings() -> void:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var sides: int = 28
-	for i in sides:
-		var a0: float = TAU * float(i) / float(sides)
-		var a1: float = TAU * float(i + 1) / float(sides)
-		var o0 := Vector3(cos(a0), 0.0, sin(a0))
-		var o1 := Vector3(cos(a1), 0.0, sin(a1))
-		_tri(st, o0, o1, o1 * 0.84, Color.WHITE, Vector3.UP)
-		_tri(st, o0, o1 * 0.84, o0 * 0.84, Color.WHITE, Vector3.UP)
 	var mat := ring_material()
 	_rings = MultiMesh.new()
 	_rings.transform_format = MultiMesh.TRANSFORM_3D
 	_rings.use_colors = true
-	_rings.mesh = st.commit()
+	_rings.mesh = ring_mesh()
 	_rings.instance_count = RING_POOL
 	_rings.custom_aabb = _big_aabb()
 	var mi := MultiMeshInstance3D.new()
