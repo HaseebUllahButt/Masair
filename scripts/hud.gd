@@ -36,6 +36,9 @@ var _bike_name: Label
 var _bike_note: Label
 var _bike_stats: Label
 var _bike_index: int = 0
+var _paint_index: int = 0
+var _buy_bike_button: Button
+var _paint_button: Button
 var _tune_buttons: Dictionary = {}
 var _start_button: Button
 var _music: Node
@@ -148,6 +151,7 @@ func _ready() -> void:
 		_game.restarted.connect(_on_restarted)
 		_game.currency_changed.connect(_on_currency)
 		_game.garage_changed.connect(_refresh_garage)
+		_game.bonus_awarded.connect(_on_bonus_awarded)
 		_on_distance(_game.distance_m)
 		_on_best(_game.best_m)
 		_on_currency(_game.credits)
@@ -566,20 +570,30 @@ func _on_crashed() -> void:
 		return
 	var d := int(_game.distance_m) if _game else 0
 	var n: int = _game.near_miss_count if _game else 0
+	var earned: int = _game.run_earned if _game else 0
 	var balance: int = int(_game.credits) if _game else 0
 	var again := "TAP TO RIDE AGAIN" if _touch_controls else "R  ride again"
-	crash_label.text = "RIDE OVER\n\n%d m   ·   %d near misses   ·   CR %d\n\n%s" % [d, n, balance, again]
+	crash_label.text = "RIDE OVER\n\n%d m   ·   %d near misses   ·   +%d CR\n\nwallet CR %d\n\n%s" % [d, n, earned, balance, again]
 
 
-func _on_near_miss(bonus: float, combo: int) -> void:
-	var reward := combo * 2
+## `earned` comes on the signal — the flash can never quote money the ride did
+## not pay.
+func _on_near_miss(bonus: float, combo: int, earned: int) -> void:
 	flash_label.text = (
-		"+%d m  CLOSE CALL  ·  +%d CR" % [int(bonus), reward]
+		"+%d m  CLOSE CALL  ·  +%d CR" % [int(bonus), earned]
 		if combo < 2
-		else "+%d m  FLOW x%d  ·  +%d CR" % [int(bonus), combo, reward]
+		else "+%d m  FLOW x%d  ·  +%d CR" % [int(bonus), combo, earned]
 	)
 	flash_label.modulate = COMBO_COLORS[mini(combo - 1, COMBO_COLORS.size() - 1)]
 	_flash = 0.75
+
+
+func _on_bonus_awarded(kind: String, amount: int) -> void:
+	if amount <= 0:
+		return
+	flash_label.text = "%s  ·  +%d CR" % [kind, amount]
+	flash_label.modulate = Color("e8b55d")
+	_flash = 0.9
 
 
 func show_lighting_mode(mode: int) -> void:
@@ -1021,6 +1035,13 @@ func _build_garage(stack: VBoxContainer) -> void:
 	bike_row.add_child(next)
 	stack.add_child(bike_row)
 
+	_buy_bike_button = _accent_button("BUY", 15)
+	_buy_bike_button.name = "BuyBike"
+	_buy_bike_button.custom_minimum_size = Vector2(0.0, 48.0)
+	_buy_bike_button.visible = false
+	_buy_bike_button.pressed.connect(_buy_bike)
+	stack.add_child(_buy_bike_button)
+
 	var tunes := HBoxContainer.new()
 	tunes.add_theme_constant_override("separation", 6)
 	for category in BikeCatalog.TUNE_KEYS:
@@ -1036,6 +1057,12 @@ func _build_garage(stack: VBoxContainer) -> void:
 		_tune_buttons[category] = tune
 		tunes.add_child(tune)
 	stack.add_child(tunes)
+
+	_paint_button = _menu_button("STOCK", 14)
+	_paint_button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_paint_button.custom_minimum_size = Vector2(0.0, 48.0)
+	_paint_button.pressed.connect(_on_paint_pressed)
+	stack.add_child(_cycle_row("PAINT", _paint_button, _cycle_paint.bind(-1), _cycle_paint.bind(1)))
 	_bike_stats = null
 
 
@@ -1070,10 +1097,33 @@ func _cycle_bike(direction: int) -> void:
 	if _game == null:
 		return
 	_bike_index = posmod(_bike_index + direction, _game.bike_count())
+	_paint_index = _game.selected_paint(_bike_index)
 	_game.preview_bike(_bike_index)
 	_refresh_garage()
 	if _net and _net.online():
 		_net.send_bike(_bike_index)
+
+
+func _buy_bike() -> void:
+	if _game and _game.buy_bike(_bike_index):
+		_game.preview_bike(_bike_index)
+	_refresh_garage()
+
+
+func _cycle_paint(direction: int) -> void:
+	if _game == null:
+		return
+	_paint_index = posmod(_paint_index + direction, _game.paint_count())
+	_game.preview_paint(_bike_index, _paint_index)
+	_refresh_garage()
+
+
+func _on_paint_pressed() -> void:
+	if _game == null:
+		return
+	if _game.owns_paint(_paint_index) or _game.buy_paint(_paint_index):
+		_game.select_paint(_bike_index, _paint_index)
+	_refresh_garage()
 
 
 func _buy_tune(category: String) -> void:
@@ -1095,8 +1145,29 @@ func _refresh_garage() -> void:
 	else:
 		var progress_m: float = float(_game.call("unlock_progress_m"))
 		var remaining := maxf(0.0, float(info["unlock_m"]) - progress_m)
-		_bike_note.text = "locked  ·  %.1f km more" % (remaining / 1000.0)
+		_bike_note.text = "for sale  ·  %d CR  ·  free in %.1f km" % [
+			_game.call("bike_price", _bike_index), remaining / 1000.0
+		]
 		_bike_note.add_theme_color_override("font_color", Color("d98078"))
+	if _buy_bike_button:
+		_buy_bike_button.visible = not unlocked
+		if not unlocked:
+			var price: int = _game.call("bike_price", _bike_index)
+			_buy_bike_button.text = "BUY  ·  %d CR" % price
+			_buy_bike_button.disabled = int(_game.credits) < price
+	if _paint_button:
+		var paint_info: Dictionary = _game.paint_info(_paint_index)
+		var paint_name := str(paint_info["name"])
+		if _game.selected_paint(_bike_index) == _paint_index:
+			_paint_button.text = "%s  ·  ON" % paint_name
+			_paint_button.disabled = false
+		elif _game.owns_paint(_paint_index):
+			_paint_button.text = paint_name
+			_paint_button.disabled = false
+		else:
+			var paint_cost := int(paint_info["price"])
+			_paint_button.text = "%s  ·  %d CR" % [paint_name, paint_cost]
+			_paint_button.disabled = int(_game.credits) < paint_cost
 	const SHORT := {"engine": "ENG", "brakes": "BRK", "handling": "HND"}
 	for category in BikeCatalog.TUNE_KEYS:
 		var button: Button = _tune_buttons[category]
@@ -1124,7 +1195,7 @@ func _menu_label(copy: String, size: int, color: Color, font: Font = null) -> La
 	return label
 
 
-func _cycle_row(caption: String, value: Label, on_prev: Callable, on_next: Callable) -> HBoxContainer:
+func _cycle_row(caption: String, value: Control, on_prev: Callable, on_next: Callable) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	var label := _menu_label(caption, 13, Color("d8d2c4"), _font_kicker)
@@ -1136,8 +1207,11 @@ func _cycle_row(caption: String, value: Label, on_prev: Callable, on_next: Calla
 	previous.pressed.connect(on_prev)
 	row.add_child(previous)
 	value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	if value is Label:
+		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	elif value is Button:
+		value.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	row.add_child(value)
 	var next := _garage_arrow("›")
 	next.custom_minimum_size = Vector2(48.0, 48.0)
@@ -2120,6 +2194,19 @@ func _on_race_results(order: Array) -> void:
 		else:
 			lines.append("P%d  %s%s" % [int(p["place"]), p["name"], me])
 	lines.append("")
+	## The purse lands here, once, on the results packet that ends the race.
+	if _game and _net:
+		for p in order:
+			if int(p["id"]) == _net.my_id:
+				var purse := int(
+					_game.call(
+						"award_race_purse",
+						int(p.get("place", 0)),
+						not bool(p.get("dnf", false))
+					)
+				)
+				if purse > 0:
+					lines.append("Your purse:  +%d CR" % purse)
 	lines.append("Ready up in the lobby for a rematch.")
 	_results_label.text = "\n".join(lines)
 	_results_panel.visible = true

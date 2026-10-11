@@ -38,11 +38,14 @@ const GREEN := Color("1e4a32")
 const GREEN_D := Color("123224")
 const INK := Color("1c1c22")
 const INK_D := Color("101014")
+const EMBER := Color("b05c2a")
 const MIRROR := Color("9fb2c4")
 const SHELL := Color("3b4450")
 
 const METALS: Array[Color] = [ALUM, ALUM_D, CHROME, COPPER, COPPER_D]
-const PAINTED: Array[Color] = [PAINT, PAINT_D, CREAM, BLUE, BLUE_D, GOLD, GOLD_D, GREEN, GREEN_D, INK, INK_D]
+const PAINTED: Array[Color] = [
+	PAINT, PAINT_D, CREAM, BLUE, BLUE_D, GOLD, GOLD_D, GREEN, GREEN_D, INK, INK_D, EMBER
+]
 
 const HEADLIGHT_AT := Vector3(0, 0.80, 0.62)
 const WHEEL_R := 0.33
@@ -72,6 +75,9 @@ var _hero_yaw0: float = deg_to_rad(18.0)
 var _hero_t: float = 0.0
 var _bike_style: int = 0
 var _kits: Dictionary = {}
+## Paint-shop colour worn by each kit: style index → BikeCatalog.PAINTS index.
+## Missing entries are the authored livery (0 = STOCK).
+var _kit_paint: Dictionary = {}
 var _fenders: Dictionary = {}
 var _fender_head: Node3D
 var _fender_origin: Vector3
@@ -133,8 +139,11 @@ func set_hero_view(on: bool) -> void:
 				ride_cam.make_current()
 
 
-func set_bike_style(style: int) -> void:
+func set_bike_style(style: int, paint_id: int = -1) -> void:
 	_bike_style = clampi(style, 0, BikeCatalog.BIKES.size() - 1)
+	if paint_id >= 0 and int(_kit_paint.get(_bike_style, 0)) != paint_id:
+		_kit_paint[_bike_style] = paint_id
+		_repaint(_bike_style)
 	_ensure_kit(_bike_style)
 	_ensure_fender(_bike_style)
 	_dial_top_speed = float(BikeCatalog.BIKES[_bike_style]["top_speed"])
@@ -142,6 +151,36 @@ func set_bike_style(style: int) -> void:
 		(kit as Node3D).visible = kit == _kits[_bike_style]
 	for fender in _fenders.values():
 		(fender as MeshInstance3D).visible = fender == _fenders[_bike_style]
+
+
+## The spec is authored once per style; a bought colour swaps tank, tail and
+## side-panel paint while stripes, bellies and pipes keep their accent.
+func _painted_spec(spec: Dictionary, style: int) -> Dictionary:
+	var paint_id := int(_kit_paint.get(style, 0))
+	if paint_id <= 0 or paint_id >= BikeCatalog.PAINTS.size():
+		return spec
+	var out := spec.duplicate()
+	var col := Color(str(BikeCatalog.PAINTS[paint_id]["color"]))
+	out["paint"] = col
+	out["tail_paint"] = col
+	return out
+
+
+## A colour change re-emits the kit's vertex colours — a garage operation, so
+## the rebuild never happens mid-ride.
+func _repaint(style: int) -> void:
+	if _kits.has(style):
+		var kit: Node3D = _kits[style]
+		if not bool(kit.get_meta("lazy_body", false)):
+			for child in kit.get_children():
+				child.queue_free()
+			_populate_kit(kit, kit.name, _painted_spec(_base_spec(style), style))
+	if _fenders.has(style):
+		var fender: MeshInstance3D = _fenders[style]
+		var fb := LowPoly.new()
+		fb.smooth = true
+		_build_fender(fb, _fender_origin, _fender_color(style))
+		fender.mesh = fb.commit()
 
 
 func _build_bike_variants() -> void:
@@ -158,23 +197,31 @@ func _build_bike_variants() -> void:
 	_ensure_kit(_bike_style)
 
 
+func _base_spec(style: int) -> Dictionary:
+	match clampi(style, 0, BikeCatalog.BIKES.size() - 1):
+		1:
+			return _sabre_spec()
+		2:
+			return _halcyon_spec()
+		3:
+			return _tempest_spec()
+		4:
+			return _raven_spec()
+	return _mesa_spec()
+
+
 func _ensure_kit(style: int) -> Node3D:
 	var safe_style := clampi(style, 0, BikeCatalog.BIKES.size() - 1)
 	var node_name := "MesaKit"
-	var spec: Dictionary = _mesa_spec()
 	match safe_style:
 		1:
 			node_name = "SabreKit"
-			spec = _sabre_spec()
 		2:
 			node_name = "HalcyonKit"
-			spec = _halcyon_spec()
 		3:
 			node_name = "TempestKit"
-			spec = _tempest_spec()
 		4:
 			node_name = "RavenKit"
-			spec = _raven_spec()
 	var kit: Node3D
 	if _kits.has(safe_style):
 		kit = _kits[safe_style] as Node3D
@@ -184,7 +231,7 @@ func _ensure_kit(style: int) -> Node3D:
 		add_child(kit)
 		_kits[safe_style] = kit
 	if bool(kit.get_meta("lazy_body", false)):
-		_populate_kit(kit, node_name, spec)
+		_populate_kit(kit, node_name, _painted_spec(_base_spec(safe_style), safe_style))
 	return kit
 
 
@@ -767,16 +814,23 @@ func _build_style_fenders(head: Node3D, o: Vector3) -> void:
 	_ensure_fender(_bike_style)
 
 
+func _fender_color(style: int) -> Color:
+	var paint_id := int(_kit_paint.get(style, 0))
+	if paint_id > 0 and paint_id < BikeCatalog.PAINTS.size():
+		return Color(str(BikeCatalog.PAINTS[paint_id]["color"]))
+	var colors: Array[Color] = [PAINT, BLUE, GREEN, CREAM, INK]
+	return colors[clampi(style, 0, colors.size() - 1)]
+
+
 func _ensure_fender(style: int) -> MeshInstance3D:
 	var safe_style := clampi(style, 0, BikeCatalog.BIKES.size() - 1)
 	if _fenders.has(safe_style):
 		return _fenders[safe_style] as MeshInstance3D
 	if _fender_head == null:
 		return null
-	var colors: Array[Color] = [PAINT, BLUE, GREEN, CREAM, INK]
 	var fb := LowPoly.new()
 	fb.smooth = true
-	_build_fender(fb, _fender_origin, colors[safe_style])
+	_build_fender(fb, _fender_origin, _fender_color(safe_style))
 	var fender := MeshInstance3D.new()
 	fender.name = "FrontFender%d" % safe_style
 	fender.mesh = fb.commit()

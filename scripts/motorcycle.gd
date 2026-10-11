@@ -193,14 +193,14 @@ func _setup_audio() -> void:
 	_engine.play()
 
 
-func preview_bike(bike_id: int) -> void:
+func preview_bike(bike_id: int, paint_id: int = -1) -> void:
 	_voice_id = clampi(bike_id, 0, BikeCatalog.BIKES.size() - 1)
 	var info: Dictionary = BikeCatalog.BIKES[_voice_id]
 	_idle_pitch = float(info["idle_pitch"])
 	_pitch_span = float(info["pitch_span"])
 	_gears = float(info["gears"])
 	if visual and visual.has_method("set_bike_style"):
-		visual.call("set_bike_style", _voice_id)
+		visual.call("set_bike_style", _voice_id, paint_id)
 	_apply_voice(_voice_id)
 
 
@@ -219,7 +219,7 @@ func _apply_voice(bike_id: int) -> void:
 			_engine.play()
 
 
-func apply_bike_profile(bike_id: int, stats: Dictionary) -> void:
+func apply_bike_profile(bike_id: int, stats: Dictionary, paint_id: int = -1) -> void:
 	top_speed = float(stats["top_speed"])
 	engine_accel = float(stats["engine_accel"])
 	brake_accel = float(stats["brake_accel"])
@@ -245,7 +245,7 @@ func apply_bike_profile(bike_id: int, stats: Dictionary) -> void:
 	if stats.has("pitch_span"):
 		_pitch_span = float(stats["pitch_span"])
 	start_speed = float(stats["start_speed"])
-	preview_bike(bike_id)
+	preview_bike(bike_id, paint_id)
 
 
 # ------------------------------------------------------------------- physics

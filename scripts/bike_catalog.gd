@@ -10,11 +10,25 @@ extends RefCounted
 const MAX_TUNE_LEVEL := 5
 const TUNE_KEYS := ["engine", "brakes", "handling"]
 
+## Paint-shop colours. STOCK keeps each bike's authored livery; the rest are
+## bought once and wearable on every bike. `color` is a hex string so the table
+## stays a pure-data constant — motorcycle_visual parses it when repainting.
+const PAINTS: Array[Dictionary] = [
+	{"name": "STOCK", "price": 0, "color": ""},
+	{"name": "JET", "price": 240, "color": "1c1c22"},
+	{"name": "CHERRY", "price": 240, "color": "c92a38"},
+	{"name": "IVORY", "price": 280, "color": "e8dcc4"},
+	{"name": "EMPIRE", "price": 280, "color": "1e4a32"},
+	{"name": "MIDNIGHT", "price": 280, "color": "2f6aa0"},
+	{"name": "EMBER", "price": 320, "color": "b05c2a"},
+]
+
 const BIKES: Array[Dictionary] = [
 	{
 		"name": "MESA 400",
 		"tagline": "HONEST CAFÉ · 200 KM/H",
 		"unlock_m": 0.0,
+		"price": 0,
 		"top_speed": 55.5556,
 		"engine_accel": 12.0,
 		"brake_accel": 16.0,
@@ -36,7 +50,8 @@ const BIKES: Array[Dictionary] = [
 	{
 		"name": "SABRE 650",
 		"tagline": "SLIM TWIN · 220 KM/H",
-		"unlock_m": 5000.0,
+		"unlock_m": 6000.0,
+		"price": 600,
 		"top_speed": 61.1111,
 		"engine_accel": 14.3,
 		"brake_accel": 17.8,
@@ -58,7 +73,8 @@ const BIKES: Array[Dictionary] = [
 	{
 		"name": "HALCYON 750",
 		"tagline": "BRITISH GREEN · 232 KM/H",
-		"unlock_m": 12000.0,
+		"unlock_m": 25000.0,
+		"price": 1300,
 		"top_speed": 64.4444,
 		"engine_accel": 15.6,
 		"brake_accel": 18.8,
@@ -80,7 +96,8 @@ const BIKES: Array[Dictionary] = [
 	{
 		"name": "TEMPEST 900",
 		"tagline": "BIG TWIN CAFÉ · 248 KM/H",
-		"unlock_m": 30000.0,
+		"unlock_m": 80000.0,
+		"price": 3400,
 		"top_speed": 68.8889,
 		"engine_accel": 17.2,
 		"brake_accel": 20.2,
@@ -102,7 +119,8 @@ const BIKES: Array[Dictionary] = [
 	{
 		"name": "RAVEN 1100",
 		"tagline": "BLACK BOMBER · 262 KM/H",
-		"unlock_m": 36000.0,
+		"unlock_m": 150000.0,
+		"price": 5000,
 		"top_speed": 72.7778,
 		"engine_accel": 19.0,
 		"brake_accel": 22.0,

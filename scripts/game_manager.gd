@@ -4,10 +4,13 @@ extends Node
 signal distance_changed(distance_m: float)
 signal best_changed(best_m: float)
 signal crashed
-signal near_miss(bonus: float, combo: int)
+signal near_miss(bonus: float, combo: int, earned: int)
 signal restarted
 signal currency_changed(balance: int)
 signal garage_changed
+## One-off payouts that are not distance fare: personal-best bounty, the scenic
+## stop, a race purse. `kind` is the HUD caption, `amount` the credits paid.
+signal bonus_awarded(kind: String, amount: int)
 
 const BikeCatalog := preload("res://scripts/bike_catalog.gd")
 const RoadPathGD := preload("res://scripts/road_path.gd")
@@ -15,6 +18,18 @@ const SAVE_PATH := "user://splendor_save.cfg"
 const COMBO_WINDOW := 2.6
 const CREDIT_DISTANCE := 70.0
 const SAVE_INTERVAL_S := 5.0
+## What the earlier builds unlocked by distance alone. A save that already met
+## one of these keeps the bike as a permanent purchase, so raising `unlock_m`
+## never takes a machine away.
+const LEGACY_UNLOCK_M := [0.0, 5000.0, 12000.0, 30000.0, 36000.0]
+## One scenic-stop payout per run, for getting off at a lookout bench.
+const SCENIC_BONUS := 50
+## Personal-best bounty: one credit per slice of brand-new best distance.
+const PB_BOUNTY_M := 25.0
+## Podium pays better, but finishing always beats the hedgerow.
+const RACE_PURSE_PODIUM := [150, 100, 75]
+const RACE_PURSE_FINISH := 50
+const RACE_PURSE_DNF := 15
 
 var distance_m: float = 0.0
 var best_m: float = 0.0
@@ -27,8 +42,17 @@ var near_miss_count: int = 0
 var combo: int = 0
 var score_multiplier: float = 1.35
 var credits: int = 0
+## Credits earned since the last restart — the crash card reports this, not
+## just the wallet balance.
+var run_earned: int = 0
 var selected_bike: int = 0
 var tuning: Array[Dictionary] = []
+## Bikes bought with credits, independent of the distance unlock.
+var purchased: Array = []
+## Bitmask over BikeCatalog.PAINTS; bit 0 (STOCK) is always set.
+var paints_owned: int = 1
+## Paint index worn by each bike in the garage.
+var paint_sel: Array[int] = []
 
 var _player: Node3D
 var _last_route_m: float = 0.0
@@ -37,6 +61,10 @@ var _next_credit_distance: float = CREDIT_DISTANCE
 var _unbanked_credits: int = 0
 var _progress_dirty: bool = false
 var _save_cooldown: float = 0.0
+var _run_start_best: float = 0.0
+var _bounty_paid: int = 0
+var _scenic_paid: bool = false
+var _purse_paid: bool = false
 var persist_progress: bool = true
 var race_seed: int = -1 ## >= 0 while a shared-road race is live
 ## This rider's place on the start grid: x = slot, y = riders in the race.
@@ -45,6 +73,7 @@ var race_grid := Vector2i(0, 1)
 
 func _ready() -> void:
 	_load_progress()
+	_run_start_best = best_m
 	best_changed.emit(best_m)
 	currency_changed.emit(credits)
 
@@ -75,6 +104,12 @@ func _process(delta: float) -> void:
 			_flush_progress()
 	if is_crashed or _player == null:
 		return
+	## The bench on a lookout platform pays once per ride — the detour has a
+	## purse of its own so the climb is not just distance spent.
+	if not _scenic_paid and bool(_player.get("seated")):
+		_scenic_paid = true
+		_award_credits(SCENIC_BONUS)
+		bonus_awarded.emit("SCENIC VIEW", SCENIC_BONUS)
 	var route_m: float = maxf(float(_player.track_z), 0.0)
 	if route_m < _last_route_m:
 		# Restarts and menu teleports reset the route; do not count that jump as
@@ -112,8 +147,12 @@ func register_near_miss() -> void:
 	_combo_timer = COMBO_WINDOW
 	var bonus := 5.0 * float(combo) * score_multiplier
 	bonus_m += bonus
-	_award_credits(1)
-	near_miss.emit(bonus, combo)
+	## The flash used to invent 2 × combo on its own; the signal now carries the
+	## real award — 2 × combo scaled by the same multiplier the score uses, so
+	## denser traffic pays more.
+	var earned := maxi(1, int(round(2.0 * float(combo) * score_multiplier)))
+	_award_credits(earned)
+	near_miss.emit(bonus, combo, earned)
 
 
 func crash() -> void:
@@ -140,6 +179,10 @@ func restart() -> void:
 	combo = 0
 	is_crashed = false
 	_next_credit_distance = CREDIT_DISTANCE
+	run_earned = 0
+	_run_start_best = best_m
+	_bounty_paid = 0
+	_scenic_paid = false
 	distance_changed.emit(0.0)
 	var scene := get_tree().current_scene
 	if not is_instance_valid(_player):
@@ -192,6 +235,7 @@ func in_race() -> bool:
 func begin_race(seed: int, grid := Vector2i(0, 1)) -> void:
 	race_seed = seed
 	race_grid = grid
+	_purse_paid = false
 	restart()
 
 
@@ -217,6 +261,15 @@ func bank_progress() -> void:
 		best_m = distance_m
 		best_changed.emit(best_m)
 		_progress_dirty = true
+	## Record money: every metre past the best the run started with pays a
+	## bounty. It doubles a new rider's income and makes a veteran's record
+	## worth the sweat. `_bounty_paid` keeps repeat banks from paying twice.
+	var bounty := int(maxf(0.0, distance_m - _run_start_best) / PB_BOUNTY_M)
+	if bounty > _bounty_paid:
+		var due := bounty - _bounty_paid
+		_bounty_paid = bounty
+		_award_credits(due)
+		bonus_awarded.emit("PERSONAL BEST", due)
 	if _progress_dirty or _unbanked_credits > 0:
 		_flush_progress()
 	garage_changed.emit()
@@ -248,12 +301,50 @@ func unlock_progress_m() -> float:
 func is_bike_unlocked(bike_id: int) -> bool:
 	if bike_id < 0 or bike_id >= BikeCatalog.BIKES.size():
 		return false
+	if purchased.has(bike_id):
+		return true
 	return unlock_progress_m() >= float(BikeCatalog.BIKES[bike_id]["unlock_m"])
+
+
+## The dealer's sliding scale: full list at zero kilometres, falling linearly
+## to free at unlock_m — riding discounts the bike, credits skip the wait.
+func bike_price(bike_id: int) -> int:
+	if bike_id <= 0 or bike_id >= BikeCatalog.BIKES.size() or is_bike_unlocked(bike_id):
+		return 0
+	var info: Dictionary = BikeCatalog.BIKES[bike_id]
+	var unlock_m := float(info["unlock_m"])
+	if unlock_m <= 0.0:
+		return 0
+	var list := int(info["price"])
+	var gap := clampf(1.0 - unlock_progress_m() / unlock_m, 0.0, 1.0)
+	return maxi(int(ceil(float(list) * gap)), maxi(list / 10, 25))
+
+
+func buy_bike(bike_id: int) -> bool:
+	if bike_id <= 0 or bike_id >= BikeCatalog.BIKES.size() or is_bike_unlocked(bike_id):
+		return false
+	var cost := bike_price(bike_id)
+	if credits < cost:
+		return false
+	credits -= cost
+	purchased.append(bike_id)
+	_save_progress()
+	currency_changed.emit(credits)
+	garage_changed.emit()
+	return true
 
 
 func preview_bike(bike_id: int) -> void:
 	if _player and _player.has_method("preview_bike"):
-		_player.call("preview_bike", clampi(bike_id, 0, BikeCatalog.BIKES.size() - 1))
+		var safe_id := clampi(bike_id, 0, BikeCatalog.BIKES.size() - 1)
+		_player.call("preview_bike", safe_id, selected_paint(safe_id))
+
+
+## Browsed colour on the showroom floor — visible but not yet bought or worn.
+func preview_paint(bike_id: int, paint_id: int) -> void:
+	if _player and _player.has_method("preview_bike"):
+		var safe_id := clampi(bike_id, 0, BikeCatalog.BIKES.size() - 1)
+		_player.call("preview_bike", safe_id, clampi(paint_id, 0, BikeCatalog.PAINTS.size() - 1))
 
 
 func select_bike(bike_id: int) -> bool:
@@ -268,7 +359,7 @@ func select_bike(bike_id: int) -> bool:
 
 func apply_selected_bike() -> void:
 	if _player and _player.has_method("apply_bike_profile"):
-		_player.call("apply_bike_profile", selected_bike, bike_stats(selected_bike))
+		_player.call("apply_bike_profile", selected_bike, bike_stats(selected_bike), selected_paint(selected_bike))
 
 
 func tune_level(bike_id: int, category: String) -> int:
@@ -300,10 +391,72 @@ func buy_tune(bike_id: int, category: String) -> bool:
 	return true
 
 
+func paint_count() -> int:
+	return BikeCatalog.PAINTS.size()
+
+
+func paint_info(paint_id: int) -> Dictionary:
+	return BikeCatalog.PAINTS[clampi(paint_id, 0, BikeCatalog.PAINTS.size() - 1)]
+
+
+func owns_paint(paint_id: int) -> bool:
+	if paint_id <= 0:
+		return paint_id == 0
+	return paint_id < BikeCatalog.PAINTS.size() and (paints_owned & (1 << paint_id)) != 0
+
+
+func buy_paint(paint_id: int) -> bool:
+	if paint_id <= 0 or paint_id >= BikeCatalog.PAINTS.size() or owns_paint(paint_id):
+		return false
+	var cost := int(BikeCatalog.PAINTS[paint_id]["price"])
+	if credits < cost:
+		return false
+	credits -= cost
+	paints_owned |= 1 << paint_id
+	_save_progress()
+	currency_changed.emit(credits)
+	garage_changed.emit()
+	return true
+
+
+func selected_paint(bike_id: int) -> int:
+	if bike_id < 0 or bike_id >= paint_sel.size():
+		return 0
+	return paint_sel[bike_id]
+
+
+func select_paint(bike_id: int, paint_id: int) -> bool:
+	if bike_id < 0 or bike_id >= paint_sel.size() or not owns_paint(paint_id):
+		return false
+	paint_sel[bike_id] = paint_id
+	if bike_id == selected_bike:
+		apply_selected_bike()
+	else:
+		preview_bike(bike_id)
+	_save_progress()
+	garage_changed.emit()
+	return true
+
+
+## One purse per race, paid when the results arrive. Podium places pay the
+## table, every other finisher the base purse, a DNF the consolation.
+func award_race_purse(place: int, finished: bool) -> int:
+	if _purse_paid:
+		return 0
+	_purse_paid = true
+	var amount := RACE_PURSE_DNF
+	if finished:
+		amount = RACE_PURSE_PODIUM[place - 1] if place >= 1 and place <= 3 else RACE_PURSE_FINISH
+	_award_credits(amount)
+	bonus_awarded.emit("RACE PURSE", amount)
+	return amount
+
+
 func _award_credits(amount: int) -> void:
 	if amount <= 0:
 		return
 	credits += amount
+	run_earned += amount
 	_unbanked_credits += amount
 	currency_changed.emit(credits)
 	# Save every few hundred metres' worth. The UI updates every award, but
@@ -315,6 +468,11 @@ func _award_credits(amount: int) -> void:
 func _ensure_tuning() -> void:
 	while tuning.size() < BikeCatalog.BIKES.size():
 		tuning.append(BikeCatalog.empty_tuning())
+
+
+func _ensure_paint() -> void:
+	while paint_sel.size() < BikeCatalog.BIKES.size():
+		paint_sel.append(0)
 
 
 func load_music_config() -> Dictionary:
@@ -375,12 +533,20 @@ func save_music_config(data: Dictionary) -> void:
 
 func _load_progress() -> void:
 	_ensure_tuning()
+	_ensure_paint()
 	var cfg := ConfigFile.new()
 	if cfg.load(SAVE_PATH) == OK:
 		best_m = float(cfg.get_value("score", "best_m", 0.0))
 		lifetime_m = maxf(float(cfg.get_value("score", "lifetime_m", best_m)), best_m)
 		credits = maxi(0, int(cfg.get_value("economy", "credits", 0)))
+		paints_owned = maxi(1, int(cfg.get_value("economy", "paints_owned", 1)))
 		selected_bike = clampi(int(cfg.get_value("garage", "selected_bike", 0)), 0, BikeCatalog.BIKES.size() - 1)
+		var bought: Variant = cfg.get_value("garage", "purchased_bikes", [])
+		if bought is Array:
+			for id in bought:
+				var bike_id := int(id)
+				if bike_id > 0 and bike_id < BikeCatalog.BIKES.size() and not purchased.has(bike_id):
+					purchased.append(bike_id)
 		for bike_id in BikeCatalog.BIKES.size():
 			for category in BikeCatalog.TUNE_KEYS:
 				tuning[bike_id][category] = clampi(
@@ -388,6 +554,20 @@ func _load_progress() -> void:
 					0,
 					BikeCatalog.MAX_TUNE_LEVEL
 				)
+		for bike_id in paint_sel.size():
+			paint_sel[bike_id] = clampi(
+				int(cfg.get_value("paint", "bike_%d" % bike_id, 0)),
+				0,
+				BikeCatalog.PAINTS.size() - 1
+			)
+	## Grandfather distance unlocks met under the old, nearer marks — raising
+	## unlock_m must never park a machine a rider already earned.
+	for bike_id in mini(LEGACY_UNLOCK_M.size(), BikeCatalog.BIKES.size()):
+		if unlock_progress_m() >= float(LEGACY_UNLOCK_M[bike_id]) and not purchased.has(bike_id):
+			purchased.append(bike_id)
+	for bike_id in paint_sel.size():
+		if not owns_paint(paint_sel[bike_id]):
+			paint_sel[bike_id] = 0
 	if not is_bike_unlocked(selected_bike):
 		selected_bike = 0
 
@@ -400,8 +580,12 @@ func _save_progress() -> void:
 	cfg.set_value("score", "best_m", best_m)
 	cfg.set_value("score", "lifetime_m", lifetime_m)
 	cfg.set_value("economy", "credits", credits)
+	cfg.set_value("economy", "paints_owned", paints_owned)
 	cfg.set_value("garage", "selected_bike", selected_bike)
+	cfg.set_value("garage", "purchased_bikes", purchased.duplicate())
 	for bike_id in BikeCatalog.BIKES.size():
 		for category in BikeCatalog.TUNE_KEYS:
 			cfg.set_value("tuning", "bike_%d_%s" % [bike_id, category], tune_level(bike_id, category))
+	for bike_id in paint_sel.size():
+		cfg.set_value("paint", "bike_%d" % bike_id, paint_sel[bike_id])
 	cfg.save(SAVE_PATH)

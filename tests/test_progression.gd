@@ -59,9 +59,14 @@ func _process(_delta: float) -> bool:
 	game.set("credits", 500)
 	game.set("selected_bike", 0)
 	var fresh: Array[Dictionary] = []
+	var fresh_paint: Array[int] = []
 	for i in BikeCatalog.BIKES.size():
 		fresh.append(BikeCatalog.empty_tuning())
+		fresh_paint.append(0)
 	game.set("tuning", fresh)
+	game.set("purchased", [])
+	game.set("paints_owned", 1)
+	game.set("paint_sel", fresh_paint)
 	check(game.call("is_bike_unlocked", 0), "first bike starts unlocked")
 	check(not game.call("is_bike_unlocked", 1), "second bike begins distance-locked")
 	game.set("best_m", float(BikeCatalog.BIKES[1]["unlock_m"]))
@@ -86,6 +91,50 @@ func _process(_delta: float) -> bool:
 	var before_award: int = game.credits
 	game.call("_award_credits", 5)
 	check(int(game.credits) == before_award + 5, "currency awards accumulate")
+
+	# The dealer's sliding scale: full list at zero kilometres, melting to free
+	# at the distance mark, and a purchase counts as an unlock.
+	game.set("best_m", 0.0)
+	game.set("lifetime_m", 0.0)
+	game.set("purchased", [])
+	check(
+		int(game.call("bike_price", 1)) == int(BikeCatalog.BIKES[1]["price"]),
+		"locked bike starts at list price"
+	)
+	game.set("lifetime_m", float(BikeCatalog.BIKES[1]["unlock_m"]) * 0.5)
+	var half_price: int = game.call("bike_price", 1)
+	check(
+		half_price > 0 and half_price < int(BikeCatalog.BIKES[1]["price"]),
+		"distance discounts the sticker"
+	)
+	game.set("credits", half_price)
+	check(game.call("buy_bike", 1), "credits buy a locked bike")
+	check(game.call("is_bike_unlocked", 1), "a bought bike stays unlocked without the distance")
+	check(int(game.credits) == 0, "the purchase drains the exact price")
+	check(not game.call("buy_bike", 1), "an owned bike is not for sale")
+	game.set("purchased", [])
+	game.set("lifetime_m", 0.0)
+	check(not game.call("is_bike_unlocked", 1), "reset garage locks the bike again")
+
+	# Paint shop: colours are bought once, worn per bike, STOCK always owned.
+	game.set("credits", 300)
+	check(game.call("owns_paint", 0), "the authored livery is always owned")
+	check(not game.call("owns_paint", 1), "shop colours start unpurchased")
+	check(game.call("buy_paint", 1), "credits buy a paint")
+	check(game.call("owns_paint", 1), "bought paint is owned")
+	check(game.call("select_paint", 0, 1), "an owned paint can be worn")
+	check(int(game.call("selected_paint", 0)) == 1, "paint is stored per bike")
+	check(not game.call("select_paint", 0, 2), "unbought paint cannot be worn")
+	game.set("paint_sel", fresh_paint)
+
+	# Race purse: podium pays, finishing pays, a crash-out still gets a tip —
+	# and the purse pays only once per race.
+	game.set("credits", 0)
+	game.call("begin_race", 7, Vector2i(0, 1))
+	check(int(game.call("award_race_purse", 1, true)) == 150, "first place pays the podium purse")
+	check(int(game.call("award_race_purse", 1, true)) == 0, "the purse pays once")
+	game.call("end_race")
+	check(int(game.credits) == 150, "the purse lands in the wallet")
 
 	var music: Dictionary = game.call("load_music_config")
 	check(music.has("playback_position"), "music save remembers how far the track had played")
