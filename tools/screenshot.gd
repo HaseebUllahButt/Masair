@@ -729,6 +729,8 @@ class Capture:
 			var v: Variant = over[key]
 			if v is String:
 				row[key] = Color(v)
+			elif v is Array and row.get(key) is Color:
+				row[key] = Color(v[0], v[1], v[2])
 			elif v is Array:
 				row[key] = Vector3(v[0], v[1], v[2])
 			else:
