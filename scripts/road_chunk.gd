@@ -248,6 +248,7 @@ static func unit_cube() -> ArrayMesh:
 	## heavy bevels turn towers into cans.
 	if _unit_cube == null:
 		var b := LowPoly.new()
+		b.index_flat = true
 		b.add_rounded_box(Transform3D.IDENTITY, Vector3.ONE, 0.04, Color.WHITE)
 		_unit_cube = b.commit()
 	return _unit_cube
@@ -290,6 +291,7 @@ static func unit_trunk() -> ArrayMesh:
 	## trunks, boughs, twigs, palm stems — so the whole forest is a single bucket.
 	if _unit_trunk == null:
 		var b := LowPoly.new()
+		b.index_flat = true
 		const SIDES := 6
 		# [height, radius]: a flare at the roots, then a steady taper.
 		const RINGS := [[0.0, 0.5], [0.08, 0.35], [0.45, 0.29], [0.8, 0.21], [1.0, 0.12]]
@@ -328,6 +330,7 @@ static func unit_crown() -> ArrayMesh:
 	## of halfway up a floating sphere.
 	if _unit_crown == null:
 		var b := LowPoly.new()
+		b.index_flat = true
 		# Faceted, chunky masses fit the hand-cut landscape. Smooth normals made
 		# these read as imported green bubbles beside the low-poly terrain.
 		b.smooth = false
@@ -362,6 +365,7 @@ static func unit_conifer() -> ArrayMesh:
 	## smooth-shaded version is just a green traffic cone.
 	if _unit_conifer == null:
 		var b := LowPoly.new()
+		b.index_flat = true
 		b.channel = LowPoly.FOLIAGE
 		# Four uneven bough masses with deliberate gaps and generous overlap, so
 		# the tiers blend into one rounded mass rather than stacking into a sharp

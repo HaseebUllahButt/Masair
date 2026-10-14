@@ -195,6 +195,9 @@ static func field_material() -> ShaderMaterial:
 ## Averaged vertex normals instead of hard per-face ones. Rolling ground and
 ## round bike parts want this; flat panels and road markings do not.
 var smooth: bool = false
+## Reused flat meshes repay indexing across thousands of instances. Live
+## one-off meshes keep the cheaper upload path instead of hashing every face.
+var index_flat: bool = false
 
 ## Normals arrive with each vertex instead of being generated at commit. The
 ## terrain ribbons use this: generate_normals() can only average the quads a
@@ -660,8 +663,12 @@ func commit() -> ArrayMesh:
 	channels.sort()
 	for key in channels:
 		var st: SurfaceTool = _st[key]
-		if smooth or explicit_normals:
-			st.index()  # merge coincident verts so normals can average across them
+		## Flat shading is an attribute, not a reason to upload the same vertex
+		## twice. index() only joins matching normals, colours and UVs, so the
+		## facets stay sharp while both the foliage and shadow passes reuse the
+		## shared corners of each face. Smooth builders still average below.
+		if smooth or explicit_normals or index_flat:
+			st.index()
 		if smooth:
 			st.generate_normals()
 		st.commit(mesh)
