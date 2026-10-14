@@ -353,12 +353,17 @@ func _process(_delta: float) -> bool:
 		player.track_z = viewpoint
 		player.lateral = side * float(path.call("spur_offset", viewpoint))
 		player.call("_place")
-	if frames == 88:
+	if frames >= 88:
 		var streamer: Node = main.get_node("RoadStreamer")
 		var lakes := 0
 		for chunk in (streamer.get("_chunks") as Dictionary).values():
 			if is_instance_valid(chunk) and chunk.get_node_or_null("ViewpointLake") != null:
 				lakes += 1
+		## Chunk construction is asynchronous; headless frames can run faster
+		## than the budgeted ribbon finishes. Wait for readiness, with a bound,
+		## rather than failing a correct late-build at an arbitrary frame.
+		if lakes == 0 and frames < 1200:
+			return false
 		check(lakes > 0, "taking the spur late-builds the lake (%d lake chunks)" % lakes)
 	if frames >= 90:
 		var streamer: Node = main.get_node("RoadStreamer")

@@ -178,6 +178,21 @@ func _pixel_gallery(main: Node, centre: float) -> void:
 	while int(streamer.get("_idle_current")) < 0:
 		await process_frame
 	streamer.set_process(false)
+	if _opts.has("fixed-world"):
+		## Concurrent highway/scenic dressing consumes one RNG in a different
+		## order when a driver stalls. Compare the authored kit in a fixed build
+		## order, so an unrelated tree shuffle cannot hide a material difference.
+		var chunks: Dictionary = streamer.get("_chunks")
+		var indices: Array = chunks.keys()
+		indices.sort()
+		var chunk_script: GDScript = load("res://scripts/road_chunk.gd")
+		for index: int in indices:
+			(chunks[index] as Node).free()
+			var chunk: Node3D = chunk_script.new()
+			streamer.add_child(chunk)
+			chunks[index] = chunk
+			chunk.call("setup", index, streamer.call("theme_for_chunk", index))
+			streamer.call("_apply_corridor_to", chunk)
 	_life.set_process(false)
 	_life.call("_clear")
 	await process_frame
