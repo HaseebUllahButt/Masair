@@ -56,6 +56,14 @@ func _run() -> void:
 	check(float(sky.get_shader_parameter("ghost_moon")) == 0.0, "a closed sky hides the morning moon")
 	main.set("rain", 0.0)
 
+	# A night squall stays night rather than lighting the dome grey.
+	main.call("preview_mood", 2, true)
+	main.set("rain", 1.0)
+	main.call("_apply_lighting")
+	var storm: Color = sky.get_shader_parameter("zenith_color")
+	check(storm.get_luminance() < 0.08 and storm.b > storm.r, "a night squall keeps the sky dark blue")
+	main.set("rain", 0.0)
+
 	var hud_script: GDScript = load("res://scripts/hud.gd")
 	check(hud_script.get_script_constant_map()["MOOD_NAMES"][0] == "DAWN", "the title picker calls the first mood dawn")
 	main.free()

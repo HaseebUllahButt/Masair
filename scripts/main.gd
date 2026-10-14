@@ -97,10 +97,10 @@ const MOODS := {
 		"belt_color": Color("e2a6bd"),
 		"belt_strength": 0.55,
 		"ghost_moon": 0.55,
-		# A last-quarter moon: a right angle round the sky from the sun, high
-		# over the road's right shoulder — in frame while riding, and above the
+		# A last-quarter moon, most of a right angle round the sky from the sun
+		# and 22 degrees up: top right of the frame while riding, and over the
 		# far shore from any bench that faces away from the sunrise.
-		"ghost_moon_dir": Vector3(-0.71, 0.50, 0.50),
+		"ghost_moon_dir": Vector3(-0.596, 0.375, 0.710),
 		"energy": 1.0,
 		"sun_color": Color(1.55, 1.12, 0.74),
 		"sun_radius": 0.022,
@@ -135,11 +135,12 @@ const MOODS := {
 		"light_angle": Vector3(-9.0, 40.0, 0.0),
 		"angular_distance": 0.7,
 		# The shade colour is the sky's: a lilac-blue from the whole clear dome,
-		# strong enough that a shadow is cool rather than dark.
-		"fill_color": Color("8b98d4"),
+		# strong enough that a shadow is cool rather than dark — but greyed a
+		# step, or the tarmac in a crown's shadow went navy.
+		"fill_color": Color("9ba2c6"),
 		"fill_energy": 0.32,
 		"ambient": 0.50,
-		"ambient_color": Color("6a7098"),
+		"ambient_color": Color("6e7396"),
 		"ambient_sky_mix": 0.30,
 		"exposure": 0.96,
 		"white": 1.24,
@@ -148,9 +149,9 @@ const MOODS := {
 		# and forest instead of being dyed.
 		"fog_color": Color("a0a8c8"),
 		"fog_energy": 1.0,
-		"fog_density": 0.00030,
+		"fog_density": 0.00022,
 		"fog_sun_scatter": 0.05,
-		"fog_aerial": 0.16,
+		"fog_aerial": 0.13,
 		"fog_sky": 0.03,
 		# The valley mist. Height fog in this renderer is by depth below the
 		# line, not by distance, so the line sits under the lowest road (about
@@ -168,7 +169,7 @@ const MOODS := {
 		# the lilac sky and the gold key at a graze — navy one way, rust the
 		# other. Green is the channel neither of them carries, so that is the
 		# one the counter-tint buys back. Measured to land charcoal.
-		"road_tint": Color(1.12, 1.22, 1.07),
+		"road_tint": Color(1.15, 1.22, 1.05),
 		"road_sheen": 0.15,
 		# The grade's apricot highlight split was written for sunsets; at dawn
 		# it is what turns clean light into orange soup. Most of it off.
@@ -338,12 +339,13 @@ const MOODS := {
 		"band_high": 0.62,
 		"horizon_glow": 0.45,
 		"energy": 1.0,
-		# Far bluer than the moon should look, on purpose: the LUT and the
-		# grade's warm highlight split take a third off the blue of anything
-		# bright, and a silver input came out as a gold coin. This lands silver.
-		"sun_color": Color(0.30, 0.50, 1.25),
+		# Dim and blue on purpose. The grade LUT tops out at 0.85 in blue but
+		# 1.0 in red, so anything bright enough to near white flips to cream —
+		# the old moon was a gold coin whatever colour it was given. Held under
+		# that knee the disc stays pale silver-blue and keeps its maria.
+		"sun_color": Color(0.14, 0.20, 0.38),
 		"sun_radius": 0.030,
-		"sun_halo": 0.30,
+		"sun_halo": 0.45,
 		"sun_halo_falloff": 18.0,
 		"sun_disc": 1.0,
 		"moon_face": 1.0,
@@ -860,12 +862,16 @@ static func _overcast(mood: Dictionary, r: float) -> Dictionary:
 	# wet road's reflection — takes that pale on, which is what turned rain into
 	# a beige wash. A dark sky over a darker, wetter, *more* saturated land is
 	# what rain actually looks like.
-	out["zenith_color"] = (out["zenith_color"] as Color).lerp(Color("28323e"), r * 0.82)
-	out["mid_color"] = (out["mid_color"] as Color).lerp(Color("4c5764"), r * 0.86)
-	out["horizon_color"] = (out["horizon_color"] as Color).lerp(Color("76818d"), r * 0.90)
-	out["cloud_lit"] = (out["cloud_lit"] as Color).lerp(Color("8e98a4"), r * 0.75)
-	out["cloud_dark"] = (out["cloud_dark"] as Color).lerp(Color("252e38"), r * 0.75)
-	out["fog_color"] = (out["fog_color"] as Color).lerp(Color("5f6973"), r * 0.70)
+	# A squall at night is a darker night, not a grey day: the daylight deck
+	# colours lit the dome up exactly as the moon and stars went out. The moon
+	# face is the night weight, so a fade between hours walks the deck too.
+	var night: float = float(mood["moon_face"])
+	out["zenith_color"] = (out["zenith_color"] as Color).lerp(Color("28323e").lerp(Color("070d1c"), night), r * 0.82)
+	out["mid_color"] = (out["mid_color"] as Color).lerp(Color("4c5764").lerp(Color("111c30"), night), r * 0.86)
+	out["horizon_color"] = (out["horizon_color"] as Color).lerp(Color("76818d").lerp(Color("24384e"), night), r * 0.90)
+	out["cloud_lit"] = (out["cloud_lit"] as Color).lerp(Color("8e98a4").lerp(Color("34465c"), night), r * 0.75)
+	out["cloud_dark"] = (out["cloud_dark"] as Color).lerp(Color("252e38").lerp(Color("080e1a"), night), r * 0.75)
+	out["fog_color"] = (out["fog_color"] as Color).lerp(Color("5f6973").lerp(Color("263850"), night), r * 0.70)
 	out["cloud_cover"] = lerpf(mood["cloud_cover"], 0.90, r)
 	out["cloud_opacity"] = lerpf(mood["cloud_opacity"], 1.0, r)
 	# A rain deck is a sheet, not chopped cumulus: soften the edges and grow the
