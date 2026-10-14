@@ -275,6 +275,23 @@ func _grip_and_gears() -> void:
 	print("cruise 100 km/h: gear %d rpm %.2f; kick-down -> gear %d rpm %.2f" % [cruise_gear, cruise_rpm, int(_bike.get("gear")), float(_bike.get("engine_rpm"))])
 	_assert(cruise_rpm < 0.68, "an easy cruise settles at a calm crank speed")
 	_assert(int(_bike.get("gear")) < cruise_gear, "opening the throttle kicks the box down a gear")
+	# Holding a speed on a keyboard is a pulsed key. The box must read that as
+	# steady part-throttle, not kick down and back up on every press.
+	var hunts: int = 0
+	var held_gear: int = int(_bike.get("gear"))
+	for tick in 8 * _hz:
+		if (tick / int(0.3 * _hz)) % 2 == 0:
+			Input.action_press("throttle")
+		else:
+			Input.action_release("throttle")
+		_bike.set("speed", 130.0 / 3.6)
+		_bike.call("_drive", _step)
+		if tick > 2 * _hz and int(_bike.get("gear")) != held_gear:
+			hunts += 1
+		held_gear = int(_bike.get("gear"))
+	print("pulsed throttle at 130 km/h: gear %d, %d changes after settling" % [held_gear, hunts])
+	_assert(hunts == 0, "a pulsed throttle does not hunt between gears")
+	Input.action_press("throttle")
 	_assert(changes >= 3, "acceleration moves through the automatic gears")
 	var gear_now: int = int(_bike.get("gear"))
 	var span: float = float(_bike.get("top_speed")) / float(_bike.get("_gears"))

@@ -239,11 +239,15 @@ const SHIFT_TIME := 0.09
 const SHIFT_RPM_EASY := 0.60
 const SHIFT_RPM_HARD := 0.96
 ## Downshift once the next gear down would still sit this far under the shift
-## point — and a sudden handful of throttle raises the shift point, which is
-## the kick-down that drops a gear the moment you ask for a pass.
+## point — and throttle held on raises the shift point, which is the
+## kick-down that drops a gear once you commit to a pass.
 const DOWNSHIFT_MARGIN := 0.14
-const SHIFT_LOAD_TAU := 0.9
-const SHIFT_MIN_GAP := 0.45
+## The load rises over about a third of a second and falls over a second, so
+## a held handful kicks down promptly while a pulsed key holding a speed sees
+## a steady part-throttle and leaves the box alone.
+const SHIFT_LOAD_RISE := 0.35
+const SHIFT_LOAD_FALL := 1.2
+const SHIFT_MIN_GAP := 0.8
 ## Below this the clutch slips and the crank idles; a stopped engine is not 0.
 const IDLE_RPM := 0.22
 ## Lateral grip per unit of tan(lean), as a share of gravity. Physically 1.0;
@@ -508,10 +512,9 @@ func _update_gearbox(delta: float) -> void:
 	var throttle := Input.get_action_strength("throttle") * (1.0 - Input.get_action_strength("brake"))
 	if cruise_on:
 		throttle = _throttle_load
-	_shift_load = lerpf(_shift_load, throttle, 1.0 - exp(-delta / SHIFT_LOAD_TAU))
-	# Kick-down reads the raw throttle so a pass gets its gear straight away.
-	var load := maxf(_shift_load, throttle * 0.8)
-	var shift_rpm := lerpf(SHIFT_RPM_EASY, SHIFT_RPM_HARD, smoothstep(0.15, 0.85, load))
+	var tau := SHIFT_LOAD_RISE if throttle > _shift_load else SHIFT_LOAD_FALL
+	_shift_load = lerpf(_shift_load, throttle, 1.0 - exp(-delta / tau))
+	var shift_rpm := lerpf(SHIFT_RPM_EASY, SHIFT_RPM_HARD, smoothstep(0.15, 0.85, _shift_load))
 	var next := gear
 	if _since_shift >= SHIFT_MIN_GAP:
 		if gear < count and speed > span * float(gear) * shift_rpm:
