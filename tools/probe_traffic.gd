@@ -3,6 +3,8 @@ extends SceneTree
 ## Every physics step checks physical footprints, not destination lane numbers:
 ## a collision halfway through a lane change must not disappear between samples.
 ## Run with --seed=2 --difficulty=2 --distance=5000 --speed=120 --lane=0.
+## --weave=<s> moves the rider one lane every <s> seconds, the way a rider
+## threads traffic; a slow --speed shows cars arriving from behind to pass.
 
 const TrafficManagerGD: GDScript = preload("res://scripts/traffic_manager.gd")
 
@@ -57,11 +59,27 @@ func _run() -> void:
 	var min_gap: float = INF
 	var min_headway: float = INF
 	var peak: int = 0
+	var rider_hits: int = 0
+	## The probe rider never steers round anything, so riding into the back of
+	## a car is its own doing. Contact made from behind, or by a car that is
+	## changing lanes, is the driver's fault and must never happen.
+	var car_fault_hits: int = 0
+	var rider_hit_ids: Dictionary = {}
+	var passed_by: Dictionary = {}
+	var lamp_flips: int = 0
+	var lamp_state: Dictionary = {}
+	var weave: float = float(opts.get("weave", 0.0))
+	var lane_w: float = float(path.get("HALF_WIDTH")) * 2.0 / 3.0
+	var weave_target: float = rider.lateral
 	var simulation_us: int = 0
 	var frames: int = 0
 	while rider.track_z < distance:
 		var tick: int = Time.get_ticks_usec()
 		rider.track_z = float(path.call("advance", rider.track_z, rider.speed * step))
+		if weave > 0.0:
+			var leg: int = int(elapsed / weave)
+			weave_target = [-lane_w, 0.0, lane_w, 0.0][leg % 4]
+			rider.lateral = move_toward(rider.lateral, weave_target, 2.6 * step)
 		manager.call("_process", step)
 		var cars: Array = manager.get("_cars")
 		peak = maxi(peak, cars.size())
@@ -72,8 +90,25 @@ func _run() -> void:
 			var id: int = car.get_instance_id()
 			var state: Dictionary = seen.get(id, {})
 			var dz: float = float(car.track_z) - rider.track_z
-			if state.is_empty() and absf(dz) < 260.0:
+			# Behind the camera nothing is drawn, so a car may join the stream
+			# there as long as it is not right on the rider's tail.
+			if state.is_empty() and frames > 0 and (dz > -100.0 and dz < 260.0):
 				close_spawns += 1
+			if not state.is_empty() and float(state.dz) < 0.0 and dz >= 0.0:
+				passed_by[id] = true
+			var lit: bool = bool((car.get("_brake_lamps") as Node3D).visible)
+			if lamp_state.has(id) and bool(lamp_state[id]) != lit:
+				lamp_flips += 1
+			lamp_state[id] = lit
+			var rgap: float = absf(dz) - float(car.get_half_length()) - rider.half_length
+			if rgap < 0.0 and absf(float(car.get("_drawn_lateral")) - rider.lateral) < float(car.get_half_width()) + 0.38:
+				if not rider_hit_ids.has(id):
+					rider_hit_ids[id] = true
+					rider_hits += 1
+					var at_fault: bool = dz < 0.0 or bool(car.get("_lane_change_active"))
+					if at_fault:
+						car_fault_hits += 1
+					if at_fault: print("RIDER HIT t=%.2f z=%.1f rider_x=%.2f car kind=%d x=%.2f v=%.2f dz=%.2f lane=%d moving=%s" % [elapsed, rider.track_z, rider.lateral, car.kind, car.get("_drawn_lateral"), car.speed, dz, car.lane, car.get("_lane_change_active")])
 			if int(car.direction) != 1:
 				oncoming[id] = true
 			var hard: bool = (float(state.get("speed", car.speed)) - float(car.speed)) / step > 4.5
@@ -113,6 +148,8 @@ func _run() -> void:
 	print("traffic probe seed=%d difficulty=%d: %.0f m in %.1f simulated s, peak=%d cars" % [world_seed, difficulty, rider.track_z, elapsed, peak])
 	print("overlap/collision pairs=%d hard-brake events (>4.5 m/s²)=%d lane changes=%d" % [overlap_pairs.size(), hard_brakes, changes])
 	print("min bumper gap=%.2f m min headway=%.2f s oncoming=%d close spawns=%d visible/mirror despawns=%d" % [min_gap, min_headway, oncoming.size(), close_spawns, close_despawns])
+	print("driver-fault rider contacts=%d (rider-fault rear-ends=%d)" % [car_fault_hits, rider_hits - car_fault_hits])
+	print("rider overlaps=%d cars that overtook the rider=%d brake-lamp flips/min/car=%.2f" % [rider_hits, passed_by.size(), float(lamp_flips) / maxf(elapsed / 60.0, 0.01) / maxf(float(peak), 1.0)])
 	print("traffic simulation CPU=%.3f ms/tick (includes probe checks, excludes rendering)" % [float(simulation_us) / float(frames) / 1000.0])
 	failures = overlap_pairs.size() + oncoming.size() + close_spawns + close_despawns
 	manager.call("_clear_cars")

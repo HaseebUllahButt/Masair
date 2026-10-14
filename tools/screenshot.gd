@@ -39,6 +39,7 @@ func _initialize() -> void:
 	## bike's wandering line — are what the frame is about.
 	cap.invuln = opts.has("invuln")
 	cap.hold_lane = float(opts["lanehold"]) if opts.has("lanehold") else NAN
+	cap.lane_hop = float(opts.get("lanehop", 0.0))
 	cap.spur = opts.has("spur")
 	cap.notraffic = opts.has("notraffic")
 	cap.overview = String(opts.get("overview", ""))
@@ -168,6 +169,10 @@ class Capture:
 	var invuln := false
 	## Lateral to hold on the carriageway, NaN = free ride (no autopilot input).
 	var hold_lane: float = NAN
+	## Steering-feel captures: with --lanehold, hop right-middle-left-middle
+	## every <lanehop> seconds through the same keyboard autopilot, so a GIF
+	## shows real lane changes instead of an open-loop weave into the verge.
+	var lane_hop: float = 0.0
 
 	var _elapsed := 0.0
 	var _settled := false
@@ -619,16 +624,30 @@ class Capture:
 		var player := get_tree().root.find_child("Player", true, false)
 		if player == null:
 			return
-		var error: float = hold_lane - float(player.lateral)
+		var target := hold_lane
+		if lane_hop > 0.0:
+			var lane_w := 16.0 / 3.0
+			target = [-lane_w, 0.0, lane_w, 0.0][int(_elapsed / lane_hop) % 4]
+		var error: float = target - float(player.lateral)
 		if speed_limit > 0.0:
 			if float(player.speed) * 3.6 > speed_limit:
 				Input.action_release("throttle")
 			else:
 				Input.action_press("throttle")
+		# Steer like a person on a keyboard: look a beat ahead, press once,
+		# let go as the drift will carry the bike home. Re-deciding every frame
+		# from the raw error sawed the bars and photographed a twitch.
+		var predicted: float = error - float(player.lat_vel) * 0.45
+		if _hold_key == 0 and absf(predicted) > 0.3:
+			_hold_key = 1 if predicted > 0.0 else -1
+		elif _hold_key != 0 and predicted * float(_hold_key) < 0.1:
+			_hold_key = 0
 		Input.action_release("steer_left")
 		Input.action_release("steer_right")
-		if absf(error) > 0.25 and absf(float(player.lat_vel)) < absf(error) * 1.2:
-			Input.action_press("steer_left" if error > 0.0 else "steer_right")
+		if _hold_key != 0:
+			Input.action_press("steer_left" if _hold_key > 0 else "steer_right")
+
+	var _hold_key: int = 0
 
 	func _shoot() -> void:
 		if hide != "":
@@ -675,9 +694,20 @@ class Capture:
 		_ignore_next_frame = true
 		var p := get_tree().root.find_child("Player", true, false)
 		if p:
+			# Traffic in frame: how many cars exist and how close the nearest
+			# ahead is, so an empty road can be told from an empty spawn queue.
+			var cars := get_tree().get_nodes_in_group("traffic")
+			var nearest := INF
+			for car in cars:
+				var dz := float(car.get("track_z")) - float(p.track_z)
+				if dz > 0.0:
+					nearest = minf(nearest, dz)
 			print(
 				"shot ", path,
-				" z=%.0f lat=%.1f lean=%.1fdeg" % [float(p.track_z), float(p.lateral), rad_to_deg(float(p.lean))]
+				" z=%.0f lat=%.1f lean=%.1fdeg v=%.0fkm/h gear=%d cars=%d nearest=%.0fm" % [
+					float(p.track_z), float(p.lateral), rad_to_deg(float(p.lean)), float(p.speed) * 3.6,
+					int(p.get("gear")) if "gear" in p else 0, cars.size(), nearest,
+				]
 			)
 		else:
 			print("shot ", path)
