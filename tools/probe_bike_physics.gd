@@ -81,12 +81,12 @@ func _process(_delta: float) -> bool:
 	_slalom()
 	if _check:
 		_assert(float(_turns[0]["lean"]) < 4.0, "parking turns with little lean")
-		_assert(float(_turns[1]["lean"]) < float(_turns[2]["lean"]), "speed asks for more lean")
-		_assert(float(_turns[2]["lean"]) < float(_turns[3]["lean"]), "high-speed lean follows turn radius")
+		_assert(float(_turns[0]["lean"]) < float(_turns[1]["lean"]), "town pace asks for more lean than parking")
+		_assert(absf(float(_turns[2]["lean"]) / float(_turns[3]["lean"]) - 1.0) < 0.12, "the same press holds the same bank at 90 and 144 km/h")
 		for turn: Dictionary in _turns:
 			_assert(float(turn["t90"]) <= 0.32, "quick roll-in at %s m/s" % turn["speed"])
 			_assert(absf(float(turn["residual"])) < 0.10, "release catches the lateral motion")
-		_assert(absf(float(_turns[2]["radius"]) / float(_turns[3]["radius"]) - 1.0) < 0.15, "same partial bar input holds a similar radius at 90/144 km/h")
+		_assert(float(_turns[3]["radius"]) > float(_turns[2]["radius"]) * 1.8, "at the same bank the corner opens with speed (radius ~ v²)")
 		_grip_and_gears()
 		print("bike physics self-check @%d Hz: %d failures" % [_hz, _failures])
 	_bike.free()
@@ -246,21 +246,48 @@ func _grip_and_gears() -> void:
 	Input.action_press("throttle")
 	var changes: int = 0
 	var previous: int = 1
+	var previous_rpm: float = 0.0
+	var shifts: Array[String] = []
 	for _tick in 8 * _hz:
 		_bike.call("_drive", _step)
 		var current: int = int(_bike.get("gear"))
+		var rpm: float = float(_bike.get("engine_rpm"))
 		if current != previous:
 			changes += 1
+			shifts.append("%d->%d @%.0fkm/h rpm %.2f->%.2f" % [previous, current, float(_bike.get("speed")) * 3.6, previous_rpm, rpm])
 			_assert(float(_bike.get("_shift_timer")) > 0.0, "upshift cuts torque for a beat")
-			_assert(float(_bike.get("engine_rpm")) < 0.5, "upshift drops the shared crank speed")
+			_assert(rpm < previous_rpm * 0.92, "upshift drops the shared crank speed")
 		previous = current
+		previous_rpm = rpm
+	print("gears full throttle: ", ", ".join(shifts))
+	# Rolling off at pace, the box short-shifts to a calm cruise; a handful
+	# of throttle kicks it back down for the pass.
+	Input.action_release("throttle")
+	for _tick in 3 * _hz:
+		_bike.set("speed", 100.0 / 3.6)
+		_bike.call("_drive", _step)
+	var cruise_gear: int = int(_bike.get("gear"))
+	var cruise_rpm: float = float(_bike.get("engine_rpm"))
+	Input.action_press("throttle")
+	for _tick in int(0.8 * _hz):
+		_bike.set("speed", 100.0 / 3.6)
+		_bike.call("_drive", _step)
+	print("cruise 100 km/h: gear %d rpm %.2f; kick-down -> gear %d rpm %.2f" % [cruise_gear, cruise_rpm, int(_bike.get("gear")), float(_bike.get("engine_rpm"))])
+	_assert(cruise_rpm < 0.68, "an easy cruise settles at a calm crank speed")
+	_assert(int(_bike.get("gear")) < cruise_gear, "opening the throttle kicks the box down a gear")
 	_assert(changes >= 3, "acceleration moves through the automatic gears")
 	var gear_now: int = int(_bike.get("gear"))
 	var span: float = float(_bike.get("top_speed")) / float(_bike.get("_gears"))
-	for tick in 30:
-		_bike.set("speed", span * float(gear_now - 1) + (0.05 if tick % 2 == 0 else -0.05))
+	var threshold: float = span * float(gear_now) * float((_bike.get_script() as GDScript).get_script_constant_map().get("SHIFT_RPM_HARD", 1.0))
+	var chatter: int = 0
+	var last_gear: int = gear_now
+	for tick in 120:
+		_bike.set("speed", threshold + (0.05 if tick % 2 == 0 else -0.05))
 		_bike.call("_update_gearbox", _step)
-	_assert(int(_bike.get("gear")) == gear_now, "gear hysteresis avoids shift chatter at a threshold")
+		if int(_bike.get("gear")) != last_gear:
+			chatter += 1
+			last_gear = int(_bike.get("gear"))
+	_assert(chatter <= 1, "gear hysteresis avoids shift chatter at a threshold")
 	_reset(35.0)
 	Input.action_press("steer_left")
 	_bike.set("_long_accel", -10.0)

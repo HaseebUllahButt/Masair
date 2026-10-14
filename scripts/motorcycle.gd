@@ -231,9 +231,30 @@ var _shift_timer: float = 0.0
 var _steer_input: float = 0.0
 var _weather: Node
 const SHIFT_TIME := 0.09
+## The automatic box shifts like a rider would: wrung out to the limiter under
+## full throttle, short-shifted early when the bike is only being held at pace,
+## so a relaxed cruise sits in top gear at a calm note instead of screaming in
+## third. The load it reads is the throttle smoothed over a second, so a pulsed
+## key on a long straight does not hunt between two gears.
+const SHIFT_RPM_EASY := 0.60
+const SHIFT_RPM_HARD := 0.96
+## Downshift once the next gear down would still sit this far under the shift
+## point — and a sudden handful of throttle raises the shift point, which is
+## the kick-down that drops a gear the moment you ask for a pass.
+const DOWNSHIFT_MARGIN := 0.14
+const SHIFT_LOAD_TAU := 0.9
+const SHIFT_MIN_GAP := 0.45
+## Below this the clutch slips and the crank idles; a stopped engine is not 0.
+const IDLE_RPM := 0.22
+## Lateral grip per unit of tan(lean), as a share of gravity. Physically 1.0;
+## a little over it keeps a keyboard lane change brisk (about 0.8 g at full lean)
+## without the old four-g sideways skate, and the lean on screen still matches.
+const LEAN_GRIP_SCALE := 1.25
+var _shift_load: float = 0.0
+var _since_shift: float = 1.0
 const STEER_INPUT_TAU := 0.025
 const TURN_GRAVITY := 9.81
-const LEAN_REFERENCE_SPEED := 25.0
+const LEAN_REFERENCE_SPEED := 12.5
 const WHEELBASE := 1.42
 const PARKING_BAR_ANGLE := deg_to_rad(25.0)
 
@@ -478,18 +499,33 @@ func _tyre_budget() -> float:
 
 func _update_gearbox(delta: float) -> void:
 	_shift_timer = maxf(0.0, _shift_timer - delta)
+	_since_shift += delta
 	var count := maxi(3, int(_gears))
+	# Each gear runs out at an equal step of road speed, so the crank is speed
+	# over that gear's ceiling: an upshift drops it to (g / g+1) — a big fall
+	# out of first, a short one into top, as on a real close-ratio box.
 	var span := top_speed / float(count)
+	var throttle := Input.get_action_strength("throttle") * (1.0 - Input.get_action_strength("brake"))
+	if cruise_on:
+		throttle = _throttle_load
+	_shift_load = lerpf(_shift_load, throttle, 1.0 - exp(-delta / SHIFT_LOAD_TAU))
+	# Kick-down reads the raw throttle so a pass gets its gear straight away.
+	var load := maxf(_shift_load, throttle * 0.8)
+	var shift_rpm := lerpf(SHIFT_RPM_EASY, SHIFT_RPM_HARD, smoothstep(0.15, 0.85, load))
 	var next := gear
-	if speed > span * float(gear) and gear < count:
-		next += 1
-	elif gear > 1 and speed < span * (float(gear - 1) - 0.14):
-		next -= 1
+	if _since_shift >= SHIFT_MIN_GAP:
+		if gear < count and speed > span * float(gear) * shift_rpm:
+			next += 1
+		elif gear > 1 and speed < span * float(gear - 1) * (shift_rpm - DOWNSHIFT_MARGIN):
+			next -= 1
+	# The limiter is absolute: never hold a gear past its ceiling.
+	if gear < count and speed > span * float(gear):
+		next = gear + 1
 	if next != gear:
 		gear = next
 		_shift_timer = SHIFT_TIME
-	var phase := clampf((speed - span * float(gear - 1)) / span, 0.0, 1.0)
-	engine_rpm = lerpf(0.32, 1.0, phase) * smoothstep(0.0, 4.0, speed)
+		_since_shift = 0.0
+	engine_rpm = maxf(IDLE_RPM, clampf(speed / (span * float(gear)), 0.0, 1.0))
 
 
 func _update_cruise(brake: float) -> void:
@@ -524,15 +560,19 @@ func _steer(delta: float) -> void:
 	var steer_rate := steer_delta / maxf(delta, 0.0001)
 	_prev_steer = steer
 
-	# The same bend needs more lean as speed rises (tan(phi) = v² / gR).
-	# Full keyboard lock still reaches the authored angle at road speed; a
-	# partial touch press stays useful for a gentle, predictable lane change.
+	# Below town pace the bars ask for a turn radius, and the lean that radius
+	# needs grows with v² (tan(phi) = v² / gR) — a walking-pace press is a
+	# gentle U-turn, not a dive. From LEAN_REFERENCE_SPEED up they ask for a
+	# lean: the same press is the same bank at 60 or 160 km/h, and the corner
+	# it buys opens with speed the way a real one does. Asking for curvature
+	# all the way up left full lock at 50 km/h only a few degrees of lean, which
+	# is the lazy, wide line a café racer should never have.
 	var demand := steer * authority
 	var lean_cap := deg_to_rad(max_lean_deg) * lerpf(
 		1.0, PUSHBACK_MIN, smoothstep(PUSHBACK_V0, PUSHBACK_V1, speed)
 	)
-	var curvature_demand := demand * pow(speed / LEAN_REFERENCE_SPEED, 2.0)
-	var target_lean := clampf(atan(tan(lean_cap) * curvature_demand), -lean_cap, lean_cap)
+	var speed_scale := minf(1.0, pow(speed / LEAN_REFERENCE_SPEED, 2.0))
+	var target_lean := clampf(atan(tan(lean_cap) * demand * speed_scale), -lean_cap, lean_cap)
 	# The front brake tends to stand a leaned bike up; the lost lean widens its
 	# line instead of the old throttle modifier making it turn tighter.
 	target_lean *= 1.0 - Input.get_action_strength("brake") * 0.20
@@ -583,7 +623,7 @@ func _steer(delta: float) -> void:
 	# At parking pace the front wheel points into the turn and needs little
 	# lean. Above that, gravity and lean set the turn radius. Profile handling
 	# remains a modest advantage, rather than four gravities of side force.
-	var lean_force := TURN_GRAVITY * (lean_grip / 40.0) * tan(lean)
+	var lean_force := TURN_GRAVITY * LEAN_GRIP_SCALE * (lean_grip / 40.0) * tan(lean)
 	var direct_force := speed * speed * tan(steer * PARKING_BAR_ANGLE) / WHEELBASE
 	lean_force = lerpf(direct_force, lean_force, smoothstep(3.0, 13.0, speed))
 	var tyre_budget := _tyre_budget()
@@ -799,6 +839,8 @@ func reset_run() -> void:
 	engine_rpm = 0.0
 	turn_rate = 0.0
 	_shift_timer = 0.0
+	_shift_load = 0.0
+	_since_shift = 1.0
 	_steer_input = 0.0
 	_horn_env = 0.0
 	_prev_steer = 0.0
