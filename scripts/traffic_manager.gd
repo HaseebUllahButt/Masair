@@ -4,7 +4,7 @@ extends Node3D
 ## Density still comes from difficulty, but *what kind of road this stretch is*
 ## comes from a mood: a long band along z, hashed from the world seed. Same seed,
 ## same weather. The rider should be able to feel a quiet few kilometres, then a
-## wall of vans, rather than a uniform sprinkle.
+## busy working-vehicle stretch, rather than a uniform sprinkle.
 
 const TrafficCarGD: GDScript = preload("res://scripts/traffic_car.gd")
 
@@ -14,7 +14,7 @@ const TrafficCarGD: GDScript = preload("res://scripts/traffic_car.gd")
 ## stream then carries it into the near field, so no car is ever seen to arrive.
 @export var spawn_ahead_min: float = 300.0
 @export var spawn_ahead_max: float = 520.0
-@export var despawn_behind: float = 45.0
+@export var despawn_behind: float = 650.0
 @export var spawn_interval: float = 0.68
 @export var first_spawn_delay: float = 3.0
 ## Minimum gap to any car already in a nearby lane, so nothing pops in on top
@@ -24,11 +24,6 @@ const TrafficCarGD: GDScript = preload("res://scripts/traffic_car.gd")
 ## into the rider's immediate view, and the lane check below includes vehicle
 ## length rather than comparing centre points only.
 @export var player_reaction_distance: float = 125.0
-## Fraction of spawn rolls that send a vehicle down the opposing lane instead.
-## The road drives on the right: the lane past the solid centre line carries
-## the oncoming flow, and a steady trickle of headlights through it is what
-## makes this read as a road rather than a trackday.
-@export var oncoming_share: float = 0.30
 
 var _player: Node3D
 var _cars: Array[Node3D] = []
@@ -60,14 +55,11 @@ const MOOD_KIND_WEIGHTS := [
 	[0.06, 0.05, 0.03, 0.10, 0.22, 0.28, 0.26],  # CRAWL: vans, trucks, buses
 	[0.10, 0.08, 0.05, 0.30, 0.28, 0.12, 0.07],  # WALL: vans and pickups
 ]
-const MOOD_INTERVAL_MUL := [1.9, 1.0, 0.85, 1.15, 0.58]
-const MOOD_GAP_MUL := [1.7, 1.0, 0.92, 1.25, 0.68]
+const MOOD_INTERVAL_MUL := [1.9, 1.0, 0.85, 1.15, 0.80]
+const MOOD_GAP_MUL := [1.7, 1.0, 0.92, 1.25, 0.88]
 const MOOD_PACK_MUL := [0.0, 1.0, 2.4, 0.35, 1.35]
-const MOOD_ACTIVE_MUL := [0.5, 1.0, 1.0, 0.75, 1.2]
+const MOOD_ACTIVE_MUL := [0.5, 1.0, 1.0, 0.75, 1.0]
 const MOOD_SPEED_MUL := [1.06, 1.0, 0.96, 0.68, 0.88]
-## How much of each mood's flow is opposing traffic. WALL keeps its mass on the
-## rider's side — headlights *and* a van wall would stop being a game.
-const MOOD_ONCOMING_MUL := [0.4, 1.0, 1.0, 1.15, 0.5]
 ## Cruise range per kind (m/s). Light cars run fastest, the coupe fastest of all;
 ## anything heavy is slow enough to be a readable overtaking target rather than a
 ## wall moving at the rider's own speed.
@@ -102,21 +94,18 @@ func set_difficulty(level: int) -> void:
 			player_reaction_distance = 155.0
 			min_gap = 34.0
 			pack_chance = 0.08
-			oncoming_share = 0.20
 		1:
 			max_active = 17
 			spawn_interval = 0.68
 			player_reaction_distance = 125.0
 			min_gap = 27.0
 			pack_chance = 0.18
-			oncoming_share = 0.30
 		_:
 			max_active = 24
 			spawn_interval = 0.44
 			player_reaction_distance = 100.0
 			min_gap = 21.0
 			pack_chance = 0.30
-			oncoming_share = 0.38
 	reset_world()
 
 
@@ -141,9 +130,7 @@ func _prefill() -> void:
 	for _i in target * 2:
 		if _cars.size() >= target:
 			break
-		var probe_z: float = _player.track_z + spawn_ahead_min + 40.0
-		var oncoming := _rng.randf() < oncoming_share * mood_oncoming_mul(mood_at(probe_z))
-		_try_spawn(NAN, -1, oncoming)
+		_try_spawn()
 
 
 func _player_on_scenic() -> bool:
@@ -227,10 +214,6 @@ func mood_speed_mul(mood: int) -> float:
 	return float(MOOD_SPEED_MUL[_mood_index(mood)])
 
 
-func mood_oncoming_mul(mood: int) -> float:
-	return float(MOOD_ONCOMING_MUL[_mood_index(mood)])
-
-
 func mood_active_cap(mood: int) -> int:
 	# The floor of three is for real difficulties; zero means "no traffic",
 	# which is how the screenshot tool clears the road for detour captures.
@@ -261,18 +244,22 @@ func _process(delta: float) -> void:
 	_timer = spawn_interval * mood_interval_mul(mood) * _rng.randf_range(0.7, 1.5)
 	var cap := mood_active_cap(mood)
 	var pack := _pack_size_for(mood)
-	# A convoy shares its direction — oncoming vehicles pack into their own
-	# lane as a line of lights, forward ones form the queues the rider reads.
-	var oncoming := _rng.randf() < oncoming_share * mood_oncoming_mul(mood)
+	## Keep passed cars alive beyond the mirror draw range without letting that
+	## tail consume the entire spawn budget. The moving window bounds both sets.
+	var ahead_count: int = 0
+	for car in _cars:
+		if float(car.track_z) > float(_player.track_z) - 80.0:
+			ahead_count += 1
 	var anchor_z := NAN
 	var anchor_lane := -1
 	for _i in pack:
-		if _cars.size() >= cap:
+		if ahead_count >= cap:
 			break
-		var placed := _try_spawn(anchor_z, anchor_lane, oncoming)
+		var placed := _try_spawn(anchor_z, anchor_lane)
 		if placed.x >= 0.0:
 			anchor_z = placed.x
 			anchor_lane = int(placed.y)
+			ahead_count += 1
 
 
 func _pack_size_for(mood: int) -> int:
@@ -297,7 +284,7 @@ func _pick_kind(weights: Array) -> int:
 	return 0
 
 
-func _try_spawn(anchor_z: float = NAN, anchor_lane: int = -1, oncoming: bool = false) -> Vector2:
+func _try_spawn(anchor_z: float = NAN, anchor_lane: int = -1) -> Vector2:
 	var z_min: float = _player.track_z + player_reaction_distance
 	var ahead_min := maxf(spawn_ahead_min, player_reaction_distance)
 	var ahead_max := maxf(spawn_ahead_max, ahead_min + 1.0)
@@ -306,39 +293,60 @@ func _try_spawn(anchor_z: float = NAN, anchor_lane: int = -1, oncoming: bool = f
 	var last_lane: int = _path.LANE_COUNT - 1
 	if is_nan(anchor_z):
 		z = _player.track_z + _rng.randf_range(ahead_min, ahead_max)
-		# Lanes 0..N-2 carry the rider's flow; the last painted lane, past the
-		# solid centre line, carries the opposing one.
-		lane = last_lane if oncoming else _rng.randi_range(0, last_lane - 1)
+		## Right-biased arrivals leave the left lane useful for passing. Every
+		## lane carries the same direction; even convoys obey that contract.
+		lane = 0 if _rng.randf() < 0.58 else _rng.randi_range(1, last_lane)
 	else:
 		# Convoy members sit a readable gap ahead of the last car, usually the
 		# same lane, sometimes the neighbour — still overtakeable as a group.
-		# Oncoming convoys keep their single lane: they never jostle lanes.
 		var probe_mood := mood_at(anchor_z)
-		var convoy_gap := min_gap * mood_min_gap_mul(probe_mood)
+		var convoy_gap := maxf(min_gap * mood_min_gap_mul(probe_mood), 42.0)
 		z = anchor_z + _rng.randf_range(convoy_gap * 0.9, convoy_gap * 1.35)
 		lane = anchor_lane
-		if not oncoming and _rng.randf() > 0.72:
+		if _rng.randf() > 0.72:
 			var step := 1 if _rng.randf() < 0.5 else -1
-			lane = clampi(anchor_lane + step, 0, last_lane - 1)
+			lane = clampi(anchor_lane + step, 0, last_lane)
 	if z < z_min or z > _player.track_z + ahead_max:
 		return Vector2(-1.0, -1.0)
 
 	var mood := mood_at(z)
-	var gap := min_gap * mood_min_gap_mul(mood)
+	var gap := maxf(min_gap * mood_min_gap_mul(mood), 38.0)
 	var lane_x: float = _path.lane_x(lane)
 
 	for c in _cars:
-		if absf(c.track_z - z) < gap and absf(c.lateral - lane_x) < 2.3:
+		if absf(c.track_z - z) < gap and (absf(c.lateral - lane_x) < 2.8 or int(c.get("_pending_lane")) == lane or int(c.lane) == lane):
 			return Vector2(-1.0, -1.0)
 
 	var kind := _pick_kind(kind_weights_for(mood))
 	var band: Vector2 = KIND_SPEEDS[kind]
 	var speed_mul := mood_speed_mul(mood)
 	var speed := _rng.randf_range(band.x, band.y) * speed_mul
+	## Heavy drivers enter on the right rather than creating a bus in the
+	## passing lane. Reject this roll if the new footprint has no room.
+	if kind >= 5:
+		lane = 0
+		lane_x = _path.lane_x(lane)
+		for c in _cars:
+			if absf(c.track_z - z) < gap and (absf(c.lateral - lane_x) < 2.8 or int(c.get("_pending_lane")) == lane):
+				return Vector2(-1.0, -1.0)
 	var car: Node3D = TrafficCarGD.new() as Node3D
 	add_child(car)
-	car.call("setup", kind, lane, z, speed, _rng.randi_range(0, 15), -1 if oncoming else 1)
+	car.call("setup", kind, lane, z, speed, _rng.randi_range(0, 15))
 	car.call("set_player", _player)
+	car.call("settle_spawn_speed")
+	## Spawning a slow lorry into a fast driver's stopping distance creates a
+	## fake emergency. Check the settled speed, including the upcoming hill.
+	for follower in _cars:
+		if absf(float(follower.lateral) - lane_x) > 2.8:
+			continue
+		var rear_gap: float = z - float(follower.track_z) - float(follower.get_half_length()) - float(car.get_half_length())
+		if rear_gap <= 0.0:
+			continue
+		var closing: float = maxf(0.0, float(follower.speed) - float(car.speed))
+		var safe_gap: float = 5.0 + float(follower.speed) * 1.6 + closing * closing / (2.0 * 2.3)
+		if rear_gap < safe_gap:
+			car.free()
+			return Vector2(-1.0, -1.0)
 	_cars.append(car)
 	return Vector2(z, float(lane))
 

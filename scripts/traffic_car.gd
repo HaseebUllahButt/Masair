@@ -1,5 +1,5 @@
 extends Node3D
-## One traffic vehicle. Rides the road frame, occasionally changes lane.
+## One traffic vehicle. Follows a gap, reads the road and passes deliberately.
 ##
 ## Plain Node3D on purpose: nothing here ever used the physics server — the bike
 ## does its own box overlap test — so a CharacterBody3D + CollisionShape3D per car
@@ -40,12 +40,10 @@ const BODY_COLORS: Array[Color] = [
 	Color("f4f5f2"),
 	Color("5d6d7e"),
 ]
-const LANE_CLEARANCE_AHEAD := 15.0
-const LANE_CLEARANCE_BEHIND := 12.0
-const MIN_FOLLOW_GAP := 7.0
-const FOLLOW_TIME := 1.05
+const MIN_FOLLOW_GAP := 2.8
+const FOLLOW_TIME := 1.6
 ## Braking a driver plans with when closing on a slower car (m/s²).
-const COMFORT_DECEL := 6.0
+const COMFORT_DECEL := 2.3
 ## Seconds to materialise. A car that simply *is* there is a pop; one that
 ## fades in a few hundred metres out reads as cresting the last dip.
 const FADE_IN := 1.5
@@ -58,8 +56,8 @@ const CRUISE_DRIFT := 0.03
 ## at full lateral speed on the decision frame, which made cars scurry aside.
 const LANE_CHANGE_MIN_DURATION := 2.6
 const LANE_CHANGE_MAX_DURATION := 3.4
-const SIGNAL_LEAD_MIN := 0.45
-const SIGNAL_LEAD_MAX := 0.75
+const SIGNAL_LEAD_MIN := 1.6
+const SIGNAL_LEAD_MAX := 2.5
 const HORN_HEARING_DISTANCE := 72.0
 const HORN_ALIGNMENT := 2.6
 const HORN_REACTION_MIN := 0.45
@@ -84,12 +82,15 @@ var speed: float = 14.0
 var base_speed: float = 14.0
 var lane: int = 1
 var lateral: float = 0.0
-## +1 runs with the rider's flow, -1 is the opposing stream on the outer lane
-## past the solid centre line (screen-left — this road drives on the right).
-## The group contract remote riders already satisfy — `direction` is part of
-## it, defaulting to +1 there too.
+## The traffic/remote-rider contract keeps direction readable, but traffic
+## always travels forward — even legacy callers passing an opposing direction.
 var direction: int = 1
-var _oncoming_lane: int = 2
+var acceleration: float = 0.0
+var _driver_accel: float = 1.8
+var _headway: float = FOLLOW_TIME
+var _road_cruise: float = 14.0
+var _road_sample_timer: float = 0.0
+var _hazards_timer: float = 0.0
 
 var _target_lateral: float = 0.0
 var _lane_timer: float = 6.0
@@ -134,16 +135,21 @@ var _blinkers: Array[MeshInstance3D] = []
 var _blink_phase: float = 0.0
 
 
-func setup(vehicle_kind: int, start_lane: int, z: float, cruise: float, color_index: int, dir: int = 1) -> void:
+func setup(vehicle_kind: int, start_lane: int, z: float, cruise: float, color_index: int, _dir: int = 1) -> void:
 	kind = vehicle_kind
 	lane = start_lane
 	track_z = z
 	speed = maxf(cruise, 2.0)
 	base_speed = speed
-	direction = dir
+	direction = 1
 	_path = get_node("/root/RoadPath")
 	_game = get_node_or_null("/root/GameManager")
-	_oncoming_lane = int(_path.LANE_COUNT) - 1
+	_driver_accel = randf_range(1.4, 2.1) if kind < Kind.TRUCK else 0.85
+	_headway = randf_range(1.35, 1.95) if kind < Kind.TRUCK else 2.0
+	acceleration = 0.0
+	_road_cruise = base_speed
+	_road_sample_timer = 0.0
+	_hazards_timer = 0.0
 	lateral = _path.lane_x(lane)
 	_target_lateral = lateral
 	_signal_lateral = lateral
@@ -278,76 +284,87 @@ func _physics_process(delta: float) -> void:
 	_lane_timer -= delta
 	_lane_change_lock = maxf(0.0, _lane_change_lock - delta)
 	_horn_cooldown = maxf(0.0, _horn_cooldown - delta)
+	_hazards_timer = maxf(0.0, _hazards_timer - delta)
 	_update_wander(delta)
 	_apply_fade(delta)
-	if direction > 0:
-		# Only same-direction drivers react to the horn or juggle lanes —
-		# opposing traffic holds its lane and its nerve.
-		_update_horn_response(delta)
-		_update_lane_plan(delta)
-
-	var lead := _nearest_lead()
-	if direction > 0 and lead != null and _can_plan_lane_change():
-		var gap: float = float(lead.track_z) - track_z - float(lead.get_half_length()) - _half_len
-		if gap < speed * FOLLOW_TIME + MIN_FOLLOW_GAP and _try_escape_lane():
-			lead = _nearest_lead()
-
-	# A tiny amount of natural drift keeps a sparse road from looking frozen, but
-	# lane changes only happen when the full vehicle footprint has a safe gap.
+	_update_road_cruise(delta)
+	_update_horn_response(delta)
+	_update_lane_plan(delta)
 	if _can_plan_lane_change():
-		_lane_timer = randf_range(5.0, 14.0)
-		if randf() < 0.12:
-			_try_escape_lane()
+		_lane_timer = randf_range(0.8, 1.6)
+		_try_escape_lane()
 
-	# The driver's own cruise this second — a slow wander around base_speed.
-	var cruise := base_speed * (1.0 + CRUISE_DRIFT * sin(_wander_t * 0.11 + _cruise_phase))
-	var target_speed := cruise
+	var lead: Node3D = _nearest_lead()
+	var demand: float = _following_acceleration(lead)
+	## IDM produces one continuous demand, instead of alternating between a
+	## cruise target and an 11 m/s² brake. Jerk limiting keeps queues supple;
+	## a genuinely short closing gap still gets the full emergency brake.
+	var emergency: bool = false
 	if lead != null:
-		var gap: float = (float(lead.track_z) - track_z) * float(direction) - float(lead.get_half_length()) - _half_len
-		var safe_gap := MIN_FOLLOW_GAP + speed * FOLLOW_TIME
-		# A fast car closing on a slow truck needs room to shed the difference,
-		# not just a time gap: at 40 m/s onto 6 m/s the plain gap was shorter
-		# than the stopping distance and the car ran into the truck's tail.
-		var closing := maxf(0.0, speed - float(lead.speed))
-		safe_gap += closing * closing / (2.0 * COMFORT_DECEL)
-		if gap < safe_gap:
-			# Braking is proportional to the closing gap and the lead's speed. This
-			# keeps a truck from abruptly stopping while still preventing pile-ups.
-			target_speed = maxf(2.0, float(lead.speed) - maxf(0.0, safe_gap - gap) * 1.7)
-		elif gap < safe_gap + 30.0:
-			target_speed = minf(target_speed, float(lead.speed) + (gap - safe_gap) * 0.22)
-	if direction > 0 and _player != null and _player.alive:
-		var player_gap: float = float(_player.track_z) - track_z - _half_len - float(_player.half_length)
-		if player_gap > 0.0 and absf(float(_player.lateral) - lateral) < 2.25:
-			var player_safe := MIN_FOLLOW_GAP + speed * FOLLOW_TIME
-			if player_gap < player_safe:
-				target_speed = minf(target_speed, maxf(2.0, float(_player.speed) - (player_safe - player_gap) * 1.7))
+		var gap: float = _bumper_gap(lead)
+		var closing: float = maxf(0.0, speed - float(lead.speed))
+		emergency = gap < MIN_FOLLOW_GAP + closing * closing / 10.0 and not (lead == _player and float(lead.speed) > speed)
+	## A close stationary queue can make raw IDM ask for a panic stop even
+	## with room to brake. Reserve that force for a closing emergency; ordinary
+	## approaches stay within a driver's firm but comfortable braking range.
+	if not emergency:
+		demand = maxf(demand, -3.5)
+	acceleration = move_toward(acceleration, demand, (25.0 if emergency else 2.5) * delta)
+	speed = maxf(0.0, speed + acceleration * delta)
+	_brake_lamps.visible = acceleration < -0.35 or (speed < 0.3 and lead != null)
+	if acceleration < -4.5:
+		_hazards_timer = 2.0
+	track_z = _path.advance(track_z, speed * delta)
 
-	# Tight curves ask traffic to shed a little speed too; this makes blind bends
-	# readable and creates a natural opening for the rider to filter through.
-	var kappa := absf(_path.curvature_at(track_z))
-	var curvature_load := kappa * speed * speed
-	if curvature_load > 2.5:
-		target_speed = minf(target_speed, sqrt(maxf(4.0, 24.0 / maxf(kappa, 0.0001))))
-	var rate := 11.0 if target_speed < speed else 4.0
-	# Inside the hard minimum the driver stands on the brake.
-	if lead != null:
-		var tail_gap: float = (float(lead.track_z) - track_z) * float(direction) - float(lead.get_half_length()) - _half_len
-		if tail_gap < MIN_FOLLOW_GAP:
-			rate = 16.0
-	# Brake lights come from the demand, not from the achieved speed: they light as
-	# the car decides to slow, which is the half second of warning that makes
-	# traffic ahead readable instead of a wall that appears. Measured against
-	# this driver's own cruise so the wander above can never flicker them.
-	_brake_lamps.visible = target_speed < speed - 0.4 and target_speed < cruise - 0.5
-	speed = move_toward(speed, target_speed, rate * delta)
-	track_z = _path.advance(track_z, float(direction) * speed * delta)
-
-	var before := _drawn_lateral
+	var before: float = _drawn_lateral
 	_advance_lane_change(delta)
 	_signal(delta)
 	_drawn_lateral = lateral + _wander
 	_place((_drawn_lateral - before) / maxf(speed * delta, 0.25))
+
+
+func _update_road_cruise(delta: float) -> void:
+	_road_sample_timer -= delta
+	if _road_sample_timer > 0.0:
+		return
+	## Road trigonometry is more expensive than the driver maths. Look a few
+	## seconds ahead four times a second so braking starts before the corner.
+	_road_sample_timer = 0.35
+	var ahead: float = track_z + maxf(25.0, speed * 3.0)
+	var bend: float = maxf(absf(float(_path.curvature_at(track_z))), absf(float(_path.curvature_at(ahead))))
+	var corner_speed: float = sqrt(3.2 / maxf(bend, 0.0001))
+	var cruise: float = base_speed * (1.0 + CRUISE_DRIFT * sin(_wander_t * 0.11 + _cruise_phase))
+	var uphill: float = maxf(0.0, sin(float(_path.pitch_at(ahead))))
+	cruise *= maxf(0.62, 1.0 - uphill * (3.0 if kind >= Kind.TRUCK else 0.65))
+	_road_cruise = maxf(6.0, minf(cruise, corner_speed))
+
+
+func _bumper_gap(lead: Node3D) -> float:
+	return float(lead.track_z) - track_z - _half_len - float(lead.get_half_length())
+
+
+func _following_acceleration(lead: Node3D) -> float:
+	var free: float = _driver_accel * (1.0 - pow(speed / maxf(_road_cruise, 1.0), 4.0))
+	if lead == null:
+		return clampf(free, -COMFORT_DECEL, _driver_accel)
+	var gap: float = maxf(0.1, _bumper_gap(lead))
+	var closing: float = speed - float(lead.speed)
+	var wanted: float = MIN_FOLLOW_GAP + maxf(0.0, speed * _headway + speed * closing / (2.0 * sqrt(_driver_accel * COMFORT_DECEL)))
+	## A bike filtering past is already opening the gap. Ease off to let it
+	## settle ahead; demanding a full emergency stop for that instant of tiny
+	## headway makes every clean overtake look like a brake-check.
+	var brake_limit: float = -1.5 if lead == _player and closing < -0.5 else -7.5
+	return clampf(free - _driver_accel * pow(wanted / gap, 2.0), brake_limit, _driver_accel)
+
+
+func settle_spawn_speed() -> void:
+	## The unseen stream is already following. Inserting a 40 m/s driver behind
+	## a 15 m/s lorry creates an emergency that no sensible driver would enter.
+	_update_road_cruise(1.0)
+	speed = minf(speed, _road_cruise)
+	var lead: Node3D = _nearest_lead()
+	if lead != null:
+		speed = minf(speed, maxf(0.0, minf(float(lead.speed), (_bumper_gap(lead) - MIN_FOLLOW_GAP) / _headway)))
 
 
 func _update_wander(_delta: float) -> void:
@@ -426,69 +443,75 @@ func _advance_lane_change(delta: float) -> void:
 
 
 func _signal(delta: float) -> void:
-	## Indicator on the side the car is moving toward, for the whole manoeuvre.
-	## Filtering through traffic at 200 km/h needs one bit of intent from the car
-	## in front, and this is it.
+	## Both amber sides flash only for emergency braking; normal braking uses
+	## the red tail lamps. Body +X is screen-left on this road frame.
 	_blink_phase = fposmod(_blink_phase + delta * BLINK_RATE, 1.0)
-	var drift := _signal_lateral - lateral
-	var lit := absf(drift) > SIGNAL_EPSILON and _blink_phase < 0.55
-	_blinkers[0].visible = lit and drift < 0.0
-	_blinkers[1].visible = lit and drift > 0.0
+	var drift: float = _signal_lateral - lateral
+	var lit: bool = _blink_phase < 0.55
+	_blinkers[0].visible = lit and (_hazards_timer > 0.0 or drift < -SIGNAL_EPSILON)
+	_blinkers[1].visible = lit and (_hazards_timer > 0.0 or drift > SIGNAL_EPSILON)
 
 
-func _nearest_lead() -> Node3D:
+func _lead_at(lane_centre: float, include_target: bool = false) -> Node3D:
 	var closest: Node3D
-	var closest_gap := INF
-	# During a gradual lane change the car still occupies the strip it is
-	# physically crossing. Following its destination lane immediately would let
-	# it accelerate through the slower vehicle it has only just started passing.
-	var lane_centre: float = lateral
-	for other in get_tree().get_nodes_in_group("traffic"):
-		var vehicle := other as Node3D
+	var closest_gap: float = INF
+	for other: Node in get_tree().get_nodes_in_group("traffic"):
+		var vehicle: Node3D = other as Node3D
 		if vehicle == null or vehicle == self or not ("track_z" in vehicle):
 			continue
-		# Only the flow going your way can be a lead: a remote rider or a car
-		# coming at you is for the rider to read, not for this car to follow.
-		var other_dir := 1
-		if "direction" in vehicle:
-			other_dir = int(vehicle.direction)
-		if other_dir != direction:
+		var width: float = _half_w + float(vehicle.get_half_width()) + 0.6
+		var occupies: bool = absf(float(vehicle.lateral) - lane_centre) < width
+		if include_target:
+			occupies = occupies or absf(float(vehicle.lateral) - _target_lateral) < width
+		if not occupies:
 			continue
-		if absf(float(vehicle.lateral) - lane_centre) > 2.25:
-			continue
-		var gap: float = (float(vehicle.track_z) - track_z) * float(direction)
+		var gap: float = float(vehicle.track_z) - track_z
 		if gap > 0.0 and gap < closest_gap:
 			closest = vehicle
 			closest_gap = gap
-	if direction > 0 and _player != null and _player.alive and absf(float(_player.lateral) - lane_centre) <= 2.25:
-		var player_gap: float = float(_player.track_z) - track_z
-		if player_gap > 0.0 and player_gap < closest_gap:
+	if is_instance_valid(_player) and _player.alive:
+		var width: float = _half_w + 0.38 + 0.55
+		var occupies: bool = absf(float(_player.lateral) - lane_centre) < width
+		if include_target:
+			occupies = occupies or absf(float(_player.lateral) - _target_lateral) < width
+		var gap: float = float(_player.track_z) - track_z
+		if occupies and gap > 0.0 and gap < closest_gap:
 			closest = _player
 	return closest
+
+
+func _nearest_lead() -> Node3D:
+	## Until fully across, follow both occupied lanes. Ignoring the source lane
+	## the moment the indicator comes on used to accelerate through its queue.
+	return _lead_at(lateral, _lane_change_active)
 
 
 func _try_escape_lane(preferred_away_from: float = NAN) -> bool:
 	if _pending_lane >= 0 or _lane_change_active:
 		return false
+	var current_lead: Node3D = _nearest_lead()
+	var current_accel: float = _following_acceleration(current_lead)
 	var candidates: Array[int] = []
 	if lane > 0:
 		candidates.append(lane - 1)
-	# The outer lane is the oncoming flow — an escape is a pass through the
-	# lanes going your way, never a dart into headlights.
-	if lane < _oncoming_lane - 1:
+	if lane < int(_path.LANE_COUNT) - 1:
 		candidates.append(lane + 1)
-	if candidates.size() > 1:
-		if is_nan(preferred_away_from):
-			if randf() < 0.5:
-				candidates.reverse()
-		elif absf(_path.lane_x(candidates[1]) - preferred_away_from) > absf(_path.lane_x(candidates[0]) - preferred_away_from):
+	if not is_nan(preferred_away_from) and candidates.size() > 1:
+		if absf(_path.lane_x(candidates[1]) - preferred_away_from) > absf(_path.lane_x(candidates[0]) - preferred_away_from):
 			candidates.reverse()
-	for next in candidates:
-		if _lane_is_clear(next):
-			_pending_lane = next
-			_signal_lateral = _path.lane_x(next)
-			_signal_lead_timer = randf_range(SIGNAL_LEAD_MIN, SIGNAL_LEAD_MAX)
-			return true
+	for next: int in candidates:
+		if not _lane_is_clear(next):
+			continue
+		var next_lead: Node3D = _lead_at(float(_path.lane_x(next)))
+		var gain: float = _following_acceleration(next_lead) - current_accel
+		var keep_right: bool = next < lane and gain > -0.2 and (next_lead == null or float(next_lead.speed) >= speed - 1.0)
+		var pass_left: bool = next > lane and current_lead != null and float(current_lead.speed) < _road_cruise - 2.0 and gain > 0.35
+		if is_nan(preferred_away_from) and not keep_right and not pass_left:
+			continue
+		_pending_lane = next
+		_signal_lateral = _path.lane_x(next)
+		_signal_lead_timer = randf_range(SIGNAL_LEAD_MIN, SIGNAL_LEAD_MAX)
+		return true
 	return false
 
 
@@ -500,35 +523,43 @@ func _begin_lane_change(next: int) -> void:
 	_lane_change_elapsed = 0.0
 	_lane_change_duration = randf_range(LANE_CHANGE_MIN_DURATION, LANE_CHANGE_MAX_DURATION)
 	_lane_change_active = true
-	_lane_change_lock = _lane_change_duration + 1.25
+	_lane_change_lock = _lane_change_duration + 3.0
 	_lane_timer = randf_range(6.0, 12.0)
 
 
+func _safe_merge_gap(vehicle: Node3D) -> bool:
+	var dz: float = float(vehicle.track_z) - track_z
+	var gap: float = absf(dz) - _half_len - float(vehicle.get_half_length())
+	var follower_speed: float = speed if dz >= 0.0 else float(vehicle.speed)
+	var closing: float = speed - float(vehicle.speed) if dz >= 0.0 else float(vehicle.speed) - speed
+	## Protect the target follower as well as ourselves. A gap that exists now
+	## but closes before the indicators finish is not an invitation to merge.
+	var required: float = 8.0 + follower_speed * 1.0 + maxf(0.0, closing) * (SIGNAL_LEAD_MAX + LANE_CHANGE_MAX_DURATION)
+	return gap > required
+
+
 func _lane_is_clear(candidate: int) -> bool:
-	if candidate < 0 or candidate >= _path.LANE_COUNT:
-		return false
-	if direction > 0 and candidate == _oncoming_lane:
+	if candidate < 0 or candidate >= _path.LANE_COUNT or candidate == lane:
 		return false
 	var lane_centre: float = _path.lane_x(candidate)
-	for other in get_tree().get_nodes_in_group("traffic"):
-		var vehicle := other as Node3D
+	for other: Node in get_tree().get_nodes_in_group("traffic"):
+		var vehicle: Node3D = other as Node3D
 		if vehicle == null or vehicle == self or not ("track_z" in vehicle):
 			continue
-		var committed_here := (
-			int(vehicle.get("_pending_lane")) == candidate
-			or (bool(vehicle.get("_lane_change_active")) and int(vehicle.lane) == candidate)
-		)
-		if absf(float(vehicle.lateral) - lane_centre) > 2.15 and not committed_here:
-			continue
-		var dz: float = float(vehicle.track_z) - track_z
-		var clearance := LANE_CLEARANCE_AHEAD if dz >= 0.0 else LANE_CLEARANCE_BEHIND
-		if absf(dz) < clearance + _half_len + float(vehicle.get_half_length()):
-			return false
-	if _player != null and _player.alive and absf(float(_player.lateral) - lane_centre) <= 2.15:
-		var dz_player: float = float(_player.track_z) - track_z
-		var player_clearance := LANE_CLEARANCE_AHEAD if dz_player >= 0.0 else LANE_CLEARANCE_BEHIND
-		if absf(dz_player) < player_clearance + _half_len + float(_player.half_length):
-			return false
+		var committed_here: bool = false
+		if "_pending_lane" in vehicle:
+			committed_here = int(vehicle.get("_pending_lane")) == candidate or (bool(vehicle.get("_lane_change_active")) and int(vehicle.lane) == candidate)
+		var width: float = _half_w + float(vehicle.get_half_width()) + 0.65
+		if absf(float(vehicle.lateral) - lane_centre) < width or committed_here:
+			if not _safe_merge_gap(vehicle):
+				return false
+	if is_instance_valid(_player) and _player.alive:
+		## Include the full swept strip: a rider alongside the source lane must
+		## not be clipped while the car is still halfway to its destination.
+		var x: float = float(_player.lateral)
+		if x > minf(lateral, lane_centre) - _half_w - 0.9 and x < maxf(lateral, lane_centre) + _half_w + 0.9:
+			if not _safe_merge_gap(_player):
+				return false
 	return true
 
 
@@ -543,11 +574,8 @@ func _place(drift: float = 0.0) -> void:
 	# bus beyond a narrowed road edge. The drawn lateral carries the in-lane
 	# wander; the logical one stays riveted for everyone else's maths.
 	var road_transform: Transform3D = _path.road_transform_at(track_z, _drawn_lateral, _half_w)
-	# Opposing traffic faces back down the route; the drift term then flips with
-	# the travel direction so a veer still points the nose where it is going.
-	var facing := 0.0 if direction > 0 else PI
 	road_transform.basis = road_transform.basis.rotated(
-		road_transform.basis.y, facing + atan(clampf(drift * float(direction) * 1.25, -0.42, 0.42))
+		road_transform.basis.y, atan(clampf(drift * 1.25, -0.42, 0.42))
 	)
 	global_transform = road_transform
 

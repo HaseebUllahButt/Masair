@@ -141,6 +141,13 @@ func _process(_delta: float) -> bool:
 	check(follower.call("_nearest_lead") == lead, "traffic follows the nearest same-lane lead")
 	check(not follower.call("can_change_to_lane", 1), "traffic rejects an occupied target lane")
 	check(follower.call("can_change_to_lane", 0), "traffic accepts a clear adjacent lane")
+	check(follower.call("can_change_to_lane", 2), "leftmost lane belongs to the forward flow too")
+	var legacy := TrafficCarGD.new() as Node3D
+	root.add_child(legacy)
+	legacy.call("setup", 0, 2, 900.0, 24.0, 0, -1)
+	legacy.set_physics_process(false)
+	check(int(legacy.direction) == 1, "legacy opposing-direction setup is clamped to one-way")
+	legacy.free()
 	var before_speed: float = follower.speed
 	follower.call("_physics_process", 0.1)
 	check(float(follower.speed) < before_speed, "traffic brakes into a safe following gap")
@@ -173,6 +180,8 @@ func _process(_delta: float) -> bool:
 	check(int(horn_car.get("_pending_lane")) >= 0, "driver chooses a safe adjacent lane after reacting")
 	check(is_equal_approx(float(horn_car.lateral), horn_start), "driver does not move during reaction or signal lead-in")
 	horn_car.call("_update_lane_plan", 1.0)
+	check(not bool(horn_car.get("_lane_change_active")), "driver indicates for at least 1.6 seconds before moving")
+	horn_car.call("_update_lane_plan", 1.6)
 	check(bool(horn_car.get("_lane_change_active")), "lane change starts after indicating")
 	horn_car.call("_advance_lane_change", 0.1)
 	check(absf(float(horn_car.lateral) - horn_start) < 0.1, "lane change eases in without a sideways jump")
@@ -180,6 +189,57 @@ func _process(_delta: float) -> bool:
 		horn_car.call("_advance_lane_change", 0.1)
 	check(not bool(horn_car.get("_lane_change_active")), "lane change completes in a bounded time")
 	check(is_equal_approx(float(horn_car.lateral), float(horn_car.get("_target_lateral"))), "car settles exactly on its new lane")
+
+	## Closing speed matters more than an empty snapshot of the lane. A fast
+	## follower behind, or the rider alongside, must veto a tempting pass.
+	var fast_rear := TrafficCarGD.new() as Node3D
+	root.add_child(fast_rear)
+	fast_rear.call("setup", 2, 2, 100.0, 42.0, 0)
+	fast_rear.set_physics_process(false)
+	var merger := TrafficCarGD.new() as Node3D
+	root.add_child(merger)
+	merger.call("setup", 0, 1, 175.0, 20.0, 0)
+	merger.set_physics_process(false)
+	check(not bool(merger.call("can_change_to_lane", 2)), "merge rejects a fast rear car before it closes the gap")
+	merger.call("set_player", bike)
+	bike.track_z = 175.0
+	bike.lateral = float(path.lane_x(1)) + 1.4
+	check(not bool(merger.call("can_change_to_lane", 2)), "merge protects a rider alongside the swept strip")
+	fast_rear.free()
+	bike.track_z = 177.0
+	bike.speed = 35.0
+	bike.lateral = float(path.lane_x(1))
+	check(float(merger.call("_following_acceleration", bike)) >= -1.5, "a faster bike opening its gap gets an ease-off rather than an emergency brake")
+	merger.free()
+
+	## A real queue can stop, then dissolve. The old minimum of 2 m/s forced
+	## cars through a stopped lead. Check the entire manoeuvre, not one tick.
+	var queue_lead := TrafficCarGD.new() as Node3D
+	var queue_car := TrafficCarGD.new() as Node3D
+	root.add_child(queue_lead)
+	root.add_child(queue_car)
+	queue_lead.call("setup", 0, 0, 1100.0, 20.0, 0)
+	queue_car.call("setup", 0, 0, 1020.0, 20.0, 1)
+	queue_lead.speed = 0.0
+	queue_lead.set_physics_process(false)
+	queue_car.set_physics_process(false)
+	queue_car.set("_lane_timer", 1000.0)
+	var queue_min_gap: float = INF
+	var queue_worst_brake: float = 0.0
+	for _i in 1200:
+		queue_car.call("_physics_process", 1.0 / 60.0)
+		queue_min_gap = minf(queue_min_gap, float(queue_car.call("_bumper_gap", queue_lead)))
+		queue_worst_brake = minf(queue_worst_brake, float(queue_car.acceleration))
+	check(queue_min_gap > 2.0, "queue stops without touching the lead (%.2f m)" % queue_min_gap)
+	check(float(queue_car.speed) < 0.1, "driver can stop completely behind a stationary queue")
+	check(queue_worst_brake > -4.5, "normal queue approach uses comfortable braking (%.2f m/s²)" % queue_worst_brake)
+	queue_lead.track_z += 80.0
+	queue_lead.speed = 20.0
+	for _i in 120:
+		queue_car.call("_physics_process", 1.0 / 60.0)
+	check(float(queue_car.speed) > 1.0, "queue accelerates smoothly when the lead pulls away")
+	queue_lead.free()
+	queue_car.free()
 
 	# Traffic weather is a function of (world_seed, z): long bands, not a sprinkle.
 	var traffic: Node = TrafficManagerGD.new()
