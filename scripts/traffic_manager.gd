@@ -27,9 +27,9 @@ const TrafficCarGD: GDScript = preload("res://scripts/traffic_car.gd")
 ## A rider dawdling below the flow of traffic gets passed, as on any real road.
 ## Those cars join the stream out of sight behind the camera — the view never
 ## reaches back past the shoulder — and arrive as an overtake, never a pop.
-@export var behind_spawn_min: float = 150.0
-@export var behind_spawn_max: float = 230.0
-const BEHIND_MAX_CLOSING := 2
+@export var behind_spawn_min: float = 75.0
+@export var behind_spawn_max: float = 140.0
+const BEHIND_MAX_CLOSING := 3
 
 var _player: Node3D
 var _cars: Array[Node3D] = []

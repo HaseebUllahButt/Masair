@@ -92,7 +92,7 @@ func _run() -> void:
 			var dz: float = float(car.track_z) - rider.track_z
 			# Behind the camera nothing is drawn, so a car may join the stream
 			# there as long as it is not right on the rider's tail.
-			if state.is_empty() and frames > 0 and (dz > -100.0 and dz < 260.0):
+			if state.is_empty() and frames > 0 and (dz > -60.0 and dz < 260.0):
 				close_spawns += 1
 			if not state.is_empty() and float(state.dz) < 0.0 and dz >= 0.0:
 				passed_by[id] = true
@@ -105,7 +105,10 @@ func _run() -> void:
 				if not rider_hit_ids.has(id):
 					rider_hit_ids[id] = true
 					rider_hits += 1
-					var at_fault: bool = dz < 0.0 or bool(car.get("_lane_change_active"))
+					# A rider still sliding across into a lane is cutting in; only
+					# a rider settled in its lane can be run down by a driver.
+					var settled: bool = weave <= 0.0 or absf(rider.lateral - weave_target) < 0.3
+					var at_fault: bool = (dz < 0.0 and settled) or bool(car.get("_lane_change_active"))
 					if at_fault:
 						car_fault_hits += 1
 					if at_fault: print("RIDER HIT t=%.2f z=%.1f rider_x=%.2f car kind=%d x=%.2f v=%.2f dz=%.2f lane=%d moving=%s" % [elapsed, rider.track_z, rider.lateral, car.kind, car.get("_drawn_lateral"), car.speed, dz, car.lane, car.get("_lane_change_active")])
