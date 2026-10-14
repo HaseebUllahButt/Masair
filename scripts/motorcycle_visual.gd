@@ -904,10 +904,15 @@ func set_night_lighting(darkness: float) -> void:
 	if _headlight == null:
 		return
 	var t: float = pow(clampf(darkness, 0.0, 1.0), 0.55)
-	_headlight.light_energy = lerpf(0.0, 5.4, t)
+	# A warm halogen pool, not a pale wash: at 5.4 and near-white the beam on
+	# moonlit tarmac read as a faint pink smudge under the grade's lavender toe.
+	_headlight.light_energy = lerpf(0.0, 12.0, t)
+	# A flatter falloff throws the pool up the lane instead of piling it on
+	# the front wheel.
+	_headlight.spot_attenuation = lerpf(0.75, 0.5, t)
 	_headlight.spot_range = lerpf(26.0, 68.0, t)
 	_headlight.spot_angle = lerpf(20.0, 33.0, t)
-	_headlight.light_color = Color(1.0, 0.90, 0.72).lerp(Color(1.0, 0.95, 0.86), t)
+	_headlight.light_color = Color(1.0, 0.90, 0.72).lerp(Color(1.0, 0.86, 0.62), t)
 
 
 func _build_needle(head: Node3D, at: Vector3) -> Node3D:
