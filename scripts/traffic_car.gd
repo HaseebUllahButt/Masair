@@ -69,6 +69,14 @@ static var _brake_cache: Dictionary = {}
 static var _blinker_cache: Dictionary = {}
 static var _contact_shadow_mesh: QuadMesh
 static var _contact_shadow_material: ShaderMaterial
+## Every driver scans its neighbours several times a tick. Asking the tree for
+## the group each time built a fresh array per scan — dozens per car per frame
+## on a busy road — so the roster is taken once per physics frame and shared.
+static var _roster: Array[Node] = []
+static var _roster_frame: int = -1
+## Membership changes mid-frame too — a spawn in the manager, a headless probe
+## stepping many ticks inside one frame — so arrivals and exits mark it stale.
+static var _roster_stale: bool = true
 
 ## Blinks per second, both indicators and the pause between them.
 const BLINK_RATE := 1.6
@@ -133,6 +141,23 @@ var _contact_shadow: MeshInstance3D
 var _brake_lamps: MeshInstance3D
 var _blinkers: Array[MeshInstance3D] = []
 var _blink_phase: float = 0.0
+## The body sits on springs: it dips its nose under braking, squats a touch
+## pulling away, and leans out of a bend or a lane change. A degree or two is
+## the whole effect — it is what makes a car read as heavy rather than as a
+## box sliding on rails. Lamps ride on the body mesh so they move with it.
+var _body_pitch: float = 0.0
+var _body_roll: float = 0.0
+var _prev_lat_vel: float = 0.0
+var _road_bend: float = 0.0
+var _braking_lit: bool = false
+const BODY_PITCH_PER_MS2 := 0.0045
+const BODY_ROLL_PER_MS2 := 0.0065
+const BODY_PITCH_MAX := 0.02
+const BODY_ROLL_MAX := 0.03
+## Brake lamps light on the pedal, not on every lift of the throttle. Two
+## thresholds stop a car easing along a queue from flickering its tails.
+const BRAKE_LIGHT_ON := -0.9
+const BRAKE_LIGHT_OFF := -0.45
 
 
 func setup(vehicle_kind: int, start_lane: int, z: float, cruise: float, color_index: int, _dir: int = 1) -> void:
@@ -191,6 +216,11 @@ func setup(vehicle_kind: int, start_lane: int, z: float, cruise: float, color_in
 		LowPoly.cheap_draw(_mesh_instance)
 		add_child(_mesh_instance)
 	_mesh_instance.mesh = _mesh_for(kind, color_index)
+	_mesh_instance.rotation = Vector3.ZERO
+	_body_pitch = 0.0
+	_body_roll = 0.0
+	_prev_lat_vel = 0.0
+	_braking_lit = false
 	if _contact_shadow == null:
 		_contact_shadow = _make_contact_shadow()
 	_contact_shadow.scale = Vector3(_half_w * 1.12, _half_len * 1.05, 1.0)
@@ -204,6 +234,7 @@ func setup(vehicle_kind: int, start_lane: int, z: float, cruise: float, color_in
 		_blinkers[i].mesh = _blinker_mesh(kind, -1.0 if i == 0 else 1.0)
 		_blinkers[i].visible = false
 	add_to_group("traffic")
+	_roster_stale = true
 	_apply_fade(0.0)
 	_place()
 
@@ -242,7 +273,8 @@ func _lamp_child(node_name: String) -> MeshInstance3D:
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.visibility_range_end = 560.0
 	LowPoly.cheap_draw(mi)
-	add_child(mi)
+	# On the body, not the car root, so the lamps dip and lean with it.
+	_mesh_instance.add_child(mi)
 	return mi
 
 
@@ -306,7 +338,11 @@ func _physics_process(delta: float) -> void:
 		emergency = gap < MIN_FOLLOW_GAP + closing * closing / 10.0 and not (lead == _player and float(lead.speed) > speed)
 	acceleration = move_toward(acceleration, demand, (25.0 if emergency else 2.5) * delta)
 	speed = maxf(0.0, speed + acceleration * delta)
-	_brake_lamps.visible = acceleration < -0.35 or (speed < 0.3 and lead != null)
+	if acceleration < BRAKE_LIGHT_ON:
+		_braking_lit = true
+	elif acceleration > BRAKE_LIGHT_OFF:
+		_braking_lit = false
+	_brake_lamps.visible = _braking_lit or (speed < 0.3 and lead != null)
 	if acceleration < -4.5:
 		_hazards_timer = 2.0
 	track_z = _path.advance(track_z, speed * delta)
@@ -316,6 +352,7 @@ func _physics_process(delta: float) -> void:
 	_signal(delta)
 	_drawn_lateral = lateral + _wander
 	_place((_drawn_lateral - before) / maxf(speed * delta, 0.25))
+	_settle_body(delta, (_drawn_lateral - before) / maxf(delta, 0.0001))
 
 
 func _update_road_cruise(delta: float) -> void:
@@ -326,12 +363,27 @@ func _update_road_cruise(delta: float) -> void:
 	## seconds ahead four times a second so braking starts before the corner.
 	_road_sample_timer = 0.35
 	var ahead: float = track_z + maxf(25.0, speed * 3.0)
-	var bend: float = maxf(absf(float(_path.curvature_at(track_z))), absf(float(_path.curvature_at(ahead))))
+	_road_bend = float(_path.curvature_at(track_z))
+	var bend: float = maxf(absf(_road_bend), absf(float(_path.curvature_at(ahead))))
 	var corner_speed: float = sqrt(3.2 / maxf(bend, 0.0001))
 	var cruise: float = base_speed * (1.0 + CRUISE_DRIFT * sin(_wander_t * 0.11 + _cruise_phase))
 	var uphill: float = maxf(0.0, sin(float(_path.pitch_at(ahead))))
 	cruise *= maxf(0.62, 1.0 - uphill * (3.0 if kind >= Kind.TRUCK else 0.65))
 	_road_cruise = maxf(6.0, minf(cruise, corner_speed))
+
+
+func _settle_body(delta: float, lat_vel: float) -> void:
+	## Lateral load is the bend's centripetal pull plus the lane change's own
+	## sideways acceleration; the body leans away from both.
+	var lat_accel: float = (lat_vel - _prev_lat_vel) / maxf(delta, 0.0001)
+	_prev_lat_vel = lat_vel
+	var load: float = clampf(_road_bend * speed * speed + lat_accel, -6.0, 6.0)
+	var pitch_target: float = clampf(-acceleration * BODY_PITCH_PER_MS2, -BODY_PITCH_MAX * 0.5, BODY_PITCH_MAX)
+	var roll_target: float = clampf(load * BODY_ROLL_PER_MS2, -BODY_ROLL_MAX, BODY_ROLL_MAX)
+	var k: float = 1.0 - exp(-5.0 * delta)
+	_body_pitch = lerpf(_body_pitch, pitch_target, k)
+	_body_roll = lerpf(_body_roll, roll_target, k)
+	_mesh_instance.rotation = Vector3(_body_pitch, 0.0, _body_roll)
 
 
 func _bumper_gap(lead: Node3D) -> float:
@@ -447,13 +499,26 @@ func _signal(delta: float) -> void:
 	_blinkers[1].visible = lit and (_hazards_timer > 0.0 or drift > SIGNAL_EPSILON)
 
 
+func _exit_tree() -> void:
+	_roster_stale = true
+
+
+func _traffic() -> Array[Node]:
+	var frame := Engine.get_physics_frames()
+	if frame != _roster_frame or _roster_stale or not is_inside_tree():
+		_roster_frame = frame
+		_roster_stale = false
+		_roster = get_tree().get_nodes_in_group("traffic") if is_inside_tree() else []
+	return _roster
+
+
 func _lead_at(lane_centre: float, include_target: bool = false) -> Node3D:
 	var closest: Node3D
 	var strongest_demand: float = INF
 	var closest_gap: float = INF
-	for other: Node in get_tree().get_nodes_in_group("traffic"):
+	for other: Node in _traffic():
 		var vehicle: Node3D = other as Node3D
-		if vehicle == null or vehicle == self or not ("track_z" in vehicle):
+		if vehicle == null or vehicle == self or not is_instance_valid(vehicle) or not ("track_z" in vehicle):
 			continue
 		var width: float = _half_w + float(vehicle.get_half_width()) + 0.6
 		var occupies: bool = absf(float(vehicle.lateral) - lane_centre) < width
@@ -542,9 +607,9 @@ func _lane_is_clear(candidate: int) -> bool:
 	if candidate < 0 or candidate >= _path.LANE_COUNT or candidate == lane:
 		return false
 	var lane_centre: float = _path.lane_x(candidate)
-	for other: Node in get_tree().get_nodes_in_group("traffic"):
+	for other: Node in _traffic():
 		var vehicle: Node3D = other as Node3D
-		if vehicle == null or vehicle == self or not ("track_z" in vehicle):
+		if vehicle == null or vehicle == self or not is_instance_valid(vehicle) or not ("track_z" in vehicle):
 			continue
 		var committed_here: bool = false
 		if "_pending_lane" in vehicle:
