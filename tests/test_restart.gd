@@ -264,12 +264,12 @@ func _process(_delta: float) -> bool:
 		var day_ambient: float = (
 			float(main.MOODS[1]["ambient"]) * (main.MOODS[1]["ambient_color"] as Color).get_luminance()
 		)
-		var dusk_ambient: float = (
+		var dawn_ambient: float = (
 			float(main.MOODS[0]["ambient"]) * (main.MOODS[0]["ambient_color"] as Color).get_luminance()
 		)
 		check(
-			night_ambient < day_ambient and night_ambient < dusk_ambient,
-			"night mode is darker than day and dusk"
+			night_ambient < day_ambient and night_ambient < dawn_ambient,
+			"night mode is darker than day and dawn"
 		)
 		check(environment.fog_density > 0.001 and environment.fog_density < 0.002, "night remains readable through controlled fog")
 		check(sun.light_color.b > sun.light_color.r, "night mode uses cool moonlight")
@@ -290,7 +290,7 @@ func _process(_delta: float) -> bool:
 		)
 		main.set("lighting_mode", 0)
 		main.call("_apply_lighting")
-		check(environment.fog_density > day_fog, "dusk mode restores evening atmosphere")
+		check(environment.fog_density > day_fog, "dawn mode brings back the morning air")
 		check(
 			not main.has_method("_protect_scenic_visibility"),
 			"the overlook does not swap the riding mood for a scenic one"

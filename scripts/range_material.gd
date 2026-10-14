@@ -86,6 +86,10 @@ static func _make(profile: Dictionary) -> ShaderMaterial:
 
 static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	var haze: Color = _mood.get("horizon_color", Color("f6b06a"))
+	## A dawn sky is only gold on the sun's side; the ranges stand all round
+	## the horizon, so they take the air halfway to the cool side. Painted in
+	## the gold alone, every shaded face away from the sun came out grey-brown.
+	haze = haze.lerp(_mood.get("anti_horizon", haze), 0.5 * float(_mood.get("azimuth_split", 0.0)))
 	var fog: Color = _mood.get("fog_color", Color("8b625f"))
 	var light_angle: Vector3 = _mood.get("light_angle", Vector3(-7.0, 14.0, 0.0))
 	var euler := Vector3(deg_to_rad(light_angle.x), deg_to_rad(light_angle.y), deg_to_rad(light_angle.z))
@@ -163,7 +167,13 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	# (r-b) of 0.62 sits clear of day's 0.40. Night's cool path is unchanged.
 	var warm_depth := smoothstep(0.45, 0.60, key.r - key.b)
 	var lit_cast := Color(0.93, 0.965, 1.045).lerp(Color(1.03, 0.97, 0.85), warm_depth)
-	mat.set_shader_parameter("key_tint", lit_cast.lerp(cool, cool_weight))
+	var key_tint: Color = lit_cast.lerp(cool, cool_weight)
+	## Alpenglow. A sunrise lights the tops rose before it lights anything
+	## gold; the gold key alone took the ranges through the daytime path and
+	## the grade returned them as cream. A rose tint here also keeps the rock's
+	## own slate in shade, since the shader only greys rock under a cool key.
+	key_tint = key_tint.lerp(_mood.get("range_key_tint", key_tint), float(_mood.get("range_key_mix", 0.0)))
+	mat.set_shader_parameter("key_tint", key_tint)
 	## Light, because the haze it lays on is the mist colour and the mist is
 	## pale: at 0.75 every range in the rain glowed off-white against a slate sky.
 	mat.set_shader_parameter("weather_haze", 0.35 * float(_mood.get("rain", 0.0)))

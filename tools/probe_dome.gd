@@ -40,7 +40,7 @@ class Runner:
 		_player.call("_place")
 		_main = get_tree().root.find_child("Main", true, false)
 		_main.set("rain", 0.0)
-		_main.call("preview_mood", 1)
+		_main.call("preview_mood", 1, true)
 		var world_env := get_tree().root.find_child("WorldEnvironment", true, false) as WorldEnvironment
 		_env = world_env.environment
 		_sky_mat = _env.sky.sky_material
