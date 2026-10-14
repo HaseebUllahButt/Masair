@@ -24,6 +24,12 @@ const TrafficCarGD: GDScript = preload("res://scripts/traffic_car.gd")
 ## into the rider's immediate view, and the lane check below includes vehicle
 ## length rather than comparing centre points only.
 @export var player_reaction_distance: float = 125.0
+## A rider dawdling below the flow of traffic gets passed, as on any real road.
+## Those cars join the stream out of sight behind the camera — the view never
+## reaches back past the shoulder — and arrive as an overtake, never a pop.
+@export var behind_spawn_min: float = 150.0
+@export var behind_spawn_max: float = 230.0
+const BEHIND_MAX_CLOSING := 2
 
 var _player: Node3D
 var _cars: Array[Node3D] = []
@@ -32,6 +38,7 @@ var _rng := RandomNumberGenerator.new()
 var _path: Node
 var difficulty: int = 1
 var pack_chance: float = 0.18
+var _prefilling: bool = false
 
 
 ## Traffic weather along the route. Indexed in this order by the mood tables.
@@ -60,17 +67,19 @@ const MOOD_GAP_MUL := [1.7, 1.0, 0.92, 1.25, 0.88]
 const MOOD_PACK_MUL := [0.0, 1.0, 2.4, 0.35, 1.35]
 const MOOD_ACTIVE_MUL := [0.5, 1.0, 1.0, 0.75, 1.0]
 const MOOD_SPEED_MUL := [1.06, 1.0, 0.96, 0.68, 0.88]
-## Cruise range per kind (m/s). Light cars run fastest, the coupe fastest of all;
-## anything heavy is slow enough to be a readable overtaking target rather than a
-## wall moving at the rider's own speed.
+## Cruise range per kind (m/s). Country-road pace: most cars sit between 80 and
+## 110 km/h, the coupe pushes on a little, vans and pickups trail them, and a
+## lorry or bus holds 55-80. The rider on a café racer is the fast thing out
+## here — faster bands left a touring rider on an empty road, every car
+## pulling away out of sight, which is the least believable traffic of all.
 const KIND_SPEEDS := [
-	Vector2(23.0, 36.0),
-	Vector2(22.0, 34.0),
-	Vector2(29.0, 41.0),
-	Vector2(19.0, 31.0),
-	Vector2(18.0, 29.0),
-	Vector2(14.0, 24.0),
-	Vector2(14.0, 23.0),
+	Vector2(22.0, 30.5),
+	Vector2(21.0, 29.0),
+	Vector2(26.0, 34.0),
+	Vector2(20.0, 27.5),
+	Vector2(19.0, 26.0),
+	Vector2(15.0, 22.0),
+	Vector2(15.0, 21.0),
 ]
 
 
@@ -126,11 +135,20 @@ func _prefill() -> void:
 	## along.
 	if _player == null or _path == null:
 		return
+	## The opening stream fills the whole visible road, from just past the
+	## reaction window out to the fog. Seeding only the far band left the near
+	## field empty for as long as it took the rider to catch the first car —
+	## forever, at a touring pace that matches the traffic's own. A restart is
+	## a cut, so cars standing there on its first frame are not a pop.
 	var target := int(ceil(float(max_active) * 0.6))
-	for _i in target * 2:
+	_prefilling = true
+	for _i in target * 3:
 		if _cars.size() >= target:
 			break
-		_try_spawn()
+		var placed := _try_spawn()
+		if placed.x >= 0.0:
+			_cars.back().set("_fade", 0.999)
+	_prefilling = false
 
 
 func _player_on_scenic() -> bool:
@@ -250,6 +268,9 @@ func _process(delta: float) -> void:
 	for car in _cars:
 		if float(car.track_z) > float(_player.track_z) - 80.0:
 			ahead_count += 1
+	if _rng.randf() < _behind_chance(mood) and _closing_from_behind() < BEHIND_MAX_CLOSING:
+		if _try_spawn_behind(mood):
+			return
 	var anchor_z := NAN
 	var anchor_lane := -1
 	for _i in pack:
@@ -260,6 +281,75 @@ func _process(delta: float) -> void:
 			anchor_z = placed.x
 			anchor_lane = int(placed.y)
 			ahead_count += 1
+
+
+func _behind_chance(mood: int) -> float:
+	## Only when the rider is clearly slower than the drivers around them: a car
+	## that cannot catch up would simply trail out of sight behind.
+	var flow := 25.0 * mood_speed_mul(mood)
+	return 0.55 * smoothstep(flow - 3.0, flow - 13.0, float(_player.speed))
+
+
+func _closing_from_behind() -> int:
+	var n := 0
+	for car in _cars:
+		if float(car.track_z) < float(_player.track_z) and float(car.speed) > float(_player.speed) + 1.0:
+			n += 1
+	return n
+
+
+func _try_spawn_behind(mood: int) -> bool:
+	var z: float = _player.track_z - _rng.randf_range(behind_spawn_min, behind_spawn_max)
+	if z < 0.0:
+		return false
+	var kind := _pick_kind(kind_weights_for(mood))
+	if kind >= 5:
+		# A lorry is never the one doing the overtaking.
+		return false
+	var band: Vector2 = KIND_SPEEDS[kind]
+	var speed := _rng.randf_range(band.x, band.y) * mood_speed_mul(mood)
+	if speed < float(_player.speed) + 5.0:
+		return false
+	# Pass the rider in whichever lane leaves them the most room, and keep the
+	# right-hand lanes for drivers who are not overtaking anyone.
+	var lane := 0
+	var best := -1.0
+	for i in int(_path.LANE_COUNT):
+		var room := absf(float(_path.lane_x(i)) - float(_player.lateral)) + float(i) * 0.4
+		if room > best:
+			best = room
+			lane = i
+	var lane_x: float = _path.lane_x(lane)
+	var gap := maxf(min_gap * mood_min_gap_mul(mood), 38.0)
+	for c in _cars:
+		if absf(c.track_z - z) < gap and (absf(c.lateral - lane_x) < 2.8 or int(c.get("_pending_lane")) == lane or int(c.lane) == lane):
+			return false
+	var car: Node3D = TrafficCarGD.new() as Node3D
+	add_child(car)
+	car.call("setup", kind, lane, z, speed, _rng.randi_range(0, 15))
+	car.call("set_player", _player)
+	car.call("settle_spawn_speed")
+	if float(car.speed) < float(_player.speed) + 3.0 or not _rear_room(car, z, lane_x):
+		car.free()
+		return false
+	_cars.append(car)
+	return true
+
+
+func _rear_room(car: Node3D, z: float, lane_x: float) -> bool:
+	## Spawning a slow car into a fast driver's stopping distance creates a fake
+	## emergency. Check the settled speed, including the upcoming hill.
+	for follower in _cars:
+		if absf(float(follower.lateral) - lane_x) > 2.8:
+			continue
+		var rear_gap: float = z - float(follower.track_z) - float(follower.get_half_length()) - float(car.get_half_length())
+		if rear_gap <= 0.0:
+			continue
+		var closing: float = maxf(0.0, float(follower.speed) - float(car.speed))
+		var safe_gap: float = 5.0 + float(follower.speed) * 1.6 + closing * closing / (2.0 * 2.3)
+		if rear_gap < safe_gap:
+			return false
+	return true
 
 
 func _pack_size_for(mood: int) -> int:
@@ -286,7 +376,7 @@ func _pick_kind(weights: Array) -> int:
 
 func _try_spawn(anchor_z: float = NAN, anchor_lane: int = -1) -> Vector2:
 	var z_min: float = _player.track_z + player_reaction_distance
-	var ahead_min := maxf(spawn_ahead_min, player_reaction_distance)
+	var ahead_min := player_reaction_distance if _prefilling else maxf(spawn_ahead_min, player_reaction_distance)
 	var ahead_max := maxf(spawn_ahead_max, ahead_min + 1.0)
 	var z: float
 	var lane: int
@@ -334,19 +424,9 @@ func _try_spawn(anchor_z: float = NAN, anchor_lane: int = -1) -> Vector2:
 	car.call("setup", kind, lane, z, speed, _rng.randi_range(0, 15))
 	car.call("set_player", _player)
 	car.call("settle_spawn_speed")
-	## Spawning a slow lorry into a fast driver's stopping distance creates a
-	## fake emergency. Check the settled speed, including the upcoming hill.
-	for follower in _cars:
-		if absf(float(follower.lateral) - lane_x) > 2.8:
-			continue
-		var rear_gap: float = z - float(follower.track_z) - float(follower.get_half_length()) - float(car.get_half_length())
-		if rear_gap <= 0.0:
-			continue
-		var closing: float = maxf(0.0, float(follower.speed) - float(car.speed))
-		var safe_gap: float = 5.0 + float(follower.speed) * 1.6 + closing * closing / (2.0 * 2.3)
-		if rear_gap < safe_gap:
-			car.free()
-			return Vector2(-1.0, -1.0)
+	if not _rear_room(car, z, lane_x):
+		car.free()
+		return Vector2(-1.0, -1.0)
 	_cars.append(car)
 	return Vector2(z, float(lane))
 
