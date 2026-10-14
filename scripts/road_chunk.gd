@@ -1359,6 +1359,18 @@ func _spur_tree(species: int, z: float, lateral: float, height: float, color: Co
 		try_lateral += escape * 6.0
 
 
+func _beside_terrace(z: float, lateral: float) -> bool:
+	## The lane's verge planting runs on past the terrace on the view side, and
+	## there the platform's half width puts the "verge" right at the benches: a
+	## hedge mound three metres across stood a stride from the seat, filling
+	## the frame the moment the rider turned their head. The terrace dresses
+	## itself; the lane's verge stops at its ends.
+	if _vp_side == 0.0 or absf(z - _vp_centre) >= RoadPathGD.PLATFORM_HALF_LENGTH + 4.0:
+		return false
+	# Outboard of the spur's own centreline: the parking side keeps its verge.
+	return (lateral - _vp_side * float(_path.spur_offset(z))) * _vp_side > 0.0
+
+
 func _build_spur_woodland(
 	first_station: int = 0, station_count: int = 5, phase: int = 0, pace: Callable = Callable()
 ) -> void:
@@ -1495,6 +1507,8 @@ func _build_spur_woodland(
 				if _on_tarmac(turf_z, turf_lateral, 1.0):
 					continue
 				var turf_s := _rng.randf_range(0.9, 1.7)
+				if _beside_terrace(turf_z, turf_lateral):
+					continue
 				_blob(
 					turf_z,
 					turf_lateral,
@@ -1516,7 +1530,7 @@ func _build_spur_woodland(
 					var hedge_lateral: float = hedge_centre + road_side * (
 						hedge_half + RoadPathGD.SPUR_SHOULDER + _rng.randf_range(1.7, 2.9)
 					)
-					if not _on_tarmac(hedge_z, hedge_lateral, 1.2):
+					if not _on_tarmac(hedge_z, hedge_lateral, 1.2) and not _beside_terrace(hedge_z, hedge_lateral):
 						_blob(
 							hedge_z,
 							hedge_lateral,
@@ -4391,13 +4405,17 @@ func _hedge_verge() -> void:
 				)
 				if _rng.randf() < 0.28:
 					var s := _rng.randf_range(0.4, 0.9)
-					_cube(
+					# Bramble at the hedge foot, low and in the hedge's own shade.
+					# It was a box — under the key a green box on the plain
+					# material lands mustard, and a row of them along the fence
+					# read as crates set out on the verge.
+					_blob(
 						hz + 0.35,
 						_mow_lateral(hz, side * (HALF_WIDTH + 1.65 + _rng.randf() * 1.5)),
-						Vector3(s * 1.35, s * 0.72, s * 1.1),
-						# A rooty clod at the hedge foot — dark, not the hay-gold
-						# prop_c that sprinkled the verge with tan litter.
-						run_col.darkened(_rng.randf_range(0.2, 0.34))
+						Vector3(s * 1.5, s * 0.7, s * 1.3),
+						run_col.darkened(_rng.randf_range(0.2, 0.34)),
+						0.0,
+						true
 					)
 				hz += _rng.randf_range(1.65, 2.45)
 	set_meta("hedge_done", true)
@@ -4422,24 +4440,34 @@ func _hedge_verge_incremental() -> void:
 	## clearance checks, and the whole strip measured up to ~35 ms on a scenic
 	## chunk. A budget check inside the run loop lets the frame boundary land
 	## mid-hedge instead of paying the whole verge in one slice.
+	##
+	## This twin had drifted: it missed the country field-boundary runs and
+	## still laid the hay-gold clod boxes the sync path had dropped, and it is
+	## the path a rider actually sees. Kept line for line with `_hedge_verge`.
 	if bool(get_meta("hedge_done", false)):
 		return
 	if theme == Env.CITY:
 		set_meta("hedge_done", true)
 		return
 	var z0: float = float(chunk_index) * LENGTH
+	var country := theme == Env.COUNTRY
 	for side in [-1.0, 1.0]:
 		var hz := z0 + _rng.randf_range(0.0, 1.1)
 		while hz < z0 + LENGTH:
-			if _rng.randf() < 0.17:
+			if _rng.randf() < (0.13 if country else 0.17):
 				var gap := _rng.randf_range(3.0, 8.0)
-				if theme == Env.COUNTRY and _rng.randf() < 0.5:
+				if country and _rng.randf() < 0.5:
 					_field_gate(hz + gap * 0.5, side)
 				hz += gap
 				continue
-			var run_end := minf(hz + _rng.randf_range(7.0, 22.0), z0 + LENGTH)
-			var run_col: Color = (_pal["prop_a"] as Color).lerp(_pal["verge"], _rng.randf_range(0.15, 0.55))
-			var run_h := _rng.randf_range(1.1, 2.1)
+			var run_end := minf(
+				hz + _rng.randf_range(10.0, 30.0) if country else hz + _rng.randf_range(7.0, 22.0),
+				z0 + LENGTH
+			)
+			var run_col: Color = (_pal["prop_a"] as Color).lerp(
+				_pal["verge"], _rng.randf_range(0.1, 0.4) if country else _rng.randf_range(0.15, 0.55)
+			)
+			var run_h := _rng.randf_range(1.3, 2.3) if country else _rng.randf_range(1.1, 2.1)
 			while hz < run_end:
 				var lx: float = _mow_lateral(hz, side * (HALF_WIDTH + 3.0 + _rng.randf_range(0.0, 2.6)))
 				# Forced blobs skip `_footprint_is_clear`; without a tarmac test they grow
@@ -4447,18 +4475,20 @@ func _hedge_verge_incremental() -> void:
 				if ((_on_lake or _on_spur) and _viewpoint_reserves_sightline(hz, lx)) or _on_tarmac(hz, lx, 1.2):
 					hz += 2.0
 					continue
-				var w := _rng.randf_range(1.55, 2.55)
+				var w := _rng.randf_range(1.8, 2.9) if country else _rng.randf_range(1.55, 2.55)
 				_blob(
-					hz, lx, Vector3(w, run_h * _rng.randf_range(0.82, 1.12), w * 0.78),
+					hz, lx, Vector3(w, run_h * _rng.randf_range(0.82, 1.12), w * _rng.randf_range(0.85, 1.15) if country else w * 0.78),
 					run_col.darkened(_rng.randf() * 0.18), 0.0, true, true
 				)
 				if _rng.randf() < 0.28:
 					var s := _rng.randf_range(0.4, 0.9)
-					_cube(
+					_blob(
 						hz + 0.35,
 						_mow_lateral(hz, side * (HALF_WIDTH + 1.65 + _rng.randf() * 1.5)),
-						Vector3(s * 1.35, s * 0.72, s * 1.1),
-						(_pal["prop_c"] as Color).darkened(_rng.randf() * 0.22)
+						Vector3(s * 1.5, s * 0.7, s * 1.3),
+						run_col.darkened(_rng.randf_range(0.2, 0.34)),
+						0.0,
+						true
 					)
 				hz += _rng.randf_range(1.65, 2.45)
 				if _slice_spent() and not await _keep_streaming():
