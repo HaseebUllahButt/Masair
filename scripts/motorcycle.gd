@@ -456,7 +456,11 @@ func _drive(delta: float) -> void:
 	var tyre_budget := _tyre_budget()
 	var corner_force := TURN_GRAVITY * tan(lean)
 	var longitudinal_budget := tyre_budget * sqrt(maxf(0.35, 1.0 - pow(corner_force / tyre_budget, 2.0)))
-	a = clampf(a, -longitudinal_budget, longitudinal_budget)
+	## Brake kits still have to buy something in the garage. Better hardware
+	## exploits a little more longitudinal grip, with a small ceiling so the
+	## upgrade never returns to the old impossibly short stopping distance.
+	var brake_grip := clampf(sqrt(brake_accel / 16.0), 0.85, 1.12) if brake > 0.0 else 1.0
+	a = clampf(a, -longitudinal_budget * brake_grip, longitudinal_budget)
 	a -= 9.81 * sin(_road_pitch) * 0.75  # hills cost and pay back
 	_long_accel = lerpf(_long_accel, a, 1.0 - exp(-8.0 * delta))
 

@@ -17,6 +17,7 @@ var _ran: bool = false
 var _bike: Node3D
 var _flat: Node
 var _weather: Node
+var _dry_stop: float = 0.0
 
 
 class Weather:
@@ -162,7 +163,17 @@ func _launch() -> void:
 
 
 func _stop() -> void:
+	var result := _brake_run(1.0, 0.0)
+	_dry_stop = result.x
+	print("stop: 100-0=%.2fm time=%.3fs" % [result.x, result.y])
+	_assert(result.x > 30.0 and result.x < 42.0, "dry emergency stop spends a tyre-scale grip budget")
+
+
+func _brake_run(brake_scale: float, wet: float) -> Vector2:
 	_reset(100.0 / 3.6)
+	_bike.set("brake_accel", float(_bike.get("brake_accel")) * brake_scale)
+	if _check:
+		_weather.set("rain", wet)
 	Input.action_press("brake")
 	var distance: float = 0.0
 	var elapsed: float = 0.0
@@ -171,9 +182,7 @@ func _stop() -> void:
 		_bike.call("_drive", _step)
 		distance += (previous + float(_bike.get("speed"))) * 0.5 * _step
 		elapsed += _step
-	print("stop: 100-0=%.2fm time=%.3fs" % [distance, elapsed])
-	_assert(distance > 30.0 and distance < 42.0, "dry emergency stop spends a tyre-scale grip budget")
-
+	return Vector2(distance, elapsed)
 
 func _slalom() -> void:
 	_reset(25.0)
@@ -197,6 +206,11 @@ func _assert(ok: bool, message: String) -> void:
 
 
 func _grip_and_gears() -> void:
+	var wet_stop := _brake_run(1.0, 1.0).x
+	var tuned_stop := _brake_run(1.25, 0.0).x
+	_assert(wet_stop > _dry_stop * 1.10, "rain lengthens emergency stopping distance")
+	_assert(tuned_stop < _dry_stop * 0.98, "brake tuning still improves a full emergency stop")
+	print("stops: stock=%.2fm wet=%.2fm brake_upgrade=%.2fm" % [_dry_stop, wet_stop, tuned_stop])
 	_reset(40.0)
 	Input.action_press("steer_left", 0.7)
 	for _tick in _hz:
