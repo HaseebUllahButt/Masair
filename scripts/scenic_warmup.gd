@@ -221,7 +221,8 @@ func _build_surfaces(preview: SubViewport) -> void:
 	# costs the menu frame once and every chunk after builds on warm caches.
 	for mesh: ArrayMesh in [
 		RoadChunkGD.unit_cube(), RoadChunkGD.unit_box_sharp(), RoadChunkGD.unit_cone(),
-		RoadChunkGD.unit_sphere(), RoadChunkGD.unit_trunk(), RoadChunkGD.unit_crown(),
+		RoadChunkGD.unit_sphere(), RoadChunkGD.unit_bush(), RoadChunkGD.unit_boulder(),
+		RoadChunkGD.unit_trunk(), RoadChunkGD.unit_crown(),
 		RoadChunkGD.unit_conifer(), RoadChunkGD.unit_ridge(), RoadChunkGD.unit_hay_bale(),
 		RoadChunkGD.grass_tuft(),
 	]:

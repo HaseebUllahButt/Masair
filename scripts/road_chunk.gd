@@ -225,6 +225,8 @@ static var _unit_cube: ArrayMesh
 static var _unit_box_sharp: ArrayMesh
 static var _unit_prism: ArrayMesh
 static var _unit_sphere: ArrayMesh
+static var _unit_bush: ArrayMesh
+static var _unit_boulder: ArrayMesh
 static var _unit_trunk: ArrayMesh
 static var _unit_crown: ArrayMesh
 static var _unit_conifer: ArrayMesh
@@ -283,6 +285,90 @@ static func unit_sphere() -> ArrayMesh:
 		b.add_sphere(Transform3D.IDENTITY, 0.5, 9, 6, Color.WHITE)
 		_unit_sphere = b.commit()
 	return _unit_sphere
+
+
+static func unit_bush() -> ArrayMesh:
+	## Every shrub, hedge lump, flower head and canopy mass on the verge. The
+	## smooth ball it replaced was the one bubble-plastic shape left among
+	## faceted crowns, and squashed to a shrub's proportions it became a dark
+	## lens lying on the grass — the "discs" that littered the valley from the
+	## bench. A few faceted lobes give a lumpy silhouette that still reads as
+	## leaf at any squash. Everything stays inside the unit sphere the corridor
+	## sweep measures, so no swaying lobe can reach further than the ball did,
+	## and the main lobe reaches the sphere's floor so nothing hovers.
+	if _unit_bush == null:
+		var b := LowPoly.new()
+		b.index_flat = true
+		b.channel = LowPoly.FOLIAGE
+		# [x, y, z, radius, y-stretch, shade]: one body down to the ground, a
+		# raised shoulder, two lower side lobes in their own shade.
+		const LOBES := [
+			[0.00, -0.04, 0.00, 0.44, 1.05, 0.90],
+			[0.08, 0.20, -0.06, 0.24, 1.0, 1.10],
+			[0.18, -0.14, 0.10, 0.23, 1.0, 0.76],
+			[-0.18, -0.12, -0.14, 0.23, 1.0, 0.80],
+		]
+		var turn := 0.0
+		for lobe in LOBES:
+			var shade: float = lobe[5]
+			b.add_sphere(
+				Transform3D(
+					Basis(Vector3.UP, turn).scaled(Vector3(1.0, lobe[4], 1.0)), Vector3(lobe[0], lobe[1], lobe[2])
+				),
+				lobe[3],
+				6,
+				4,
+				Color(shade, shade, shade)
+			)
+			# Each lobe a different twist so their facets never line up.
+			turn += 0.71
+		_unit_bush = b.commit()
+	return _unit_bush
+
+
+static func unit_boulder() -> ArrayMesh:
+	## Stones. A smooth ball read as an egg or a pebble at every size — the
+	## outcrops, verge rocks and lake skerries were billiard balls in moss. One
+	## faceted lump with an irregular radius per vertex reads as broken rock,
+	## costs fewer triangles than the ball, and keeps its flat-ish top catching
+	## the sky the way weathered stone does. Bottom stays at the unit floor so
+	## the old bedding offsets still bury it the same.
+	if _unit_boulder == null:
+		var b := LowPoly.new()
+		b.index_flat = true
+		b.hull_origin = Vector3.ZERO
+		const SEGS := 7
+		const RINGS := [[-0.5, 0.0], [-0.34, 0.44], [-0.02, 0.5], [0.24, 0.42], [0.42, 0.22], [0.47, 0.0]]
+		var grid: Array = []
+		for r in RINGS.size():
+			var level: Array = RINGS[r]
+			var row: Array[Vector3] = []
+			for i in SEGS:
+				# Fixed hash, not the stream: one shared mesh, the same rock every
+				# boot. Instances turn and squash it into a whole field of others.
+				var h: float = fposmod(sin(float(i) * 12.9898 + float(r) * 78.233) * 43758.5453, 1.0)
+				var a: float = TAU * (float(i) + (h - 0.5) * 0.35) / float(SEGS) + float(r) * 0.4
+				var rad: float = float(level[1]) * lerpf(0.8, 1.0, h)
+				row.append(Vector3(cos(a) * rad, float(level[0]) + (h - 0.5) * 0.05 * float(level[1] > 0.0), sin(a) * rad))
+			grid.append(row)
+		for r in RINGS.size() - 1:
+			# Dark foot, lit shoulder, pale weathered top.
+			var t: float = (float(r) + 0.5) / float(RINGS.size() - 1)
+			var shade: float = lerpf(0.66, 1.08, t)
+			for i in SEGS:
+				var j: int = (i + 1) % SEGS
+				var p00: Vector3 = grid[r][i]
+				var p10: Vector3 = grid[r][j]
+				var p01: Vector3 = grid[r + 1][i]
+				var p11: Vector3 = grid[r + 1][j]
+				if float(RINGS[r][1]) == 0.0:
+					b.add_hull_tri(p00, p11, p01, Color(shade, shade, shade))
+				elif float(RINGS[r + 1][1]) == 0.0:
+					b.add_hull_tri(p00, p10, p01, Color(shade, shade, shade))
+				else:
+					b.add_hull_quad(p00, p10, p11, p01, Color(shade, shade, shade))
+		_unit_boulder = b.commit()
+	return _unit_boulder
 
 
 static func unit_trunk() -> ArrayMesh:
@@ -570,6 +656,8 @@ static func warm_shared_resources() -> void:
 	unit_box_sharp()
 	unit_cone()
 	unit_sphere()
+	unit_bush()
+	unit_boulder()
 	unit_trunk()
 	unit_crown()
 	unit_conifer()
@@ -809,7 +897,7 @@ func _publish_shoulder(from_index: int) -> void:
 	_commit_mm(_grass, _grass_cols, grass_tuft(), LowPoly.foliage_material(), "Grass", false)
 	_grass.clear()
 	_grass_cols.clear()
-	_commit_mm(_leaves, _leaf_cols, unit_sphere(), LowPoly.foliage_material(), "Foliage", true)
+	_commit_mm(_leaves, _leaf_cols, unit_bush(), LowPoly.foliage_material(), "Foliage", true)
 	_leaves.clear()
 	_leaf_cols.clear()
 	_shoulder_published(from_index)
@@ -833,7 +921,7 @@ func _publish_shoulder_incremental(from_index: int) -> void:
 	_grass_cols.clear()
 	if not await _keep_streaming():
 		return
-	_commit_mm(_leaves, _leaf_cols, unit_sphere(), LowPoly.foliage_material(), "Foliage", true)
+	_commit_mm(_leaves, _leaf_cols, unit_bush(), LowPoly.foliage_material(), "Foliage", true)
 	_leaves.clear()
 	_leaf_cols.clear()
 	_shoulder_published(from_index)
@@ -3921,8 +4009,8 @@ func _commit_props(from: Dictionary = {}) -> void:
 	_commit_mm_range(_leaf_cubes, _leaf_cube_cols, int(from.get("leaf_cubes", 0)), unit_cube(), LowPoly.foliage_material(), "Hedges", true)
 	_commit_mm_range(_arch, _arch_cols, int(from.get("arch", 0)), unit_box_sharp(), LowPoly.solid_material(), "Architecture", true)
 	_commit_mm_range(_prisms, _prism_cols, int(from.get("prisms", 0)), unit_cone(), LowPoly.solid_material(), "Cones", true)
-	_commit_mm_range(_blobs, _blob_cols, int(from.get("blobs", 0)), unit_sphere(), LowPoly.solid_material(), "Rocks", true)
-	_commit_mm_range(_leaves, _leaf_cols, int(from.get("leaves", 0)), unit_sphere(), LowPoly.foliage_material(), "Foliage", true)
+	_commit_mm_range(_blobs, _blob_cols, int(from.get("blobs", 0)), unit_boulder(), LowPoly.solid_material(), "Rocks", true)
+	_commit_mm_range(_leaves, _leaf_cols, int(from.get("leaves", 0)), unit_bush(), LowPoly.foliage_material(), "Foliage", true)
 	_commit_mm_range(_trunks, _trunk_cols, int(from.get("trunks", 0)), unit_trunk(), LowPoly.solid_material(), "Trunks", true)
 	_commit_mm_range(_crowns, _crown_cols, int(from.get("crowns", 0)), unit_crown(), LowPoly.foliage_material(), "Crowns", true)
 	_commit_mm_range(_conifers, _conifer_cols, int(from.get("conifers", 0)), unit_conifer(), LowPoly.foliage_material(), "Conifers", true)
@@ -3959,12 +4047,12 @@ func _commit_props_incremental(from: Dictionary = {}) -> void:
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
 	if int(from.get("blobs", 0)) < _blobs.size():
-		_commit_mm_range(_blobs, _blob_cols, int(from.get("blobs", 0)), unit_sphere(), LowPoly.solid_material(), "Rocks", true)
+		_commit_mm_range(_blobs, _blob_cols, int(from.get("blobs", 0)), unit_boulder(), LowPoly.solid_material(), "Rocks", true)
 		published += 1
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
 	if int(from.get("leaves", 0)) < _leaves.size():
-		_commit_mm_range(_leaves, _leaf_cols, int(from.get("leaves", 0)), unit_sphere(), LowPoly.foliage_material(), "Foliage", true)
+		_commit_mm_range(_leaves, _leaf_cols, int(from.get("leaves", 0)), unit_bush(), LowPoly.foliage_material(), "Foliage", true)
 		published += 1
 		if published % PER_FRAME == 0 and not await _keep_streaming():
 			return
@@ -5157,9 +5245,9 @@ func _forest_verge(z0: float, side: float, pace: Callable = Callable()) -> void:
 					)
 				)
 			else:
-				_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
+				_verge_stone(z, lx, s)
 		else:
-			_cube(z, lx, Vector3(s * 1.6, s, s * 1.6), (_pal["prop_c"] as Color).darkened(_rng.randf() * 0.25))
+			_verge_stone(z, lx, s)
 		if pace.is_valid() and _slice_spent() and not await pace.call():
 			return
 	# An outcrop every few chunks: a knuckle of bedrock breaking the wood edge
@@ -5168,6 +5256,15 @@ func _forest_verge(z0: float, side: float, pace: Callable = Callable()) -> void:
 		var oz := z0 + _rng.randf_range(8.0, LENGTH - 8.0)
 		var ox: float = side * (HALF_WIDTH + _rng.randf_range(7.0, 16.0))
 		await _forest_outcrop(oz, ox, pace)
+
+
+func _verge_stone(z: float, lateral: float, s: float) -> void:
+	## A mossy stone bedded in the verge. These were green boxes in the
+	## canopy's own tint — a row of crates along the forest road — so they
+	## are rock now: the wood's grey stone with a breath of its moss, sunk a
+	## fifth of their height so they sit in the ground rather than on it.
+	var stone: Color = Color("5e6157").lerp(_pal["prop_a"] as Color, 0.22).darkened(_rng.randf() * 0.22)
+	_blob(z, lateral, Vector3(s * 1.7, s * _rng.randf_range(0.7, 0.95), s * 1.4), stone, -s * 0.2, false)
 
 
 func _forest_outcrop(z: float, lateral: float, pace: Callable = Callable()) -> void:
@@ -8998,8 +9095,10 @@ func _far_field_color(color: Color, zi: int, li: int) -> Color:
 		return Color("456c36")
 	if fh == 1:
 		# Hayfield, but muted: unshaded 9a8547 went straight to orange-gold and
-		# drew a sand-coloured parcel across the far meadow.
-		return Color("8f8a55")
+		# drew a sand-coloured parcel across the far meadow, and the khaki that
+		# followed it still read as a dry patch. Green-gold: a meadow before
+		# the cut, which keeps the parcel lighter without leaving the greens.
+		return Color("7d8a4a")
 	if fh == 2:
 		return Color("668343")
 	return Color("365d38")
@@ -9682,11 +9781,13 @@ func _far_bank_ground_tone() -> Array[Color]:
 	## separate from the ground they sit on without competing with the water.
 	match _vp_theme:
 		Env.FOREST:
-			return [Color("515e48"), Color("212c22")]
+			# Lichened stone rather than shadow: once these were faceted rock the
+			# near-black end of the ladder read as holes punched in the meadow.
+			return [Color("6a7262"), Color("3b4738")]
 		Env.MOUNTAIN:
 			return [Color("4f5a57"), Color("2a3133")]
 		Env.COUNTRY:
-			return [Color("605e42"), Color("2e3424")]
+			return [Color("6e7060"), Color("3c4634")]
 	return [Color("434c3d"), Color("242a21")]
 
 
@@ -10122,6 +10223,20 @@ func _build_face_ledges(streamed: bool = false) -> void:
 			z += slab.z * _rng.randf_range(0.72, 0.95) + _rng.randf_range(2.0, 7.0)
 
 
+## Far-bank profile, metres out from the shoreline: the ledge the water face
+## climbs to (and the share of the bank's height it reaches there), the crown,
+## and the back edge the skirt tucks under. The face used to climb fifty-eight
+## percent of the bank in nine metres — a sixty-degree wall the length of the
+## lake that, with the sun anywhere past it, never saw light and ran across
+## every seated frame as a black dam. Laid back to a forty-degree bank it
+## catches the sky like the meadow above it and reads as a shore. Shared by
+## the mesh and `_far_bank_rise`, so planting stays on the drawn ground.
+const FAR_BANK_LEDGE := 15.0
+const FAR_BANK_LEDGE_RISE := 0.5
+const FAR_BANK_CROWN := 36.0
+const FAR_BANK_BACK := 60.0
+
+
 func _far_cliff_tone() -> Array[Color]:
 	## Scarp, waterline and lip for the far-shore cliff wall. One definition, read
 	## by both `_build_far_cliffs` and its streaming twin, because the pair used
@@ -10163,7 +10278,10 @@ func _far_cliff_tone() -> Array[Color]:
 	## bank's own silhouette and the water's edge rather than by a pale beach.
 	match _vp_theme:
 		Env.FOREST:
-			return [Color("1b231d"), Color("141b16"), Color("35433a")]
+			# Moss and turf, a step under the meadow: with the bank laid back it
+			# takes the sky, and the near-black stone it used to carry turned the
+			# whole shore into a void at noon. Wet moss stays the darkest step.
+			return [Color("2c3f2c"), Color("1d281e"), Color("3c5634")]
 		Env.MOUNTAIN:
 			return [Color("282e32"), Color("1f2528"), Color("474f52")]
 		Env.COUNTRY:
@@ -10177,7 +10295,9 @@ func _far_cliff_tone() -> Array[Color]:
 			# sun-facing spans as a tan berm (measured ~(160,124,65) off the
 			# pixels), so the band now starts at wet moss on the waterline and
 			# ends at dark turf on the lip.
-			return [Color("27321f"), Color("1c251d"), Color("35402c")]
+			# Greener again once the bank was laid back: a sloped face is lit
+			# like the pasture it carries, so it can be turf rather than earth.
+			return [Color("33452a"), Color("1e2a1f"), Color("465a33")]
 	return [Color("28261f"), Color("21201b"), Color("3c372c")]
 
 
@@ -10295,12 +10415,12 @@ func _cliff_span(
 	var shore_b: float = float(_path.viewpoint_far_shore(zb, _vp_centre))
 	var water_a := _far_point(za, _vp_side * (shore_a - 3.0), _vp_water_y)
 	var water_b := _far_point(zb, _vp_side * (shore_b - 3.0), _vp_water_y)
-	var ledge_a := _far_point(za, _vp_side * (shore_a + 6.0), _vp_water_y + h_a * 0.58)
-	var ledge_b := _far_point(zb, _vp_side * (shore_b + 6.0), _vp_water_y + h_b * 0.58)
-	var crown_a := _far_point(za, _vp_side * (shore_a + 22.0), _vp_water_y + h_a)
-	var crown_b := _far_point(zb, _vp_side * (shore_b + 22.0), _vp_water_y + h_b)
-	var back_a := _far_point(za, _vp_side * (shore_a + 48.0), _vp_water_y + h_a * 0.42)
-	var back_b := _far_point(zb, _vp_side * (shore_b + 48.0), _vp_water_y + h_b * 0.42)
+	var ledge_a := _far_point(za, _vp_side * (shore_a + FAR_BANK_LEDGE), _vp_water_y + h_a * FAR_BANK_LEDGE_RISE)
+	var ledge_b := _far_point(zb, _vp_side * (shore_b + FAR_BANK_LEDGE), _vp_water_y + h_b * FAR_BANK_LEDGE_RISE)
+	var crown_a := _far_point(za, _vp_side * (shore_a + FAR_BANK_CROWN), _vp_water_y + h_a)
+	var crown_b := _far_point(zb, _vp_side * (shore_b + FAR_BANK_CROWN), _vp_water_y + h_b)
+	var back_a := _far_point(za, _vp_side * (shore_a + FAR_BANK_BACK), _vp_water_y + h_a * 0.42)
+	var back_b := _far_point(zb, _vp_side * (shore_b + FAR_BANK_BACK), _vp_water_y + h_b * 0.42)
 	var scarp := wet
 	var crown := lip
 	var ledge_col := face
@@ -10423,6 +10543,21 @@ func _build_far_shore_groves() -> void:
 		for part in grove.get_children():
 			if part is MultiMeshInstance3D:
 				part.multimesh = part.multimesh.duplicate()
+				if part.name == "Crowns":
+					# The kit's crowns carried a private copy of the foliage shader,
+					# so they never received the per-mood sky fill and air tint every
+					# other tree is pushed, and their greens sat a step above the
+					# woods around them. Backlit by a day or dusk sun the leaf glow
+					# then took them to cream: rows of pale popcorn stands on every
+					# forest hillside. Shared material, woodland greens, and each
+					# tree its own small drift so a stand still reads as many trees.
+					part.material_override = LowPoly.foliage_material()
+					for tree_index in part.multimesh.instance_count:
+						var leaf: Color = part.multimesh.get_instance_color(tree_index)
+						var drift: float = 0.5 + 0.5 * sin(float(tree_index) * 2.3 + float(i) * 1.1 + _vp_phase)
+						part.multimesh.set_instance_color(
+							tree_index, leaf.darkened(0.22 + 0.16 * drift).lerp(Color("2d4a33"), 0.25)
+						)
 				for tree_index in part.multimesh.instance_count:
 					var tree_transform: Transform3D = part.multimesh.get_instance_transform(tree_index)
 					var turned: Vector3 = turn * tree_transform.origin
@@ -10455,13 +10590,13 @@ func _far_bank_rise(z: float, out: float) -> float:
 	var rises := _far_cliff_rises()
 	var h: float = _far_scree_rise(z, rises.x, rises.y)
 	var d: float = out - float(_path.viewpoint_far_shore(z, _vp_centre))
-	if d < -3.0 or d > 48.0:
+	if d < -3.0 or d > FAR_BANK_BACK:
 		return -1.0
-	if d < 6.0:
-		return h * 0.58 * (d + 3.0) / 9.0
-	if d < 22.0:
-		return h * lerpf(0.58, 1.0, (d - 6.0) / 16.0)
-	return h * lerpf(1.0, 0.42, (d - 22.0) / 26.0)
+	if d < FAR_BANK_LEDGE:
+		return h * FAR_BANK_LEDGE_RISE * (d + 3.0) / (FAR_BANK_LEDGE + 3.0)
+	if d < FAR_BANK_CROWN:
+		return h * lerpf(FAR_BANK_LEDGE_RISE, 1.0, (d - FAR_BANK_LEDGE) / (FAR_BANK_CROWN - FAR_BANK_LEDGE))
+	return h * lerpf(1.0, 0.42, (d - FAR_BANK_CROWN) / (FAR_BANK_BACK - FAR_BANK_CROWN))
 
 
 func _far_bank_lift(z: float, out: float) -> float:
@@ -11286,21 +11421,23 @@ func _build_platform_pergola(streamed: bool = false) -> void:
 			var col: Color = Color("486c44").darkened(_rng.randf() * 0.2)
 			if blooming and _rng.randf() < 0.35:
 				col = Color("a993cf").lerp(Color("d8cbe9"), _rng.randf() * 0.4)
+			# Lumpy pads, not flat lenses: seen from the bench, straight up into
+			# the sky, a flat leaf disc was a dark saucer on a beam.
 			_deck_blob(
 				bz, _platform_lateral(bo, bz),
-				Vector3(s * 1.5, s * 0.5, s * 1.3), col, HEIGHT + 0.26 + _rng.randf() * 0.14, true
+				Vector3(s * 1.5, s * 0.85, s * 1.3), col, HEIGHT + 0.16 + _rng.randf() * 0.14, true
 			)
 		if streamed and _slice_spent() and not await _keep_streaming():
 			return
-	# Wisteria racemes: short tapering chains of beads, wide at the rafter and
-	# narrowing to a tip. A single ellipsoid on a string read as an egg however
-	# it was tinted — a raceme is a cone of florets, so that is what each is.
+	# Wisteria racemes: soft drapes wide at the rafter and narrowing to a tip,
+	# enough of them that the canopy reads as hanging bloom rather than a
+	# handful of ornaments.
 	var wisteria := Color("a993cf")
-	for _i in 26:
+	for _i in 32:
 		var hz: float = _rng.randf_range(z_a, z_b)
 		var ho: float = _rng.randf_range(inner + 0.2, outer - 0.2)
 		var tint: Color = wisteria.lerp(Color("d8cbe9"), _rng.randf() * 0.55)
-		_deck_raceme(hz, _platform_lateral(ho, hz), HEIGHT + 0.2, tint)
+		_deck_raceme(hz, _platform_lateral(ho, hz), HEIGHT + 0.32, tint)
 		if streamed and _slice_spent() and not await _keep_streaming():
 			return
 	# Lanterns hung off the rafters — the glow that reads as "sit here" at dusk.
@@ -11336,22 +11473,27 @@ func _build_platform_pergola(streamed: bool = false) -> void:
 
 
 func _deck_raceme(z: float, lateral: float, top: float, col: Color) -> void:
-	## One hanging raceme: a thread of stem, then beads tapering to a tip —
-	## the cone of florets a wisteria actually hangs in. A lone ellipsoid was
-	## an egg at eye height; a diminishing chain reads as the flower.
-	var length: float = _rng.randf_range(0.34, 0.55)
-	_deck_cube(z, lateral, Vector3(0.03, length + 0.12, 0.03), Color("44543a"), 0.0, top - length)
-	for k in 3:
-		var f := 0.2 + float(k) * 0.4
-		var s: float = lerpf(0.16, 0.085, float(k) / 2.0) * _rng.randf_range(0.9, 1.1)
+	## One hanging raceme: two or three overlapping drops tapering to a tip,
+	## hung straight off the rafter. Beads on a visible thread — however many
+	## and however tinted — read from the bench as eggs on strings; a drape
+	## that is one continuous soft mass, darker at the stalk and pale at the
+	## tip, is what a wisteria actually hangs as.
+	var length: float = _rng.randf_range(0.42, 0.7)
+	var drops: int = 3 if length > 0.55 else 2
+	var reach: float = 0.0
+	for k in drops:
+		var f: float = float(k) / float(drops)
+		var w: float = lerpf(0.22, 0.11, f) * _rng.randf_range(0.9, 1.1)
+		var h: float = length / float(drops) * 1.55
 		_deck_blob(
-			z + _rng.randf_range(-0.04, 0.04),
-			lateral + _vp_side * _rng.randf_range(-0.04, 0.04),
-			Vector3(s * 1.15, s, s * 1.15),
-			col.lightened(0.06 * float(k)),
-			top - length * f - s * 0.9,
+			z + _rng.randf_range(-0.03, 0.03),
+			lateral + _vp_side * _rng.randf_range(-0.03, 0.03),
+			Vector3(w, h, w * _rng.randf_range(0.85, 1.1)),
+			col.darkened(0.12 * (1.0 - f)).lightened(0.1 * f),
+			top - reach - h * 0.92,
 			true
 		)
+		reach += h * 0.62
 
 
 func _deck_bloom_cluster(
@@ -11657,9 +11799,13 @@ func _build_authored_terrace(deck: PackedScene, rail: PackedScene, streamed: boo
 	# the face and the wall. A gentle multiply still read as cream and rust, so
 	# the tint has to fight the bake: pull red hard, lift blue, and the plaza,
 	# parapet and crag land in the one weathered-stone family.
+	# A second step down for the deck and the stone posts: neutral as they
+	# were, under the day key the flags and the balcony's end post came out
+	# cream — the brightest, sandiest thing in the seated frame, standing
+	# right at its edge. Weathered grey keeps them stone and lets the view lead.
 	await _place_lookout_run(
 		deck, deck_zs, RoadPathGD.PLATFORM_HALF_WIDTH, TERRACE_FLOOR, "LookoutDeck", streamed,
-		Color(0.58, 0.70, 0.88)
+		Color(0.48, 0.57, 0.70)
 	)
 	if streamed and not is_inside_tree():
 		return
@@ -11667,14 +11813,14 @@ func _build_authored_terrace(deck: PackedScene, rail: PackedScene, streamed: boo
 		return
 	await _place_lookout_run(rail, rail_zs, rail_out, TERRACE_FLOOR, "LookoutRail", streamed, Color(0.46, 0.68, 0.95))
 	if balcony:
-		_place_lookout(balcony, _vp_centre, rail_out, TERRACE_FLOOR, "LookoutBalcony", Color(0.52, 0.68, 0.92))
+		_place_lookout(balcony, _vp_centre, rail_out, TERRACE_FLOOR, "LookoutBalcony", Color(0.42, 0.52, 0.64))
 	# A pier at each end of the run, so the rail stops on something.
 	var pier: PackedScene = _lookout_scene(LOOKOUT_PIER)
 	if pier:
 		for end in [-1.0, 1.0]:
 			_place_lookout(
 				pier, _vp_centre + end * (half + 1.0), rail_out, TERRACE_FLOOR,
-				"LookoutPier_%d" % int(end), Color(0.52, 0.68, 0.92)
+				"LookoutPier_%d" % int(end), Color(0.42, 0.52, 0.64)
 			)
 			if streamed and _slice_spent() and not await _keep_streaming():
 				return
