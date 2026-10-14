@@ -154,12 +154,24 @@ void light() {
 	// in for those facets. A low exponent is what spreads it into a path running
 	// back toward the viewer instead of a spot sitting on the far shore.
 	vec3 half_vector = normalize(LIGHT + VIEW);
-	float spec = pow(max(dot(NORMAL, half_vector), 0.0), 22.0);
+	float ndh = max(dot(NORMAL, half_vector), 0.0);
 	// Grazing angles catch far more of it, which is what makes the path widen and
 	// brighten as it runs away from the eye. Recomputed here rather than handed
 	// over from fragment(): a varying written in fragment() and read in light()
 	// is not something to rely on, and this is two instructions.
 	float glance = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 4.0);
 	float sparkle = glitter(world_position.xz, TIME * wave_speed);
-	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * spec * mix(1.0, 3.4, glance) * (0.55 + 0.75 * sparkle * shimmer_amount);
+	// The broad lobe alone, at full strength, laid one even cream sheet over
+	// a third of the basin under a high sun — from the bench it read as a sand
+	// bar, not water. It is kept as a faint sheen; the path itself is made of
+	// glints: a finer, faster noise thresholded hard, so the sun breaks into
+	// thousands of moving points with dark water between them, densest on the
+	// line to the sun and thinning out across the lobe.
+	float sheen = pow(ndh, 22.0) * (0.22 + 0.3 * sparkle * shimmer_amount);
+	float t = TIME * wave_speed;
+	float fine = wnoise(world_position.xz * 1.7 + vec2(t * 0.9, -t * 0.7)) * 0.6
+		+ wnoise(world_position.xz * 3.1 + vec2(-t * 1.3, t * 1.1)) * 0.4;
+	float glint = smoothstep(0.66, 0.86, fine) * pow(ndh, 9.0) * shimmer_amount;
+	float core = pow(ndh, 140.0);
+	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * (sheen + glint * 2.6 + core * 1.4) * mix(1.0, 3.4, glance);
 }
