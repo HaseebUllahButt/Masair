@@ -87,11 +87,11 @@ const MOODS := {
 		# The sun's side only — azimuth_split hands the rest of the skyline to
 		# anti_horizon. Pale gold, not orange: dawn light has had all night's
 		# dust settle out of it.
-		"horizon_color": Color("ffc894"),
+		"horizon_color": Color("ffd6a8"),
 		"ground_color": Color("2a3446"),
 		"band_low": 0.07,
 		"band_high": 0.56,
-		"horizon_glow": 0.30,
+		"horizon_glow": 0.26,
 		"azimuth_split": 1.0,
 		"anti_horizon": Color("97a1c6"),
 		"belt_color": Color("e2a6bd"),
@@ -125,7 +125,7 @@ const MOODS := {
 		# Soft gold, nowhere near the sunset's ff9e62: a red-deep key is what
 		# paints every leaf brown, and dawn greens should come out dew-fresh.
 		"light_color": Color("ffd2a2"),
-		"light_energy": 2.9,
+		"light_energy": 2.6,
 		# Nine degrees up and forty off the road's axis, so the sun rakes across
 		# the carriageway from the front-left: every crown and post on the left
 		# verge throws a long shadow over the tarmac, the right verge is lit
@@ -168,7 +168,7 @@ const MOODS := {
 		# the lilac sky and the gold key at a graze — navy one way, rust the
 		# other. Green is the channel neither of them carries, so that is the
 		# one the counter-tint buys back. Measured to land charcoal.
-		"road_tint": Color(1.35, 1.45, 1.06),
+		"road_tint": Color(1.12, 1.22, 1.07),
 		"road_sheen": 0.15,
 		# The grade's apricot highlight split was written for sunsets; at dawn
 		# it is what turns clean light into orange soup. Most of it off.
@@ -179,12 +179,11 @@ const MOODS := {
 	},
 	LightingMode.DAY:
 	{
-		# Warm at the skyline, deep overhead. A blue that runs cyan all the way
+		# Pale at the skyline, deep overhead. A blue that runs cyan all the way
 		# down to the horizon is the daylight sky of a phone game: the air near
-		# the ground carries the most dust and the longest path, so it goes pale
-		# and warm, and that warm band is what makes the distance look like air
-		# instead of paint. It also feeds the sky ambient, so it warms the light
-		# on every shaded face in the world at the same time.
+		# the ground carries the most dust and the longest path, so it goes
+		# pale, and that pale band is what makes the distance look like air
+		# instead of paint.
 		# Mid blue is much deeper than it looks. The grade (LUT + the bright-
 		# range warm split in grade.gdshader) pulls any pale or half-saturated
 		# blue toward sage — a mid like 5590e0 renders mint. 2e68cc survives the
@@ -192,14 +191,18 @@ const MOODS := {
 		# reads as sky instead of shallow water.
 		"zenith_color": Color("2a5aa8"),
 		"mid_color": Color("2e68cc"),
-		"horizon_color": Color("f4d2a0"),
+		# Nearly neutral: a peach skyline at noon is the light of five in the
+		# afternoon, and the lakes mirror it — at f4d2a0 the overlook water came
+		# out as a cream sheet. Clear midday air is white-blue low down; the
+		# warmth stays in the key.
+		"horizon_color": Color("dfe4e2"),
 		"ground_color": Color("505e57"),
 		"band_low": 0.10,
 		# The zenith has to reach low. A wide mid band (0.78) held the gradient
 		# at exactly the luminance the split-tone mints; pulling the ramp down to
 		# 0.50 keeps the crossover dark enough to stay blue.
 		"band_high": 0.50,
-		"horizon_glow": 0.26,
+		"horizon_glow": 0.22,
 		"energy": 1.0,
 		"sun_color": Color(1.70, 1.58, 1.30),
 		"sun_radius": 0.019,
@@ -207,7 +210,7 @@ const MOODS := {
 		"sun_halo_falloff": 18.0,
 		"sun_disc": 1.0,
 		"moon_face": 0.0,
-		"cloud_lit": Color("f4e6cc"),
+		"cloud_lit": Color("f7f2e8"),
 		# 6f88a2 graded to sage — the shadowed sides of clouds were the most
 		# visible mint in the frame. Needs a strong blue lead before the LUT to
 		# land as blue-grey instead of green: its blend with the warm lit side
@@ -290,7 +293,7 @@ const MOODS := {
 		"fog_sun_scatter": 0.05,
 		# Aerial perspective drags the fog colour toward the sky's pale horizon
 		# band. At 0.22 it read as a second, brighter fog layered over the first.
-		"fog_aerial": 0.12,
+		"fog_aerial": 0.16,
 		# Fog on the sky is a flat mix toward sage + sun-scatter, and 7% of it
 		# was enough to lay a mint veil over the whole blue. A whisper keeps the
 		# horizon band joined to the land's air without tinting the dome.
@@ -306,7 +309,7 @@ const MOODS := {
 		# image is what gives a scene the primary-colour look of a mobile game;
 		# what it was actually missing was separation between light and dark.
 		"contrast": 1.16,
-		"saturation": 1.14,
+		"saturation": 1.17,
 		# Measured to land neutral grey asphalt (R=G=B within 1%) under the warm
 		# day key and grade: less red and a touch more green, not more blue,
 		# which only turned the road violet.
@@ -315,8 +318,8 @@ const MOODS := {
 		"grade_split": 0.12,
 		"grade_warmth": 0.065,
 		"azimuth_split": 0.0,
-		"anti_horizon": Color("f4d2a0"),
-		"belt_color": Color("f4d2a0"),
+		"anti_horizon": Color("dfe4e2"),
+		"belt_color": Color("dfe4e2"),
 		"belt_strength": 0.0,
 		"ghost_moon": 0.0,
 		"ghost_moon_dir": Vector3(-0.71, 0.50, 0.50),
