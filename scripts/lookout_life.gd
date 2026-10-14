@@ -387,9 +387,11 @@ static var _bird_shared: ShaderMaterial
 static var _body_shared: StandardMaterial3D
 static var _spray_shared: StandardMaterial3D
 static var _ring_shared: StandardMaterial3D
+static var _star_shared: StandardMaterial3D
 static var _fish_shared: ArrayMesh
 static var _bird_mesh_shared: ArrayMesh
 static var _balloon_shared: Dictionary = {}
+static var _balloon_materials: Array[StandardMaterial3D] = []
 
 
 static func bird_mesh() -> ArrayMesh:
@@ -499,17 +501,21 @@ static func ring_material() -> StandardMaterial3D:
 	return _ring_shared
 
 
-static func balloon_material() -> StandardMaterial3D:
-	## One per balloon: each burner lights its own envelope.
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.vertex_color_is_srgb = true
-	mat.roughness = 0.75
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.emission_enabled = true
-	mat.emission = Color(1.0, 0.55, 0.22)
-	mat.emission_energy_multiplier = 0.0
-	return mat
+static func balloon_material(slot: int = 0) -> StandardMaterial3D:
+	## The warmup and the three envelopes keep the same material objects. A new
+	## emission material on every sit paid ~180 ms in the driver even on a
+	## reseat; changing its burner uniform is cheap, recreating it is not.
+	while _balloon_materials.size() <= slot:
+		var mat := StandardMaterial3D.new()
+		mat.vertex_color_use_as_albedo = true
+		mat.vertex_color_is_srgb = true
+		mat.roughness = 0.75
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		mat.emission_enabled = true
+		mat.emission = Color(1.0, 0.55, 0.22)
+		mat.emission_energy_multiplier = 0.0
+		_balloon_materials.append(mat)
+	return _balloon_materials[slot]
 
 
 static func glow_material(color: Color, energy: float, blink: float) -> ShaderMaterial:
@@ -528,14 +534,17 @@ static func mist_material() -> ShaderMaterial:
 
 
 static func star_material() -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	mat.vertex_color_use_as_albedo = true
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.disable_fog = true
-	return mat
+	## The same little streak every time. Keep the program the menu drew, so a
+	## shooting star does not compile a new material in the middle of the view.
+	if _star_shared == null:
+		_star_shared = StandardMaterial3D.new()
+		_star_shared.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_star_shared.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_star_shared.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		_star_shared.vertex_color_use_as_albedo = true
+		_star_shared.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_star_shared.disable_fog = true
+	return _star_shared
 
 
 static func warm_into(parent: Node3D) -> void:
@@ -563,7 +572,7 @@ static func warm_into(parent: Node3D) -> void:
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		parent.add_child(mmi)
 		x += 3.0
-	for mat: Material in [body_material(), balloon_material(), mist_material(), star_material()]:
+	for mat: Material in [body_material(), balloon_material(0), balloon_material(1), balloon_material(2), mist_material(), star_material()]:
 		var mi := MeshInstance3D.new()
 		mi.mesh = cube
 		mi.material_override = mat
@@ -1318,7 +1327,8 @@ func _balloons(owner: Node3D) -> void:
 		var slot: Array = slots[i]
 		var pkey: int = order[i] % palettes.size()
 		var palette: Array = palettes[pkey]
-		var mat := balloon_material()
+		var mat := balloon_material(i)
+		mat.emission_energy_multiplier = 0.0
 		var mi := MeshInstance3D.new()
 		mi.mesh = _balloon_mesh(pkey, palette, _rng.randi_range(0, 2))
 		mi.material_override = mat
@@ -1491,6 +1501,7 @@ func _shooting_star() -> void:
 	st.set_color(tail)
 	st.add_vertex(Vector3(0.0, 0.0, 70.0))
 	var mat := star_material()
+	mat.albedo_color = Color.WHITE
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
 	mi.material_override = mat
