@@ -37,11 +37,13 @@ const GRIT_BLOCK := 8
 const FACE_G := [0.42, 0.29, 0.16, 0.06, 0.00]
 const FACE_F := [0.00, 0.22, 0.48, 0.76, 1.00]
 
+## Heights sit well under the DEM rings' first pass (330/540/700/900): at
+## those the ring was a wall that hid the dusk sun dead ahead.
 const LAYERS := [
 	{
 		"radius": 1460.0,
 		"face": 360.0,
-		"high": 330.0,
+		"high": 250.0,
 		"segments": 256,
 		"haze": 0.05,
 		## No collar on the foothills. At fifteen hundred metres a puff sized
@@ -57,29 +59,29 @@ const LAYERS := [
 	{
 		"radius": 1760.0,
 		"face": 320.0,
-		"high": 540.0,
+		"high": 420.0,
 		"segments": 208,
 		"haze": 0.24,
 		"clouds": true,
 		"phase": 0.47,
-		"profile": "cortina",
+		"profile": "giau",
 		"floor": 0.13,
 	},
 	{
 		"radius": 2080.0,
 		"face": 270.0,
-		"high": 700.0,
+		"high": 560.0,
 		"segments": 160,
 		"haze": 0.45,
 		"clouds": true,
 		"phase": 0.83,
-		"profile": "banff",
+		"profile": "zermatt",
 		"floor": 0.10,
 	},
 	{
 		"radius": 2430.0,
 		"face": 230.0,
-		"high": 900.0,
+		"high": 720.0,
 		"segments": 128,
 		"haze": 0.66,
 		"clouds": false,
@@ -235,7 +237,7 @@ func _sample(angle: float, layer: Dictionary) -> Dictionary:
 	## arcs (summit domes, tableland) that read as mesas under the flat loft,
 	## while the eye expects crests and cols. A mild gamma deepens the cols
 	## and keeps the hero arcs at full height.
-	h_app = pow(h_app, 1.08)
+	h_app = pow(h_app, 1.25)
 	## A real valley has gaps — but a ring that falls to the flat horizon
 	## reads as a hole in the world, so each layer keeps its own minimum
 	## skyline: rolling on the near fells, a thin saw on the far heroes.

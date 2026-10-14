@@ -26,8 +26,10 @@ const RING := {
 	## range read as bare pale rock to the skyline, which fed the "washed grey"
 	## complaint. 240 puts real forest on the foot of every layer: the foothill
 	## ring woods almost to its crests, the back range keeps a green skirt under
-	## the rock, the way the treeline actually behaves on a tall face.
-	"treeline": 240.0, "woods": Color("34573f"), "snow_bias": -0.10, "light_soft": 0.3, "azimuth_flatten": 0.85
+	## the rock, the way the treeline actually behaves on a tall face. Snow at
+	## -0.32: the DEM crests only touch the layer top at their one hero summit,
+	## and at -0.10 no cap showed anywhere on the ring.
+	"treeline": 240.0, "woods": Color("34573f"), "snow_bias": -0.32, "light_soft": 0.3, "azimuth_flatten": 0.85
 }
 ## Keyed by RoadChunk.Env.
 const OVERLOOK := {

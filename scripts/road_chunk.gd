@@ -1512,6 +1512,10 @@ func _build_spur_woodland(
 						)
 			if _rng.randf() > 0.5:
 				continue
+			# The understory keeps the seated corridor too: a lane-edge sapling
+			# here stood a metre from the bench and filled the whole view.
+			if view_side and corridor > 0.0 and _rng.randf() < corridor:
+				continue
 			var under_z: float = z + _rng.randf_range(-2.6, 2.6)
 			var under_half: float = float(_path.spur_half_width(under_z))
 			var under_centre: float = _vp_side * float(_path.spur_offset(under_z))
@@ -1787,7 +1791,7 @@ func _stand_cell(side_i: int, z: float, theme_id: int) -> Array:
 		_:
 			# Forest: the conifer wall, broken by birch seams and pine blocs —
 			# one species per stretch, shifting stand by stand, never per tree.
-			species = Flora.CONIFER if roll < 0.64 else (Flora.BIRCH if roll < 0.82 else (Flora.PINE if roll < 0.95 else Flora.BROADLEAF))
+			species = Flora.CONIFER if roll < 0.68 else (Flora.BIRCH if roll < 0.78 else (Flora.PINE if roll < 0.93 else Flora.BROADLEAF))
 	var hr: float = h.call(23)
 	var height: float
 	if theme_id == Env.MOUNTAIN:
@@ -3578,11 +3582,13 @@ func _grow_conifer(frame: Transform3D, height: float, color: Color) -> void:
 func _grow_birch(frame: Transform3D, height: float, color: Color) -> void:
 	## A clump of two or three pale stems from one root, each with a small high
 	## crown. Slim and bright: the tree that breaks up a wall of dark conifer.
-	var stems: int = _rng.randi_range(2, 3)
+	# Mostly one stem, sometimes a pair. Three stems splayed out at up to 15
+	# degrees planted in a whole birch stand read as a row of white fans.
+	var stems: int = 1 if _rng.randf() < 0.55 else 2
 	for i in stems:
 		var a: float = TAU * float(i) / float(stems) + _rng.randf_range(-0.4, 0.4)
 		var tall: float = height * _rng.randf_range(0.78, 1.0)
-		var out: float = tall * _rng.randf_range(0.06, 0.16)
+		var out: float = tall * _rng.randf_range(0.01, 0.06)
 		# Leafed from two fifths of the way up, not three fifths. With the small
 		# high crown, three pale stems and a tuft read as bare white sticks.
 		var top := Vector3(cos(a) * out, tall * 0.6, sin(a) * out)
@@ -8231,11 +8237,10 @@ func _build_vista_landmarks() -> void:
 			_vista_cairn()
 		Env.COUNTRY:
 			_vista_shore_wall()
-	# The composed landmarks emit once, on the owner — one islet, one tower
-	# group, one crag and one stair per overlook, not one per lake chunk.
+	# The composed landmarks emit once, on the owner — one islet, one crag
+	# and one stair per overlook, not one per lake chunk.
 	if _owns_platform:
 		_build_islet()
-		_build_spires()
 		_build_bastion()
 		_build_face_path()
 
@@ -8437,99 +8442,6 @@ func _build_islet() -> void:
 	var mesh: MeshInstance3D = b.commit_to(self, "ViewpointIslet")
 	if mesh:
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-
-
-func _build_spires() -> void:
-	## The Tre Cime signature — a group of jagged towers standing on the far
-	## ground between the shore and the painted skyline. Every range in the
-	## view is a smooth brow; a rock tooth is the silhouette a pass is famous
-	## for.
-	var b := LowPoly.new()
-	var specs := [
-		# z offset from the axis, out beyond the far shore, height, half-width, lean
-		[-150.0, 300.0, 100.0, 30.0, -7.0],
-		[-80.0, 350.0, 125.0, 34.0, 5.0],
-		[8.0, 290.0, 80.0, 26.0, 10.0],
-	]
-	# One ridge system, one architecture — the teeth are the same massif on
-	# either side of the pass; only the stone tint shifts with the biome. The
-	# tones sit well under everything the dusk key can throw at them: rock
-	# teeth silhouette dark against the ranges, never pale obelisks.
-	var stone := Color("1e242c")
-	var stone_hi := Color("3a444f")
-	if _vp_theme == Env.COUNTRY:
-		stone = Color("272e22")
-		stone_hi = Color("46503c")
-	# The shared talus apron: one long dark shoulder running under all three
-	# towers, so the group reads as a massif with pinnacles, not three
-	# standing stones parked on a lawn.
-	var apron_z: float = _vp_centre - 70.0
-	var apron_out: float = float(_path.viewpoint_far_shore(apron_z, _vp_centre)) + 300.0
-	var apron_y: float = _far_ground_y(apron_z, apron_out) - 8.0 - _origin.y
-	b.hull_origin = _far_point(apron_z, _vp_side * apron_out, apron_y + 20.0)
-	for i in 7:
-		var a0: float = TAU * float(i) / 7.0
-		var a1: float = TAU * float(i + 1) / 7.0
-		var r0 := 120.0 * (1.0 + 0.18 * sin(float(i) * 2.3 + _vp_phase))
-		var r1 := 120.0 * (1.0 + 0.18 * sin(float(i + 1) * 2.3 + _vp_phase))
-		b.add_hull_quad(
-			_far_point(apron_z + sin(a0) * r0, _vp_side * apron_out + cos(a0) * r0 * 0.45, apron_y),
-			_far_point(apron_z + sin(a1) * r1, _vp_side * apron_out + cos(a1) * r1 * 0.45, apron_y),
-			_far_point(apron_z + sin(a1) * r1 * 0.42, _vp_side * apron_out + cos(a1) * r1 * 0.19, apron_y + 38.0),
-			_far_point(apron_z + sin(a0) * r0 * 0.42, _vp_side * apron_out + cos(a0) * r0 * 0.19, apron_y + 38.0),
-			_facet_tone(stone, 0.12 * sin(float(i) * 1.9))
-		)
-	for s in specs:
-		var z: float = _vp_centre + float(s[0])
-		var out: float = float(_path.viewpoint_far_shore(z, _vp_centre)) + float(s[1])
-		# Root a few metres under the far ground so the tower grows out of the
-		# bank, not onto it.
-		var base_y: float = _far_ground_y(z, out) - 12.0 - _origin.y
-		_spire(b, z, _vp_side * out, base_y, float(s[2]), float(s[3]), float(s[4]), stone, stone_hi)
-	var mesh: MeshInstance3D = b.commit_to(self, "ViewpointSpires")
-	if mesh:
-		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		mesh.visibility_range_end = 0.0
-
-
-func _spire(
-	b: LowPoly,
-	z: float,
-	lat: float,
-	base_y: float,
-	height: float,
-	half_w: float,
-	lean: float,
-	stone: Color,
-	stone_hi: Color
-) -> void:
-	## One rock tooth: a tapering five-sided prism whose apex drifts off the
-	## column, the way a dolomite tower never stands plumb. A pale cap band
-	## near the summit is the lit crest the eye finds first.
-	const SIDES := 5
-	const FRACS := [0.0, 0.45, 0.75, 0.92, 1.0]
-	const WID := [1.0, 0.88, 0.70, 0.55, 0.22]
-	var spin := _vp_phase * 0.7
-	b.hull_origin = _far_point(z, lat, base_y + height * 0.5)
-	for k in FRACS.size() - 1:
-		var f0: float = FRACS[k]
-		var f1: float = FRACS[k + 1]
-		var lean0 := lean * f0 * f0
-		var lean1 := lean * f1 * f1
-		for i in SIDES:
-			var a0: float = TAU * float(i) / SIDES + spin
-			var a1: float = TAU * float(i + 1) / SIDES + spin
-			var r0: float = half_w * WID[k]
-			var r1: float = half_w * WID[k + 1]
-			var cap: bool = k >= 2
-			var tone: float = 0.15 * sin(float(i) * 1.3 + 0.6) - 0.05 * float(k)
-			b.add_hull_quad(
-				_far_point(z + sin(a0) * r0 + lean0, lat + cos(a0) * r0, base_y + height * f0),
-				_far_point(z + sin(a1) * r0 + lean0, lat + cos(a1) * r0, base_y + height * f0),
-				_far_point(z + sin(a1) * r1 + lean1, lat + cos(a1) * r1, base_y + height * f1),
-				_far_point(z + sin(a0) * r1 + lean1, lat + cos(a0) * r1, base_y + height * f1),
-				_facet_tone(stone_hi if cap else stone, tone)
-			)
 
 
 func _build_bastion() -> void:

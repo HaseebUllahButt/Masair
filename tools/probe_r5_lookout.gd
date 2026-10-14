@@ -37,7 +37,7 @@ func _run() -> void:
 	var origin: Vector3 = chunk.get("_origin")
 	print("probe: owns_platform=", chunk.get("_owns_platform"), " vp_theme=", chunk.get("_vp_theme"),
 		" vp_side=", chunk.get("_vp_side"), " water_y=", chunk.get("_vp_water_y"))
-	for want in ["ViewpointIslet", "ViewpointSpires", "ViewpointBastion", "ViewpointPath",
+	for want in ["ViewpointIslet", "ViewpointBastion", "ViewpointPath",
 			"ViewpointCairn", "ViewpointWall"]:
 		var n := chunk.find_child(want, false, false)
 		if n == null:

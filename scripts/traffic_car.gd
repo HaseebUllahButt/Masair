@@ -44,6 +44,8 @@ const LANE_CLEARANCE_AHEAD := 15.0
 const LANE_CLEARANCE_BEHIND := 12.0
 const MIN_FOLLOW_GAP := 7.0
 const FOLLOW_TIME := 1.05
+## Braking a driver plans with when closing on a slower car (m/s²).
+const COMFORT_DECEL := 6.0
 ## Seconds to materialise. A car that simply *is* there is a pop; one that
 ## fades in a few hundred metres out reads as cresting the last dip.
 const FADE_IN := 1.5
@@ -303,6 +305,11 @@ func _physics_process(delta: float) -> void:
 	if lead != null:
 		var gap: float = (float(lead.track_z) - track_z) * float(direction) - float(lead.get_half_length()) - _half_len
 		var safe_gap := MIN_FOLLOW_GAP + speed * FOLLOW_TIME
+		# A fast car closing on a slow truck needs room to shed the difference,
+		# not just a time gap: at 40 m/s onto 6 m/s the plain gap was shorter
+		# than the stopping distance and the car ran into the truck's tail.
+		var closing := maxf(0.0, speed - float(lead.speed))
+		safe_gap += closing * closing / (2.0 * COMFORT_DECEL)
 		if gap < safe_gap:
 			# Braking is proportional to the closing gap and the lead's speed. This
 			# keeps a truck from abruptly stopping while still preventing pile-ups.
@@ -323,6 +330,11 @@ func _physics_process(delta: float) -> void:
 	if curvature_load > 2.5:
 		target_speed = minf(target_speed, sqrt(maxf(4.0, 24.0 / maxf(kappa, 0.0001))))
 	var rate := 11.0 if target_speed < speed else 4.0
+	# Inside the hard minimum the driver stands on the brake.
+	if lead != null:
+		var tail_gap: float = (float(lead.track_z) - track_z) * float(direction) - float(lead.get_half_length()) - _half_len
+		if tail_gap < MIN_FOLLOW_GAP:
+			rate = 16.0
 	# Brake lights come from the demand, not from the achieved speed: they light as
 	# the car decides to slow, which is the half second of warning that makes
 	# traffic ahead readable instead of a wall that appears. Measured against

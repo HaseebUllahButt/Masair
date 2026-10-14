@@ -82,7 +82,7 @@ var _scrape: AudioStreamPlayer
 # numbers become the spring's stiffness, so per-bike tuning still applies.
 ## rad/s of stiffness per deg/s of the authored rate — matches the old
 ## time-to-lean while letting the approach breathe.
-const LEAN_OMEGA_PER_RATE := 0.14
+const LEAN_OMEGA_PER_RATE := 0.17
 ## A shade under-damped dropping in — the fall has weight — and dead-settled
 ## standing up, so releasing the bars never wobbles.
 const LEAN_ZETA_IN := 0.85
@@ -99,7 +99,7 @@ const LEAN_OVERSHOOT := 1.10
 ## falls in; on release the same kick is what stands it back up. A slow input
 ## accumulates nothing — this is a flick cue, not a bias.
 var counter_steer: float = 0.0
-const COUNTER_GAIN := 10.0   ## m/s² of jink a full-speed input flick injects
+const COUNTER_GAIN := 3.0   ## m/s² of jink a full-speed input flick injects
 const COUNTER_TAU := 0.13   ## s the jink takes to die
 const COUNTER_V0 := 13.0    ## below this speed steering is direct
 const COUNTER_V1 := 24.0    ## fully physical above this speed
@@ -107,10 +107,10 @@ const COUNTER_V1 := 24.0    ## fully physical above this speed
 ## Grip edge: the tyre is a friction budget shared with the brakes, and the
 ## last of the bar travel asks for more than it has — the answer sags
 ## progressively instead of clipping against a wall.
-const GRIP_BUDGET := 32.0   ## m/s² friction circle
+const GRIP_BUDGET := 90.0   ## m/s² friction circle
 const PUSHBACK_V0 := 26.0   ## lean demand starts sagging past this speed...
 const PUSHBACK_V1 := 54.0   ## ...reaching PUSHBACK_MIN of max_lean here
-const PUSHBACK_MIN := 0.90
+const PUSHBACK_MIN := 0.95
 ## Demand knee shape: x(1+K)/(x+K) is near-linear through the middle of the
 ## travel then flattens toward the cap — full lock still reaches it, but the
 ## last of the input buys much less than the first.
@@ -118,7 +118,7 @@ const DEMAND_KNEE := 6.0
 ## The rider's weight does not move the instant the bars do: the lean demand
 ## filters through a short lag, so the counter-steer jink gets its beat and
 ## every input arrives as a shift, not a cut.
-const LEAN_LAG := 0.055
+const LEAN_LAG := 0.03
 ## A tremble through the pegs right at the lean limit — the readable warning a
 ## real bike gives before the tyre lets go, plus a quiet scrape under the wind.
 const LEAN_LIMIT_BAND := 0.08

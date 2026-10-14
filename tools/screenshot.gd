@@ -38,7 +38,7 @@ func _initialize() -> void:
 	## it meets, --lanehold=<x> pins it to a painted lane so the cars — not the
 	## bike's wandering line — are what the frame is about.
 	cap.invuln = opts.has("invuln")
-	cap.hold_lane = float(opts.get("lanehold", "nan"))
+	cap.hold_lane = float(opts["lanehold"]) if opts.has("lanehold") else NAN
 	cap.spur = opts.has("spur")
 	cap.notraffic = opts.has("notraffic")
 	cap.overview = String(opts.get("overview", ""))
