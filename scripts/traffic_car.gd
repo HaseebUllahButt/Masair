@@ -304,11 +304,6 @@ func _physics_process(delta: float) -> void:
 		var gap: float = _bumper_gap(lead)
 		var closing: float = maxf(0.0, speed - float(lead.speed))
 		emergency = gap < MIN_FOLLOW_GAP + closing * closing / 10.0 and not (lead == _player and float(lead.speed) > speed)
-	## A close stationary queue can make raw IDM ask for a panic stop even
-	## with room to brake. Reserve that force for a closing emergency; ordinary
-	## approaches stay within a driver's firm but comfortable braking range.
-	if not emergency:
-		demand = maxf(demand, -3.5)
 	acceleration = move_toward(acceleration, demand, (25.0 if emergency else 2.5) * delta)
 	speed = maxf(0.0, speed + acceleration * delta)
 	_brake_lamps.visible = acceleration < -0.35 or (speed < 0.3 and lead != null)
@@ -454,6 +449,7 @@ func _signal(delta: float) -> void:
 
 func _lead_at(lane_centre: float, include_target: bool = false) -> Node3D:
 	var closest: Node3D
+	var strongest_demand: float = INF
 	var closest_gap: float = INF
 	for other: Node in get_tree().get_nodes_in_group("traffic"):
 		var vehicle: Node3D = other as Node3D
@@ -466,23 +462,27 @@ func _lead_at(lane_centre: float, include_target: bool = false) -> Node3D:
 		if not occupies:
 			continue
 		var gap: float = float(vehicle.track_z) - track_z
-		if gap > 0.0 and gap < closest_gap:
-			closest = vehicle
-			closest_gap = gap
+		if gap > 0.0:
+			var demand: float = _following_acceleration(vehicle)
+			if demand < strongest_demand or (is_equal_approx(demand, strongest_demand) and gap < closest_gap):
+				closest = vehicle
+				strongest_demand = demand
+				closest_gap = gap
 	if is_instance_valid(_player) and _player.alive:
 		var width: float = _half_w + 0.38 + 0.55
 		var occupies: bool = absf(float(_player.lateral) - lane_centre) < width
 		if include_target:
 			occupies = occupies or absf(float(_player.lateral) - _target_lateral) < width
 		var gap: float = float(_player.track_z) - track_z
-		if occupies and gap > 0.0 and gap < closest_gap:
+		if occupies and gap > 0.0 and _following_acceleration(_player) < strongest_demand:
 			closest = _player
 	return closest
 
 
 func _nearest_lead() -> Node3D:
-	## Until fully across, follow both occupied lanes. Ignoring the source lane
-	## the moment the indicator comes on used to accelerate through its queue.
+	## Honor the strongest constraint in both occupied lanes. A fast bike just
+	## ahead must not hide a slower queue farther ahead, and a fast target-lane
+	## lead must not mask the source lane while the car is still crossing it.
 	return _lead_at(lateral, _lane_change_active)
 
 

@@ -101,7 +101,10 @@ func _run() -> void:
 				var follower: Node3D = a if float(a.track_z) < float(b.track_z) else b
 				min_headway = minf(min_headway, gap / maxf(float(follower.speed), 0.1))
 				if gap < 0.0:
-					overlap_pairs["%d:%d" % [a.get_instance_id(), b.get_instance_id()]] = true
+					var pair: String = "%d:%d" % [a.get_instance_id(), b.get_instance_id()]
+					if not overlap_pairs.has(pair):
+						print("OVERLAP t=%.2f rider_z=%.1f gap=%.2f | A kind=%d z=%.2f x=%.2f v=%.2f a=%.2f lane=%d moving=%s | B kind=%d z=%.2f x=%.2f v=%.2f a=%.2f lane=%d moving=%s" % [elapsed, rider.track_z, gap, a.kind, a.track_z, ax, a.speed, a.get("acceleration"), a.lane, a.get("_lane_change_active"), b.kind, b.track_z, bx, b.speed, b.get("acceleration"), b.lane, b.get("_lane_change_active")])
+					overlap_pairs[pair] = true
 		simulation_us += Time.get_ticks_usec() - tick
 		elapsed += step
 		frames += 1

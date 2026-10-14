@@ -219,11 +219,19 @@ func _process(_delta: float) -> bool:
 	root.add_child(queue_lead)
 	root.add_child(queue_car)
 	queue_lead.call("setup", 0, 0, 1100.0, 20.0, 0)
-	queue_car.call("setup", 0, 0, 1020.0, 20.0, 1)
+	## Comfortable stopping needs time to react plus braking distance: at
+	## 20 m/s, 80 m is shorter than even the 2.3 m/s² braking distance alone.
+	queue_car.call("setup", 0, 0, 980.0, 20.0, 1)
 	queue_lead.speed = 0.0
 	queue_lead.set_physics_process(false)
 	queue_car.set_physics_process(false)
 	queue_car.set("_lane_timer", 1000.0)
+	queue_car.call("set_player", bike)
+	bike.track_z = 985.0
+	bike.lateral = float(path.lane_x(0))
+	bike.speed = 35.0
+	check(queue_car.call("_nearest_lead") == queue_lead, "a fast bike passing nearby never masks the stopped queue beyond it")
+	queue_car.call("set_player", null)
 	var queue_min_gap: float = INF
 	var queue_worst_brake: float = 0.0
 	for _i in 1200:
