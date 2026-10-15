@@ -1223,15 +1223,24 @@ func _mist(count: int, owner: Node3D) -> void:
 	## Mist lying on the lake: a few feathered sheets stacked a few metres apart
 	## over open water, each carrying wisps that flow downwind. Stacked, the
 	## layers part and close over each other, which is what gives it depth.
-	var color := Color("cba4ac")
-	var opacity: float = 0.34
+	##
+	## Six sheets at a third opacity each stacked into one pale blanket over
+	## the whole basin: from the bench the forest lakes read as a sand bar under
+	## the sun and a cream cloud at dusk, with no water showing through. Mist is
+	## a few torn wisps over dark water, thinnest by day when the sun has
+	## burned most of it off.
+	var color := Color("b89aa6")
+	var opacity: float = 0.2
 	match _mood:
 		Mood.DAY:
-			color = Color("dde5ea")
-			opacity = 0.3
+			color = Color("cdd8e0")
+			opacity = 0.13
+			count = mini(count, 3)
 		Mood.NIGHT:
 			color = Color("4e5a74")
-			opacity = 0.32
+			opacity = 0.24
+		_:
+			count = mini(count, 4)
 	var plane := PlaneMesh.new()
 	plane.size = Vector2.ONE
 	var wind := (_right if _rng.randf() < 0.5 else -_right) * _rng.randf_range(1.4, 2.4) + _fwd * _rng.randf_range(-0.4, 0.4)
@@ -1251,7 +1260,7 @@ func _mist(count: int, owner: Node3D) -> void:
 		mat.set_shader_parameter("mist_color", color)
 		mat.set_shader_parameter("opacity", opacity * _rng.randf_range(0.7, 1.0))
 		mat.set_shader_parameter("flow", Vector2(wind.x, wind.z) * _rng.randf_range(0.8, 1.2))
-		mat.set_shader_parameter("grain", _rng.randf_range(0.009, 0.016))
+		mat.set_shader_parameter("grain", _rng.randf_range(0.016, 0.026))
 		mat.set_shader_parameter("seed", _rng.randf_range(0.0, 50.0))
 		mat.set_shader_parameter("fade", 0.0)
 		var mi := MeshInstance3D.new()
