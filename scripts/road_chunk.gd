@@ -3382,10 +3382,24 @@ func _post(z: float, lateral: float, width: float, height: float, color: Color) 
 		return
 	var flat: Basis = _path.frame_flat_at(z)
 	var base: Vector3 = _ground_base_for_footprint(z, lateral, width * 0.5, width * 0.5) - _origin
-	_timbers.append(Transform3D(
+	_add_timber(Transform3D(
 		Basis(flat.x * width, -flat.z * width, flat.y * (height + 0.15)), base + flat.y * (height - 0.15) * 0.5
-	))
-	_timber_cols.append(color)
+	), color)
+
+
+func _add_timber(xform: Transform3D, color: Color) -> void:
+	## Sawn members only get their own batch on the chunk that owns an overlook,
+	## where the rider stops, sits and looks at the pergola from a metre away.
+	## Everywhere else — fence rails, guardrail beams, pole crossarms — they ride
+	## in the chunk's cube batch (same unit box, same transform): at road speed
+	## nobody sees the chamfer, and a batch of their own on every chunk cost
+	## ~90 extra draws a frame over the live road once shadow passes counted.
+	if _owns_platform:
+		_timbers.append(xform)
+		_timber_cols.append(color)
+	else:
+		_cubes.append(xform)
+		_cube_cols.append(color)
 
 
 func _timber_between(pa: Vector3, pb: Vector3, width: float, depth: float, color: Color) -> void:
@@ -3396,8 +3410,7 @@ func _timber_between(pa: Vector3, pb: Vector3, width: float, depth: float, color
 		return
 	var up := Vector3.UP if absf(dir.normalized().y) < 0.98 else Vector3.BACK
 	var frame := Basis.looking_at(dir.normalized(), up, true)
-	_timbers.append(Transform3D(Basis(frame.x * width, frame.y * depth, frame.z * dir.length()), (pa + pb) * 0.5))
-	_timber_cols.append(color)
+	_add_timber(Transform3D(Basis(frame.x * width, frame.y * depth, frame.z * dir.length()), (pa + pb) * 0.5), color)
 
 
 func _deck_post(z: float, lateral: float, width: float, height: float, color: Color, lift: float = 0.0) -> void:
@@ -3405,10 +3418,9 @@ func _deck_post(z: float, lateral: float, width: float, height: float, color: Co
 	## `_deck_cube`, so its corners stay chamfered however tall it is.
 	lift += _terrace_floor_at(z, lateral)
 	var flat: Basis = _path.frame_flat_at(z)
-	_timbers.append(Transform3D(
+	_add_timber(Transform3D(
 		Basis(flat.x * width, -flat.z * width, flat.y * height), _p(z, lateral, -(lift + height * 0.5))
-	))
-	_timber_cols.append(color)
+	), color)
 
 
 func _deck_planter(z: float, lateral: float, size: Vector3, color: Color) -> void:
@@ -12000,7 +12012,6 @@ func _build_belvedere(streamed: bool = false) -> void:
 		if streamed and not is_inside_tree():
 			return
 	_belvedere_ends(b, limestone, shadow)
-	_belvedere_buttresses(limestone, shadow)
 	var mesh: MeshInstance3D = b.commit_to(self, "PlatformKerbs")
 	if mesh:
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -12465,58 +12476,6 @@ func _belvedere_wall(b: LowPoly, za: float, zb: float, limestone: Color, mortar:
 	b.add_quad(
 		_p(za, in_a, WALL), _p(zb, in_b, WALL), _p(zb, out_b, WALL), _p(za, out_a, WALL), shadow.darkened(0.15)
 	)
-
-
-func _belvedere_buttresses(limestone: Color, shadow: Color) -> void:
-	## Piers stepping out of the retaining wall and a drip course under the
-	## lip. A plain wall forty metres long is one flat card from across the
-	## water; a pier every few metres gives it the rhythm, depth and shadow of
-	## something built to hold the terrace up. They stay clear of the balcony,
-	## which drops its own wall at the centre.
-	##
-	## Everything hangs off the wall face itself: `_p` drapes a point by the
-	## ground under it, and a few centimetres past the face that ground is the
-	## headland falling away, so a pier placed by lateral sank into the cliff.
-	const FACE := 6.85
-	var half: float = RoadPathGD.PLATFORM_HALF_LENGTH
-	var pier := limestone.lerp(shadow, 0.2)
-	var top: float = _terrace_floor if _terrace_floor > 0.0 else 0.52
-	var z := _vp_centre - half + 1.2
-	while z < _vp_centre + half - 1.0:
-		if absf(z - _vp_centre) > 5.6:
-			var toe: float = _belvedere_toe(z, _platform_lateral(FACE, z)) + 0.6
-			# Battered: a broad foot under a narrower shaft, and a cap stone.
-			_wall_block(z, FACE, 0.0, 0.45, 0.4, toe, 0.8, pier)
-			_wall_block(z, FACE, 0.0, 0.62, toe * 0.55, toe, 1.0, pier.darkened(0.06))
-			_wall_block(z, FACE, 0.0, 0.52, 0.28, 0.42, 0.94, limestone.lightened(0.05))
-		z += 4.6
-	# Drip course: one thin projecting band right under the deck lip, whose
-	# shadow is what separates the parapet from the wall below it.
-	var s := _vp_centre - half
-	while s < _vp_centre + half - 0.01:
-		var e: float = minf(s + 2.3, _vp_centre + half)
-		if s > _vp_centre + 4.6 or e < _vp_centre - 4.6:
-			var flat_s: Basis = _path.frame_flat_at(s)
-			var flat_e: Basis = _path.frame_flat_at(e)
-			var pa: Vector3 = _p(s, _platform_lateral(FACE, s), top + 0.12) + flat_s.x * _vp_side * 0.07
-			var pb: Vector3 = _p(e, _platform_lateral(FACE, e), top + 0.12) + flat_e.x * _vp_side * 0.07
-			_timber_between(pa, pb, 0.16, 0.13, limestone.lightened(0.06))
-		s = e
-
-
-func _wall_block(
-	z: float, face: float, inset: float, reach: float, drop_top: float, drop_bot: float, length: float, color: Color
-) -> void:
-	## A box standing proud of the belvedere wall: `reach` metres out from the
-	## face at `face`, between two drops below deck level, squared to the road.
-	var flat: Basis = _path.frame_flat_at(z)
-	var out: Vector3 = flat.x * _vp_side
-	var root: Vector3 = _p(z, _platform_lateral(face, z), (drop_top + drop_bot) * 0.5)
-	var height: float = drop_bot - drop_top
-	_cubes.append(Transform3D(
-		Basis(flat.x * (reach + inset), flat.y * height, flat.z * length), root + out * ((reach - inset) * 0.5)
-	))
-	_cube_cols.append(color)
 
 
 func _belvedere_toe(z: float, face_lat: float) -> float:
