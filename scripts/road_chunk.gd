@@ -11709,7 +11709,9 @@ func _build_platform_pergola(streamed: bool = false) -> void:
 			_deck_member(Vector3(bench_z - 0.9, o - 0.22, h), Vector3(bench_z + 0.9, o - 0.22, h), 0.04, 0.11, slat_col)
 	# A trough of bloom on the inner line so the frame sits in a garden —
 	# on the parapet side it would crowd the vista bench it now shelters.
-	var trough_lat := _platform_lateral(inner + 0.65, z_mid)
+	# Set back from the parking edge: closer in, the corridor sweep slid the
+	# planting off the trough and left a bare stone box under the frame.
+	var trough_lat := _platform_lateral(inner + 1.4, z_mid)
 	_deck_planter(z_mid, trough_lat, Vector3(0.6, 0.42, 1.6), Color("b8ac98"))
 	_deck_blob(z_mid, trough_lat, Vector3(0.55, 0.4, 1.4), Color("4a6a46"), 0.34, true)
 	for k in 3:
@@ -11896,7 +11898,7 @@ func _build_platform_planting(streamed: bool = false) -> void:
 	var bloom := _platform_bloom()
 	for end in [-1.0, 1.0]:
 		var pz: float = centre + end * 16.5
-		var plat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 1.8, pz)
+		var plat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 2.6, pz)
 		_deck_planter(pz, plat, Vector3(0.85, 0.42, 0.85), Color("c4b7a4"))
 		_deck_blob(
 			pz,
@@ -11910,10 +11912,12 @@ func _build_platform_planting(streamed: bool = false) -> void:
 		if streamed and _slice_spent() and not await _keep_streaming():
 			return
 	# Troughs mid-terrace, flanking the centre, so the walk is a garden edge and
-	# not only a place to stand the bike.
-	for offset in [-7.5, 7.5]:
+	# not only a place to stand the bike. Only the open side: at +7.5 the
+	# pergola keeps its own trough, and the two used to stand end to end. Both
+	# sit back from the parking edge so their planting stays in them.
+	for offset in [-7.5]:
 		var pz: float = centre + offset
-		var plat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 1.7, pz)
+		var plat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 2.6, pz)
 		_deck_planter(pz, plat, Vector3(1.3, 0.4, 0.62), Color("b8ac98"))
 		_deck_blob(pz, plat, Vector3(1.15, 0.4, 0.52), Color("4a6a46"), 0.34, true)
 		_deck_bloom_cluster(pz + 0.32, plat, bloom, 0.52, 4, 0.22)
@@ -12056,15 +12060,20 @@ func _build_authored_terrace(deck: PackedScene, rail: PackedScene, streamed: boo
 	# were, under the day key the flags and the balcony's end post came out
 	# cream — the brightest, sandiest thing in the seated frame, standing
 	# right at its edge. Weathered grey keeps them stone and lets the view lead.
+	# The flags are laid over the deck now, so all the tint still shows on is
+	# the deck's pale skirt — and the old strong blue pull painted that a sky
+	# blue band along the parapet foot. Near-neutral lands it as stone. The
+	# rail's pull turned its tan cap rail sea-green; a milder one leaves it
+	# weathered timber.
 	await _place_lookout_run(
 		deck, deck_zs, RoadPathGD.PLATFORM_HALF_WIDTH, TERRACE_FLOOR, "LookoutDeck", streamed,
-		Color(0.48, 0.57, 0.70)
+		Color(0.52, 0.55, 0.6)
 	)
 	if streamed and not is_inside_tree():
 		return
 	if streamed and _slice_spent() and not await _keep_streaming():
 		return
-	await _place_lookout_run(rail, rail_zs, rail_out, TERRACE_FLOOR, "LookoutRail", streamed, Color(0.46, 0.68, 0.95))
+	await _place_lookout_run(rail, rail_zs, rail_out, TERRACE_FLOOR, "LookoutRail", streamed, Color(0.5, 0.6, 0.74))
 	if balcony:
 		_place_lookout(balcony, _vp_centre, rail_out, TERRACE_FLOOR, "LookoutBalcony", Color(0.42, 0.52, 0.64))
 	# A pier at each end of the run, so the rail stops on something.
