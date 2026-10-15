@@ -47,7 +47,7 @@ func _run() -> void:
 	check(anti.b > anti.r, "the sky opposite the sunrise is the cool earth-shadow")
 	check(sun.light_color.g > sun.light_color.r * 0.75, "the dawn key is gold, not sunset orange")
 	check(env.fog_height_density > 0.0, "dawn lays mist in the low ground")
-	check(sun.rotation_degrees.x > -10.0, "the dawn sun sits low")
+	check(sun.rotation_degrees.x > -15.0, "the dawn sun sits low")
 
 	# Rain still layers over dawn without leaving the rose band or moon behind.
 	main.set("rain", 1.0)

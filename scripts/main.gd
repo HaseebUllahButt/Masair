@@ -85,13 +85,14 @@ const MOODS := {
 		# half-saturated blue to sage (see the day row); this survives it.
 		"mid_color": Color("7584c8"),
 		# The sun's side only — azimuth_split hands the rest of the skyline to
-		# anti_horizon. Pale gold, not orange: dawn light has had all night's
-		# dust settle out of it.
-		"horizon_color": Color("ffd6a8"),
+		# anti_horizon. Gold, not orange: dawn light has had all night's dust
+		# settle out of it. Kept a step below white, or the sun disc and the sky
+		# round it both hit the grade's ceiling and the disc vanishes.
+		"horizon_color": Color("f2b585"),
 		"ground_color": Color("2a3446"),
 		"band_low": 0.07,
 		"band_high": 0.56,
-		"horizon_glow": 0.26,
+		"horizon_glow": 0.10,
 		"azimuth_split": 1.0,
 		"anti_horizon": Color("97a1c6"),
 		"belt_color": Color("e2a6bd"),
@@ -104,8 +105,10 @@ const MOODS := {
 		"energy": 1.0,
 		"sun_color": Color(1.55, 1.12, 0.74),
 		"sun_radius": 0.022,
-		"sun_halo": 0.30,
-		"sun_halo_falloff": 18.0,
+		# A tight, faint halo: a soft disc with a little glow round it, not the
+		# sunset's blown-out ball.
+		"sun_halo": 0.12,
+		"sun_halo_falloff": 30.0,
 		"sun_disc": 1.0,
 		"moon_face": 0.0,
 		# Clouds take the first light pink on top and stay lilac underneath.
@@ -126,13 +129,14 @@ const MOODS := {
 		# paints every leaf brown, and dawn greens should come out dew-fresh.
 		"light_color": Color("ffd2a2"),
 		"light_energy": 2.6,
-		# Nine degrees up and forty off the road's axis, so the sun rakes across
+		# Eleven degrees up and thirty-two off the road's axis, so the sun rakes across
 		# the carriageway from the front-left: every crown and post on the left
 		# verge throws a long shadow over the tarmac, the right verge is lit
 		# face-on, and the road never turns into a glare tunnel at the sun.
 		# Overlooks face out to either side, so one bench looks into the sunrise
-		# and the other gets the rose-lit ridges opposite it.
-		"light_angle": Vector3(-9.0, 40.0, 0.0),
+		# and the other gets the rose-lit ridges opposite it. Any lower or wider
+		# and the disc sits behind the verge hills.
+		"light_angle": Vector3(-11.0, 32.0, 0.0),
 		"angular_distance": 0.7,
 		# The shade colour is the sky's: a lilac-blue from the whole clear dome,
 		# strong enough that a shadow is cool rather than dark — but greyed a
@@ -145,26 +149,28 @@ const MOODS := {
 		"exposure": 0.96,
 		"white": 1.24,
 		# RangeMaterial derives the ranges from this (see the day row): a cool
-		# lilac-grey, light enough to read as daylight air, so ridges stay rock
-		# and forest instead of being dyed.
-		"fog_color": Color("a0a8c8"),
+		# blue-grey, light enough to read as daylight air, so ridges stay rock
+		# and forest instead of being dyed. Thin and a step bluer than the mist:
+		# dawn air is the clearest of the day, and a paler, thicker veil laid
+		# milk over every lookout.
+		"fog_color": Color("8e9cc4"),
 		"fog_energy": 1.0,
-		"fog_density": 0.00022,
+		"fog_density": 0.00007,
 		"fog_sun_scatter": 0.05,
-		"fog_aerial": 0.11,
+		"fog_aerial": 0.04,
 		"fog_sky": 0.03,
 		# The valley mist. Height fog in this renderer is by depth below the
 		# line, not by distance, so the line sits under the lowest road (about
-		# -9 m) and the mist fills the lake basins and hollows beneath it. Thin:
-		# a lake at -50 m lies under a sixth of a veil. At a half the whole
-		# basin went under one cream blanket and the water was gone.
-		"fog_height": -20.0,
-		"fog_height_density": 0.006,
-		"glow": 0.78,
-		"glow_bloom": 0.13,
+		# -9 m) and the mist lies only in the lake basins well beneath it. Thin:
+		# at a half the whole basin went under one cream blanket and the water
+		# was gone; with the line at -20 the lookouts' middle distance went milky.
+		"fog_height": -40.0,
+		"fog_height_density": 0.003,
+		"glow": 0.6,
+		"glow_bloom": 0.06,
 		"glow_strength": 1.2,
-		"contrast": 1.14,
-		"saturation": 1.13,
+		"contrast": 1.2,
+		"saturation": 1.18,
 		# A low sun barely lights a flat road, so the tarmac is mostly lit by
 		# the lilac sky and the gold key at a graze — navy one way, rust the
 		# other. Green is the channel neither of them carries, so that is the
