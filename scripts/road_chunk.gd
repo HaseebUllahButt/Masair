@@ -102,6 +102,9 @@ static var slice_budget_usec: int = STREAM_SLICE_USEC
 ## a heavy draw on top those were the ride's 35-45 ms frames. A job that finds
 ## the frame already spent waits for the next one.
 const FRAME_STREAM_USEC := 8000
+## The frame's building budget now. The streamer lifts it while dressing is
+## falling behind the bike: a slow frame is better than a bare roadside.
+static var frame_budget_usec: int = FRAME_STREAM_USEC
 ## Less than this left in the frame is not worth resuming a job for.
 const MIN_SLICE_USEC := 1000
 static var _shared_frame: int = -1
@@ -1119,8 +1122,8 @@ func _keep_streaming() -> bool:
 
 func _frame_left_usec() -> int:
 	if _shared_frame != Engine.get_process_frames():
-		return FRAME_STREAM_USEC
-	return FRAME_STREAM_USEC - _shared_used_usec
+		return frame_budget_usec
+	return frame_budget_usec - _shared_used_usec
 
 
 func _open_slice() -> void:

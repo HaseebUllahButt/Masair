@@ -54,6 +54,12 @@ const OPENING_AHEAD := 1
 ## Dress this far ahead of the bike so the corridor looks finished before it
 ## enters the lens. Too tight and the ride reads as pop-in / procedural.
 const DRESS_AHEAD := 10
+## Undressed scenery nearer than this lifts the shared building budget until
+## it is caught up; dressing normally lands 270 m+ ahead, and "late" (seen
+## arriving) is under 160 m.
+const DRESS_LEAD_M := 240.0
+## The lifted budget: every job its full slice again, as before the cap.
+const LIFTED_FRAME_USEC := 1 << 30
 ## Ribbon look-ahead on the scenic spur — must stay ahead of DRESS_AHEAD so
 ## tarmac is ready when the dress window wants to plant.
 const SCENIC_CHUNKS_AHEAD := 10
@@ -149,6 +155,18 @@ func _process(_delta: float) -> void:
 	_sync(false)
 
 
+func _dressing_behind(current: int) -> bool:
+	## Whether a chunk inside DRESS_LEAD_M of the bike still has no dressing.
+	## Normally dressing lands 270 m+ ahead; nearer means the jobs are losing.
+	var index := current + 1
+	while float(index) * CHUNK_LENGTH - _player.track_z < DRESS_LEAD_M:
+		var chunk: Node = _chunks.get(index)
+		if chunk != null and not bool(chunk.get_meta("props_done", false)):
+			return true
+		index += 1
+	return false
+
+
 func theme_at(z: float) -> int:
 	return theme_for_chunk(int(floor(z / CHUNK_LENGTH)))
 
@@ -177,6 +195,9 @@ func _sync(build_all: bool) -> void:
 		1400 if bool(_player.get("seated")) and not view_work else RoadChunkGD.STREAM_SLICE_USEC
 	)
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
+	chunk_gd.frame_budget_usec = (
+		LIFTED_FRAME_USEC if _dressing_behind(current) else RoadChunkGD.FRAME_STREAM_USEC
+	)
 	var keep_bounds := _desired_bounds(current)
 	# The platform owner renders the full lake independently of road chunks.
 	# Retain the logical lake span for the overlook contract, but retire old
