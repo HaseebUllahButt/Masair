@@ -96,6 +96,16 @@ const STREAM_SLICE_USEC := 4000
 ## the rider is seated: parked work has no deadline, so the same queue drains
 ## over more frames and leaves the lookout's frame time to the view instead.
 static var slice_budget_usec: int = STREAM_SLICE_USEC
+## What all the build jobs together may spend in one frame. Ribbon, props,
+## scenic and highway jobs each took a full slice, so a frame with three or
+## four in flight spent 12-19 ms on building before it drew anything, and with
+## a heavy draw on top those were the ride's 35-45 ms frames. A job that finds
+## the frame already spent waits for the next one.
+const FRAME_STREAM_USEC := 8000
+## Less than this left in the frame is not worth resuming a job for.
+const MIN_SLICE_USEC := 1000
+static var _shared_frame: int = -1
+static var _shared_used_usec: int = 0
 const HALF_WIDTH := 8.0
 ## Asphalt is one continuous road, even when the surrounding biome changes.
 ## Keeping this outside the palettes prevents visible colour seams at run edges.
@@ -753,6 +763,9 @@ var _corridor_flags: int = -1
 ## Wall-clock mark for the current streamed slice; `_keep_streaming` parks only
 ## once it is spent. Reset at each build entry so a queued job starts fresh.
 var _slice_started_usec: int = 0
+## This slice's share of the frame: the slice budget, or less once other jobs
+## have spent the frame.
+var _slice_allow_usec: int = STREAM_SLICE_USEC
 ## Hitch tracing for tools/profile_scenic and friends: when set, every slice of
 ## incremental work longer than ~12 ms prints its caller and cost. Off in play.
 static var hitch_trace: bool = false
@@ -809,11 +822,10 @@ func setup_incremental(index: int, theme_id: int) -> void:
 func setup_ribbon_incremental(index: int, theme_id: int) -> void:
 	## Runtime streaming must not consume an entire render frame. The chunk is far
 	## beyond the camera when queued, so build its ribbon in small invisible slices.
-	_resumed_usec = Time.get_ticks_usec()
 	# The other build entry points set both clocks; without this the first
 	# `_keep_streaming` measured against a stale slice start and yielded a whole
 	# frame before the first row went down.
-	_slice_started_usec = _resumed_usec
+	_open_slice()
 	_configure(index, theme_id)
 	var builders := _new_ribbon_builders()
 	var hard: LowPoly = builders[0]
@@ -841,13 +853,14 @@ func setup_ribbon_incremental(index: int, theme_id: int) -> void:
 	if not await _keep_streaming():
 		return
 	await _dress_shoulder_incremental()
+	_close_slice()
 	_trace_tail("ribbon")
 
 
 func setup_props_incremental() -> void:
-	_slice_started_usec = Time.get_ticks_usec()
-	_resumed_usec = _slice_started_usec
+	_open_slice()
 	await _build_props_incremental()
+	_close_slice()
 	_trace_tail("props")
 
 
@@ -1082,7 +1095,7 @@ func _keep_streaming() -> bool:
 	## mesh into a world the bike has already left.
 	if not is_instance_valid(self) or not is_inside_tree():
 		return false
-	if Time.get_ticks_usec() - _slice_started_usec < slice_budget_usec:
+	if Time.get_ticks_usec() - _slice_started_usec < _slice_allow_usec:
 		return true
 	if hitch_trace:
 		var stack := get_stack()
@@ -1094,10 +1107,36 @@ func _keep_streaming() -> bool:
 			var work := Time.get_ticks_usec() - _resumed_usec
 			if work >= 12000:
 				print("chunk %d slice %s: %.1f ms" % [chunk_index, site, float(work) / 1000.0])
+	_close_slice()
 	await get_tree().process_frame
+	while is_instance_valid(self) and is_inside_tree() and _frame_left_usec() < MIN_SLICE_USEC:
+		await get_tree().process_frame
+	if not is_instance_valid(self) or not is_inside_tree():
+		return false
+	_open_slice()
+	return true
+
+
+func _frame_left_usec() -> int:
+	if _shared_frame != Engine.get_process_frames():
+		return FRAME_STREAM_USEC
+	return FRAME_STREAM_USEC - _shared_used_usec
+
+
+func _open_slice() -> void:
+	## Starts a slice: this job's budget, cut to what the frame has left.
+	if _shared_frame != Engine.get_process_frames():
+		_shared_frame = Engine.get_process_frames()
+		_shared_used_usec = 0
 	_slice_started_usec = Time.get_ticks_usec()
 	_resumed_usec = _slice_started_usec
-	return is_instance_valid(self) and is_inside_tree()
+	_slice_allow_usec = clampi(_frame_left_usec(), 0, slice_budget_usec)
+
+
+func _close_slice() -> void:
+	## Charges the slice just spent to the frame, so the next job knows.
+	if _shared_frame == Engine.get_process_frames():
+		_shared_used_usec += Time.get_ticks_usec() - _slice_started_usec
 
 
 func _slice_spent() -> bool:
@@ -1105,7 +1144,7 @@ func _slice_spent() -> bool:
 	## that yield on a fixed count drain the stream queues slower than the work
 	## needs — the restart test's frame windows felt that before the bike did —
 	## so small batches yield only once the slice is already past its budget.
-	return Time.get_ticks_usec() - _resumed_usec > slice_budget_usec
+	return Time.get_ticks_usec() - _resumed_usec > _slice_allow_usec
 
 
 func _configure(index: int, theme_id: int) -> void:
@@ -1199,11 +1238,11 @@ func ensure_scenic_dress() -> void:
 		return
 	if bool(get_meta("scenic_building", false)):
 		return
-	_slice_started_usec = Time.get_ticks_usec()
+	_open_slice()
 	set_meta("scenic_requested", true)
 	set_meta("scenic_building", true)
-	_resumed_usec = Time.get_ticks_usec()
 	await _build_scenic_props_incremental()
+	_close_slice()
 	_trace_tail("scenic")
 	if is_instance_valid(self):
 		set_meta("scenic_done", true)
@@ -1259,11 +1298,11 @@ func ensure_highway_dress() -> void:
 		return
 	if bool(get_meta("highway_building", false)):
 		return
-	_slice_started_usec = Time.get_ticks_usec()
+	_open_slice()
 	set_meta("highway_requested", true)
 	set_meta("highway_building", true)
-	_resumed_usec = Time.get_ticks_usec()
 	await _build_highway_props_incremental()
+	_close_slice()
 	_trace_tail("highway")
 	if is_instance_valid(self):
 		set_meta("highway_done", true)
