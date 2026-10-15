@@ -11460,14 +11460,18 @@ func _build_platform_pergola(streamed: bool = false) -> void:
 		if streamed and _slice_spent() and not await _keep_streaming():
 			return
 	# Wisteria racemes: soft drapes wide at the rafter and narrowing to a tip,
-	# enough of them that the canopy reads as hanging bloom rather than a
-	# handful of ornaments.
-	var wisteria := Color("a993cf")
-	for _i in 32:
-		var hz: float = _rng.randf_range(z_a, z_b)
-		var ho: float = _rng.randf_range(inner + 0.2, outer - 0.2)
-		var tint: Color = wisteria.lerp(Color("d8cbe9"), _rng.randf() * 0.55)
-		_deck_raceme(hz, _platform_lateral(ho, hz), HEIGHT + 0.32, tint)
+	# hung in bunches. Spread evenly, thirty-odd pale drops were a mobile of
+	# lilac gems against the sky; a vine blooms in masses with bare rafter
+	# between, deeper violet at the stalk where the sky is behind it.
+	var wisteria := Color("8a72c0")
+	for _bunch in 8:
+		var cz: float = _rng.randf_range(z_a + 0.4, z_b - 0.4)
+		var co: float = _rng.randf_range(inner + 0.35, outer - 0.35)
+		for _i in 4:
+			var hz: float = cz + _rng.randf_range(-0.38, 0.38)
+			var ho: float = co + _rng.randf_range(-0.3, 0.3)
+			var tint: Color = wisteria.lerp(Color("c7b3e4"), _rng.randf() * 0.5)
+			_deck_raceme(hz, _platform_lateral(ho, hz), HEIGHT + 0.32, tint)
 		if streamed and _slice_spent() and not await _keep_streaming():
 			return
 	# Lanterns hung off the rafters — the glow that reads as "sit here" at dusk.
@@ -11508,12 +11512,12 @@ func _deck_raceme(z: float, lateral: float, top: float, col: Color) -> void:
 	## and however tinted — read from the bench as eggs on strings; a drape
 	## that is one continuous soft mass, darker at the stalk and pale at the
 	## tip, is what a wisteria actually hangs as.
-	var length: float = _rng.randf_range(0.42, 0.7)
+	var length: float = _rng.randf_range(0.36, 0.78)
 	var drops: int = 3 if length > 0.55 else 2
 	var reach: float = 0.0
 	for k in drops:
 		var f: float = float(k) / float(drops)
-		var w: float = lerpf(0.22, 0.11, f) * _rng.randf_range(0.9, 1.1)
+		var w: float = lerpf(0.16, 0.07, f) * _rng.randf_range(0.9, 1.1)
 		var h: float = length / float(drops) * 1.55
 		_deck_blob(
 			z + _rng.randf_range(-0.03, 0.03),
