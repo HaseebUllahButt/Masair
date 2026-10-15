@@ -292,36 +292,55 @@ static func unit_bush() -> ArrayMesh:
 	## smooth ball it replaced was the one bubble-plastic shape left among
 	## faceted crowns, and squashed to a shrub's proportions it became a dark
 	## lens lying on the grass — the "discs" that littered the valley from the
-	## bench. A few faceted lobes give a lumpy silhouette that still reads as
-	## leaf at any squash. Everything stays inside the unit sphere the corridor
-	## sweep measures, so no swaying lobe can reach further than the ball did,
-	## and the main lobe reaches the sphere's floor so nothing hovers.
+	## bench. One faceted lump with its rings twisted and every vertex pushed
+	## in by its own amount gives a lumpy silhouette that reads as leaf at any
+	## squash.
+	##
+	## Budget: this is the most-instanced mesh in the game and the foliage
+	## shader sways every vertex. Four separate faceted lobes were ~380
+	## vertices against the ball's ~63 and cost a millisecond and more at the
+	## overlook; this is 84. Everything stays inside the unit sphere the
+	## corridor sweep measures, and the foot reaches the sphere's floor so
+	## nothing hovers.
 	if _unit_bush == null:
 		var b := LowPoly.new()
 		b.index_flat = true
 		b.channel = LowPoly.FOLIAGE
-		# [x, y, z, radius, y-stretch, shade]: one body down to the ground, a
-		# raised shoulder, two lower side lobes in their own shade.
-		const LOBES := [
-			[0.00, -0.04, 0.00, 0.44, 1.05, 0.90],
-			[0.08, 0.20, -0.06, 0.24, 1.0, 1.10],
-			[0.18, -0.14, 0.10, 0.23, 1.0, 0.76],
-			[-0.18, -0.12, -0.14, 0.23, 1.0, 0.80],
-		]
-		var turn := 0.0
-		for lobe in LOBES:
-			var shade: float = lobe[5]
-			b.add_sphere(
-				Transform3D(
-					Basis(Vector3.UP, turn).scaled(Vector3(1.0, lobe[4], 1.0)), Vector3(lobe[0], lobe[1], lobe[2])
-				),
-				lobe[3],
-				6,
-				4,
-				Color(shade, shade, shade)
-			)
-			# Each lobe a different twist so their facets never line up.
-			turn += 0.71
+		b.hull_origin = Vector3.ZERO
+		const SEGS := 6
+		# [height, radius]: a flat-ish foot, a wide belly, a full shoulder and a
+		# blunt crown — a bush, not a ball.
+		const RINGS := [[-0.5, 0.0], [-0.28, 0.38], [-0.02, 0.48], [0.24, 0.38], [0.44, 0.0]]
+		var grid: Array = []
+		for r in RINGS.size():
+			var level: Array = RINGS[r]
+			var row: Array[Vector3] = []
+			for i in SEGS:
+				# Fixed hash, as for the boulder: one shared mesh, the same bush
+				# every boot; instances turn and squash it into all the others.
+				var h: float = fposmod(sin(float(i) * 41.31 + float(r) * 17.17) * 43758.5453, 1.0)
+				var a: float = TAU * (float(i) + (h - 0.5) * 0.4) / float(SEGS) + float(r) * 0.55
+				var rad: float = float(level[1]) * lerpf(0.72, 1.0, h)
+				var y: float = float(level[0]) + (h - 0.5) * 0.08 * float(level[1] > 0.0)
+				row.append(Vector3(cos(a) * rad, y, sin(a) * rad))
+			grid.append(row)
+		for r in RINGS.size() - 1:
+			# Shaded skirt, lit crown.
+			var t: float = (float(r) + 0.5) / float(RINGS.size() - 1)
+			var shade: float = lerpf(0.76, 1.1, t)
+			for i in SEGS:
+				var j: int = (i + 1) % SEGS
+				var p00: Vector3 = grid[r][i]
+				var p10: Vector3 = grid[r][j]
+				var p01: Vector3 = grid[r + 1][i]
+				var p11: Vector3 = grid[r + 1][j]
+				var c := Color(shade, shade, shade)
+				if float(RINGS[r][1]) == 0.0:
+					b.add_hull_tri(p00, p11, p01, c)
+				elif float(RINGS[r + 1][1]) == 0.0:
+					b.add_hull_tri(p00, p10, p01, c)
+				else:
+					b.add_hull_quad(p00, p10, p11, p01, c)
 		_unit_bush = b.commit()
 	return _unit_bush
 
@@ -10299,7 +10318,8 @@ func _far_cliff_tone() -> Array[Color]:
 			# Moss and turf, a step under the meadow: with the bank laid back it
 			# takes the sky, and the near-black stone it used to carry turned the
 			# whole shore into a void at noon. Wet moss stays the darkest step.
-			return [Color("2c3f2c"), Color("1d281e"), Color("3c5634")]
+			# Lifted a step with the country bank, for the same dawn shade.
+			return [Color("304a33"), Color("22332a"), Color("41603a")]
 		Env.MOUNTAIN:
 			return [Color("282e32"), Color("1f2528"), Color("474f52")]
 		Env.COUNTRY:
@@ -10315,7 +10335,12 @@ func _far_cliff_tone() -> Array[Color]:
 			# ends at dark turf on the lip.
 			# Greener again once the bank was laid back: a sloped face is lit
 			# like the pasture it carries, so it can be turf rather than earth.
-			return [Color("33452a"), Color("1e2a1f"), Color("465a33")]
+			# Cooler and a step up. The slope faces the bench, so it takes the
+			# whole key: under the day sun 33452a still came out a tan berm
+			# (~149,141,61), and with the dawn sun behind the bank it fell to
+			# near-black (~22,38,26) — a heavy dark rule round the far shore. A
+			# bluer green holds green under the warm key and stays turf in shade.
+			return [Color("3a5a38"), Color("2a4430"), Color("4a6c3e")]
 	return [Color("28261f"), Color("21201b"), Color("3c372c")]
 
 
@@ -11501,12 +11526,14 @@ func _deck_raceme(z: float, lateral: float, top: float, col: Color) -> void:
 	## that is one continuous soft mass, darker at the stalk and pale at the
 	## tip, is what a wisteria actually hangs as.
 	var length: float = _rng.randf_range(0.36, 0.78)
-	var drops: int = 3 if length > 0.55 else 2
+	var drops: int = 4 if length > 0.55 else 3
 	var reach: float = 0.0
 	for k in drops:
 		var f: float = float(k) / float(drops)
-		var w: float = lerpf(0.16, 0.07, f) * _rng.randf_range(0.9, 1.1)
-		var h: float = length / float(drops) * 1.55
+		# Near-round lumps, overlapping: stretched past about one and a half to
+		# one, the faceted bush mesh reads as a hanging amethyst, not a bloom.
+		var w: float = lerpf(0.19, 0.09, f) * _rng.randf_range(0.9, 1.1)
+		var h: float = length / float(drops) * 1.35
 		_deck_blob(
 			z + _rng.randf_range(-0.03, 0.03),
 			lateral + _vp_side * _rng.randf_range(-0.03, 0.03),
