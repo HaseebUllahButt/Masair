@@ -725,8 +725,12 @@ class Capture:
 			return
 		var row: Dictionary = (main.get("MOODS")[int(main.get("lighting_mode"))] as Dictionary).duplicate()
 		var over: Dictionary = variants[index][1]
+		var beam: Dictionary = {}
 		for key in over:
 			var v: Variant = over[key]
+			if String(key).begins_with("hl_"):
+				beam[String(key).substr(3)] = v
+				continue
 			if v is String:
 				row[key] = Color(v)
 			elif v is Array and row.get(key) is Color:
@@ -739,6 +743,20 @@ class Capture:
 		main.set("_mood_from", row)
 		main.set("_mood_fade", 0.0)
 		main.call("_apply_lighting")
+		# "hl_<property>" keys go to the bike's headlight after the mood has set
+		# it; "hl_pitch" tilts it.
+		var lamp := main.find_child("Headlight", true, false) as SpotLight3D
+		if lamp != null:
+			for key in beam:
+				var v: Variant = beam[key]
+				if key == "pitch":
+					lamp.rotation_degrees.x = float(v)
+				elif v is String:
+					lamp.set(key, Color(v))
+				elif v is Array:
+					lamp.set(key, Color(v[0], v[1], v[2]))
+				else:
+					lamp.set(key, float(v))
 
 	func _trace_ray() -> void:
 		## One ray through --trace=x,y: every batch it crosses, nearest first,
