@@ -1457,6 +1457,8 @@ func _build_spur_woodland(
 						Color("4a6840"), clampf(float(stand[3]) * 0.5 + _rng.randf() * 0.12, 0.0, 0.42)
 					)
 				_spur_tree(species, jitter_z, lateral, height, tint.darkened(float(row) * 0.14), escape)
+				if pace.is_valid() and _slice_spent() and not await pace.call():
+					return
 				if _vp_theme == Env.MOUNTAIN and _rng.randf() < 0.4:
 					var rock_s := _rng.randf_range(1.2, 2.8)
 					_blob(
@@ -1518,6 +1520,8 @@ func _build_spur_woodland(
 					false,
 					true
 				)
+				if pace.is_valid() and _slice_spent() and not await pace.call():
+					return
 			if _vp_theme == Env.COUNTRY:
 				# The country climb is a hedged lane, not a plantation: a low
 				# hawthorn-dark run right at the verge carries the hedgerow the
@@ -1540,6 +1544,12 @@ func _build_spur_woodland(
 							true,
 							true
 						)
+					if pace.is_valid() and _slice_spent() and not await pace.call():
+						return
+			## Open stands still grow turf and hedges. They must honour the same
+			## slice as trees, or five treeless stations run straight into the upload.
+			if pace.is_valid() and _slice_spent() and not await pace.call():
+				return
 			if phase == 1:
 				continue
 			# The hillside between the carriageway and the spur is deliberately
@@ -3238,9 +3248,20 @@ func _band_drop(z: float, lateral: float, drop: float) -> float:
 	return drop * (1.0 - float(_path.spur_deck_blend(z, lateral)))
 
 
+var _terrain_samples: Dictionary = {}
+
+
 func _terrain_surface_at(z: float, lateral: float) -> Vector3:
+	## Retried placements and footprint centres revisit the same surface. Keep
+	## those exact samples with their chunk rather than redoing the path and
+	## profile queries after the shared route cache rolls over.
+	var key := Vector2(z, lateral)
+	if _terrain_samples.has(key):
+		return _terrain_samples[key]
 	var f: Basis = _path.frame_flat_at(z)
-	return _path.ground_at(z, lateral) - f.y * _profile_drop_at(lateral, z)
+	var point: Vector3 = _path.ground_at(z, lateral) - f.y * _profile_drop_at(lateral, z)
+	_terrain_samples[key] = point
+	return point
 
 
 func _ground_base_for_footprint(
@@ -4098,6 +4119,7 @@ func _commit_mm(
 ) -> void:
 	if xforms.is_empty():
 		return
+	var began: int = Time.get_ticks_usec() if hitch_trace else 0
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
@@ -4133,6 +4155,8 @@ func _commit_mm(
 		mmi.layers = HEADLAND_FILL_LAYER
 	LowPoly.cheap_draw(mmi)
 	add_child(mmi)
+	if hitch_trace and Time.get_ticks_usec() - began > 8000:
+		print("upload: chunk=%d bucket=%s count=%d ms=%.2f" % [chunk_index, node_name, xforms.size(), float(Time.get_ticks_usec() - began) / 1000.0])
 
 
 static var _shadow_prune: PackedStringArray = []

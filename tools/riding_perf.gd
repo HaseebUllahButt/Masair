@@ -9,6 +9,10 @@ func _initialize() -> void:
 		var kv: PackedStringArray = arg.trim_prefix("--").split("=", true, 1)
 		if kv.size() == 2:
 			opts[kv[0]] = kv[1]
+		else:
+			opts[kv[0]] = "1"
+	if opts.has("hitch"):
+		load("res://scripts/road_chunk.gd").set("hitch_trace", true)
 	var scene: Node = load("res://scenes/main.tscn").instantiate()
 	root.add_child(scene)
 	current_scene = scene
@@ -39,6 +43,7 @@ class Ride:
 	var hitch_jobs: Dictionary = {}
 	var missing_surface_frames: int = 0
 	var late_props_frames: int = 0
+	var late_chunks: Dictionary = {}
 
 	func _ready() -> void:
 		process_mode = Node.PROCESS_MODE_ALWAYS
@@ -113,6 +118,7 @@ class Ride:
 		var ahead: Node = chunks.get(current + 2)
 		if ahead == null or not bool(ahead.get_meta("props_done", false)):
 			late_props_frames += 1
+			late_chunks[current + 2] = true
 		frames.append(wall)
 		gpu += RenderingServer.viewport_get_measured_render_time_gpu(rid)
 		cpu += RenderingServer.viewport_get_measured_render_time_cpu(rid)
@@ -123,6 +129,8 @@ class Ride:
 		if wall > 0.033:
 			var job: String = streamer.call("debug_state")
 			hitch_jobs[job] = int(hitch_jobs.get(job, 0)) + 1
+			if opts.has("hitch"):
+				print("hitch: z=%.1f wall=%.2f process=%.2f physics=%.2f render=%.2f gpu=%.2f %s" % [player.track_z, wall * 1000.0, Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, RenderingServer.viewport_get_measured_render_time_cpu(rid), RenderingServer.viewport_get_measured_render_time_gpu(rid), job])
 		if float(player.track_z) - sample_start < float(opts.get("distance", 4000)):
 			return
 		_report()
@@ -154,6 +162,7 @@ class Ride:
 			"gpu_ms": gpu / n, "render_cpu_ms": cpu / n,
 			"process_ms": process_ms / n, "physics_ms": physics_ms / n,
 			"draws": draws / n, "primitives": primitives / n,
+			"frames": frames.size(), "late_chunks": late_chunks.size(), "late_props_frames": late_props_frames,
 			"missing_surface_frames": missing_surface_frames, "late_props_pct": late_props_frames / n * 100.0,
 		}))
 		print("hitch_jobs: ", JSON.stringify(hitch_jobs))
