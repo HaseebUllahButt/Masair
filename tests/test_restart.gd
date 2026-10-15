@@ -290,7 +290,13 @@ func _process(_delta: float) -> bool:
 		)
 		# Immediate: the title screen may have a mood fade still running.
 		main.call("preview_mood", 0, true)
-		check(environment.fog_density > day_fog, "dawn mode brings back the morning air")
+		# Dawn air is now the clearest of the three, so the check is that leaving
+		# night restores dawn's own air rather than that dawn is the haziest.
+		check(
+			is_equal_approx(environment.fog_density, float(main.get("MOODS")[0]["fog_density"]))
+			and float(sky_material.get_shader_parameter("star_intensity")) == 0.0,
+			"dawn mode brings back the morning air"
+		)
 		check(
 			not main.has_method("_protect_scenic_visibility"),
 			"the overlook does not swap the riding mood for a scenic one"
