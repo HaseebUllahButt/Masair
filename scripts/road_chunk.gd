@@ -10576,17 +10576,17 @@ func _build_far_shore_groves() -> void:
 				if part.name == "Crowns":
 					# The kit's crowns carried a private copy of the foliage shader,
 					# so they never received the per-mood sky fill and air tint every
-					# other tree is pushed, and their greens sat a step above the
-					# woods around them. Backlit by a day or dusk sun the leaf glow
-					# then took them to cream: rows of pale popcorn stands on every
-					# forest hillside. Shared material, woodland greens, and each
-					# tree its own small drift so a stand still reads as many trees.
+					# other tree is pushed, and their baked greens (up to 5e7d4a) sat
+					# several times brighter in linear light than the woods around
+					# them. Backlit by a day or dusk sun the leaf glow took them to
+					# cream: rows of pale popcorn stands on every forest hillside.
+					# Shared material and the spur woodland's own ladder, each tree
+					# its own step on it so a stand still reads as many trees.
 					part.material_override = LowPoly.foliage_material()
 					for tree_index in part.multimesh.instance_count:
-						var leaf: Color = part.multimesh.get_instance_color(tree_index)
 						var drift: float = 0.5 + 0.5 * sin(float(tree_index) * 2.3 + float(i) * 1.1 + _vp_phase)
 						part.multimesh.set_instance_color(
-							tree_index, leaf.darkened(0.22 + 0.16 * drift).lerp(Color("2d4a33"), 0.25)
+							tree_index, Color("223d2c").lerp(Color("44613c"), drift * 0.8)
 						)
 				for tree_index in part.multimesh.instance_count:
 					var tree_transform: Transform3D = part.multimesh.get_instance_transform(tree_index)
