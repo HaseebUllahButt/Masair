@@ -3327,6 +3327,31 @@ func _deck_cube(
 	_cube_cols.append(color)
 
 
+func _deck_member(a: Vector3, b: Vector3, width: float, depth: float, color: Color) -> void:
+	## Join the actual ends of a timber, including the terrace's curve and rise.
+	## A long box at the midpoint only touches the posts on a straight deck.
+	## Coordinates are (station, outward offset, height above paving).
+	var la := _platform_lateral(a.y, a.x)
+	var lb := _platform_lateral(b.y, b.x)
+	var pa := _p(a.x, la, -a.z - _terrace_floor_at(a.x, la))
+	var pb := _p(b.x, lb, -b.z - _terrace_floor_at(b.x, lb))
+	var frame := Basis.looking_at((pb - pa).normalized(), Vector3.UP, true)
+	_cubes.append(Transform3D(
+		Basis(frame.x * width, frame.y * depth, frame.z * pa.distance_to(pb)), (pa + pb) * 0.5
+	))
+	_cube_cols.append(color)
+
+
+func _deck_planter(z: float, lateral: float, size: Vector3, color: Color) -> void:
+	## A recessed bed and a raised lip make a vessel, rather than a stone cube
+	## with foliage balanced on top. All parts stay in the shared cube batch.
+	_deck_cube(z, lateral, Vector3(size.x, size.y - 0.08, size.z), color, 0.0, -0.04)
+	_deck_cube(z, lateral, Vector3(size.x - 0.14, 0.035, size.z - 0.14), Color("383a30"), 0.0, size.y - 0.11)
+	for side in [-1.0, 1.0]:
+		_deck_cube(z, lateral + side * (size.x - 0.08) * 0.5, Vector3(0.08, 0.12, size.z), color.lightened(0.05), 0.0, size.y - 0.12)
+		_deck_cube(z + side * (size.z - 0.08) * 0.5, lateral, Vector3(size.x - 0.16, 0.12, 0.08), color.lightened(0.05), 0.0, size.y - 0.12)
+
+
 func _deck_blob(
 	z: float, lateral: float, size: Vector3, color: Color, lift: float = 0.0, leafy: bool = true
 ) -> void:
@@ -11406,22 +11431,34 @@ func _build_platform_pergola(streamed: bool = false) -> void:
 			if out == outer and pz != z_a and pz != z_b:
 				continue
 			var lat: float = _platform_lateral(out, pz)
-			_deck_cube(pz, lat, Vector3(0.36, 0.3, 0.36), stone, 0.0, -0.04)
-			_deck_cube(pz, lat, Vector3(0.2, HEIGHT - 0.26, 0.2), timber, 0.0, 0.26)
+			_deck_cube(pz, lat, Vector3(0.44, 0.26, 0.44), stone, 0.0, -0.04)
+			_deck_cube(pz, lat, Vector3(0.29, 0.09, 0.29), Color("393d3b"), 0.0, 0.20)
+			_deck_cube(pz, lat, Vector3(0.24, HEIGHT - 0.25, 0.24), timber, 0.0, 0.25)
 			# A low planting at the foot. Climber pods hung up the shaft read as
 			# green seed cases on a stick, not as a vine.
 			_deck_blob(pz, lat, Vector3(0.55, 0.42, 0.55), Color("3f6443").darkened(_rng.randf() * 0.15), 0.18, true)
-	# Beams along the walk, running a little past the end posts.
-	var span: float = z_b - z_a + 1.0
+	## The open lakeside span needs a deeper bearer and knee braces at its
+	## ends. Keep the middle free: another post there masks the seated view.
 	for out in [inner, outer]:
-		_deck_cube(z_mid, _platform_lateral(out, z_mid), Vector3(0.16, 0.26, span), timber.darkened(0.08), 0.0, HEIGHT)
+		for i in posts.size() - 1:
+			var start: float = posts[i] - (0.45 if i == 0 else 0.02)
+			var finish: float = posts[i + 1] + (0.45 if i == posts.size() - 2 else 0.02)
+			_deck_member(Vector3(start, out, HEIGHT + 0.15), Vector3(finish, out, HEIGHT + 0.15), 0.26, 0.34, timber.darkened(0.08))
+		for end in [z_a, z_b]:
+			var inward: float = 1.0 if end == z_a else -1.0
+			_deck_member(Vector3(end, out, HEIGHT - 0.85), Vector3(end + inward * 1.15, out, HEIGHT + 0.04), 0.15, 0.17, timber)
+	for end in [z_a, z_b]:
+		_deck_member(Vector3(end, inner - 0.18, HEIGHT - 0.10), Vector3(end, outer + 0.18, HEIGHT - 0.10), 0.22, 0.24, timber)
+		for out in [inner, outer]:
+			var inward: float = 1.0 if out == inner else -1.0
+			_deck_member(Vector3(end, out, HEIGHT - 0.85), Vector3(end, out + inward * 0.85, HEIGHT - 0.10), 0.15, 0.17, timber)
 	# Rafters across, overhanging both beams — the outer overhang reaches the
 	# vista bench, so the seat the rider takes is in the shade.
 	var width: float = outer - inner + 1.6
 	var centre_out: float = (inner + outer) * 0.5
 	var rz := z_a - 0.3
 	while rz <= z_b + 0.31:
-		_deck_cube(rz, _platform_lateral(centre_out, rz), Vector3(width, 0.18, 0.09), timber, 0.0, HEIGHT + 0.26)
+		_deck_member(Vector3(rz, centre_out - width * 0.5, HEIGHT + 0.38), Vector3(rz, centre_out + width * 0.5, HEIGHT + 0.38), 0.11, 0.18, timber)
 		rz += 0.55
 		if streamed and _slice_spent() and not await _keep_streaming():
 			return
@@ -11466,8 +11503,14 @@ func _build_platform_pergola(streamed: bool = false) -> void:
 	# Emissive glass only; the chunk's two real lights are spent on the walk.
 	for lz in [z_a + 1.6, z_mid, z_b - 1.6]:
 		var llat: float = _platform_lateral(centre_out, lz)
-		_deck_cube(lz, llat, Vector3(0.04, 0.3, 0.04), Color("2a2e31"), 0.0, HEIGHT - 0.14)
-		_deck_lamp(lz, llat, Vector3(0.2, 0.26, 0.2), LAMP_WARM, HEIGHT - 0.44)
+		var iron := Color("2a2e31")
+		_deck_cube(lz, llat, Vector3(0.035, 0.58, 0.035), iron, 0.0, HEIGHT - 0.18)
+		_deck_lamp(lz, llat, Vector3(0.18, 0.26, 0.18), LAMP_WARM, HEIGHT - 0.48)
+		_deck_cube(lz, llat, Vector3(0.26, 0.07, 0.26), iron, 0.0, HEIGHT - 0.24)
+		_deck_cube(lz, llat, Vector3(0.24, 0.06, 0.24), iron, 0.0, HEIGHT - 0.52)
+		for dx in [-0.095, 0.095]:
+			for dz in [-0.095, 0.095]:
+				_deck_cube(lz + dz, llat + dx, Vector3(0.022, 0.28, 0.022), iron, 0.0, HEIGHT - 0.48)
 	if streamed and _slice_spent() and not await _keep_streaming():
 		return
 	# Two benches under the canopy, facing the water between the posts — with
@@ -11477,19 +11520,20 @@ func _build_platform_pergola(streamed: bool = false) -> void:
 		_deck_cube(bench_z, bench_lat, Vector3(0.5, 0.12, 1.9), stone, 0.0, -0.04)
 		for leg in [-0.7, 0.7]:
 			_deck_cube(bench_z + leg, bench_lat, Vector3(0.44, 0.36, 0.1), Color("3a3d42"), 0.0, 0.08)
+		_deck_cube(bench_z, bench_lat, Vector3(0.12, 0.12, 1.5), Color("3a3d42"), 0.0, 0.22)
 		for slat in [-0.14, 0.0, 0.14]:
 			_deck_cube(bench_z, bench_lat + _vp_side * slat, Vector3(0.11, 0.06, 1.8), timber.lightened(0.12), 0.0, 0.44)
 	# A trough of bloom on the inner line so the frame sits in a garden —
 	# on the parapet side it would crowd the vista bench it now shelters.
 	var trough_lat := _platform_lateral(inner + 0.65, z_mid)
-	_deck_cube(z_mid, trough_lat, Vector3(0.6, 0.42, 1.6), Color("b8ac98"), 0.0, -0.04)
+	_deck_planter(z_mid, trough_lat, Vector3(0.6, 0.42, 1.6), Color("b8ac98"))
 	_deck_blob(z_mid, trough_lat, Vector3(0.55, 0.4, 1.4), Color("4a6a46"), 0.34, true)
 	for k in 3:
 		_deck_bloom_cluster(z_mid - 0.5 + float(k) * 0.5, trough_lat, bloom.lightened(0.05 * float(k)), 0.52, 3, 0.14)
 	# Pots at both open ends, so the frame's thresholds are planted alike.
 	for pz in [z_a + 0.9, z_b - 0.9]:
 		var pot_lat: float = _platform_lateral(inner + 0.15, pz)
-		_deck_cube(pz, pot_lat, Vector3(0.5, 0.5, 0.5), Color("b8ac98"), 0.0, -0.04)
+		_deck_planter(pz, pot_lat, Vector3(0.5, 0.5, 0.5), Color("b8ac98"))
 		_deck_blob(pz, pot_lat, Vector3(0.46, 0.34, 0.46), Color("4a6a46"), 0.42, true)
 		_deck_bloom_cluster(pz, pot_lat, bloom.lightened(0.08), 0.6, 4, 0.16)
 
@@ -11667,7 +11711,7 @@ func _build_platform_planting(streamed: bool = false) -> void:
 	for end in [-1.0, 1.0]:
 		var pz: float = centre + end * 16.5
 		var plat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 1.8, pz)
-		_deck_cube(pz, plat, Vector3(0.85, 0.42, 0.85), Color("c4b7a4"), 0.0, -0.04)
+		_deck_planter(pz, plat, Vector3(0.85, 0.42, 0.85), Color("c4b7a4"))
 		_deck_blob(
 			pz,
 			plat,
@@ -11684,7 +11728,7 @@ func _build_platform_planting(streamed: bool = false) -> void:
 	for offset in [-7.5, 7.5]:
 		var pz: float = centre + offset
 		var plat: float = _platform_lateral(RoadPathGD.PLATFORM_HALF_WIDTH + 1.7, pz)
-		_deck_cube(pz, plat, Vector3(1.3, 0.4, 0.62), Color("b8ac98"), 0.0, -0.04)
+		_deck_planter(pz, plat, Vector3(1.3, 0.4, 0.62), Color("b8ac98"))
 		_deck_blob(pz, plat, Vector3(1.15, 0.4, 0.52), Color("4a6a46"), 0.34, true)
 		_deck_bloom_cluster(pz + 0.32, plat, bloom, 0.52, 4, 0.22)
 		_deck_bloom_cluster(pz - 0.34, plat, bloom.lightened(0.1), 0.48, 3, 0.18)
@@ -12199,20 +12243,23 @@ func _belvedere_wall(b: LowPoly, za: float, zb: float, limestone: Color, mortar:
 	var toe_b := _belvedere_toe(zb, face_b)
 	if toe_a > WALL + 0.05 or toe_b > WALL + 0.05:
 		var plinth := limestone.lerp(shadow, 0.45)
-		b.add_quad(
-			_p(za, face_a, WALL), _p(zb, face_b, WALL), _p(zb, face_b, toe_b), _p(za, face_a, toe_a), plinth
-		)
-		b.add_quad(
-			_p(za, face_a, toe_a), _p(zb, face_b, toe_b), _p(zb, face_b, WALL), _p(za, face_a, WALL), plinth.darkened(0.08)
-		)
-		# A course line part-way down gives the drop masonry scale — one long
-		# unjointed curtain is what read as a board curtain in the first place.
-		var mid_a: float = WALL + (toe_a - WALL) * 0.45
-		var mid_b: float = WALL + (toe_b - WALL) * 0.45
-		b.add_quad(
-			_p(za, face_a, mid_a), _p(zb, face_b, mid_b), _p(zb, face_b, mid_b + 0.4), _p(za, face_a, mid_a + 0.4),
-			plinth.darkened(0.14)
-		)
+		## Courses replace the coplanar dark stripe: overlapping faces flickered
+		## from the water and one uninterrupted panel had no masonry scale.
+		## The last course follows the sampled footing instead of ending in air.
+		var top := WALL
+		var course := 0
+		while top < maxf(toe_a, toe_b) - 0.01:
+			var bottom := top + 1.15
+			var a0 := minf(top, toe_a)
+			var b0 := minf(top, toe_b)
+			var a1 := minf(bottom, toe_a)
+			var b1 := minf(bottom, toe_b)
+			var tone := plinth.darkened(0.035 if course % 2 == 0 else 0.0)
+			b.add_quad(_p(za, face_a, a0), _p(zb, face_b, b0), _p(zb, face_b, b1), _p(za, face_a, a1), tone)
+			b.add_quad(_p(za, face_a, a1), _p(zb, face_b, b1), _p(zb, face_b, b0), _p(za, face_a, a0), tone.darkened(0.08))
+			top = bottom
+			course += 1
+
 	# Underside, so the shelf has a bottom when seen from the drop. Where the
 	# plinth runs it into the slope the same quad reads as a footing course.
 	b.add_quad(
@@ -12252,16 +12299,20 @@ func _belvedere_ends(b: LowPoly, limestone: Color, shadow: Color) -> void:
 	## two lit blades.
 	var half: float = RoadPathGD.PLATFORM_HALF_LENGTH
 	var inner := RoadPathGD.PLATFORM_HALF_WIDTH + 0.55
-	var face := RoadPathGD.PLATFORM_HALF_WIDTH + 6.45
+	var face := RoadPathGD.PLATFORM_HALF_WIDTH + 6.85
 	for end in [-1.0, 1.0]:
 		var z: float = _vp_centre + end * half
 		var la: float = _platform_lateral(inner, z)
 		var lb: float = _platform_lateral(face, z)
-		var a := minf(la, lb)
-		var c := maxf(la, lb)
 		var top: float = _terrace_floor if _terrace_floor > 0.0 else 0.52
-		var toe := _belvedere_toe(z, c)
-		b.add_quad(_p(z, a, -top), _p(z, c, -top), _p(z, c, toe), _p(z, a, toe), limestone.lerp(shadow, 0.35))
+		## Sample the outside edge on either side of the road. Taking max(la,
+		## lb) sampled the inner edge on left-hand overlooks and cut the return
+		## short of its footing; the old 6.45 edge also left a 40 cm open corner.
+		var toe := _belvedere_toe(z, lb)
+		var face_color := limestone.lerp(shadow, 0.35)
+		var q: Array[Vector3] = [_p(z, la, -top), _p(z, lb, -top), _p(z, lb, toe), _p(z, la, toe)]
+		b.add_quad(q[0], q[1], q[2], q[3], face_color)
+		b.add_quad(q[3], q[2], q[1], q[0], face_color)
 
 
 func _kerb_run(b: LowPoly, za: float, zb: float, out: float, width: float, height: float, color: Color) -> void:
