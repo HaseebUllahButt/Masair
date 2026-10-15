@@ -909,6 +909,10 @@ func set_night_lighting(darkness: float) -> void:
 	# brightest. Warm white: the halogen orange read as an egg on the tarmac.
 	_headlight.rotation_degrees.x = lerpf(-4.0, -1.5, t)
 	_headlight.light_energy = lerpf(0.0, 5.0, t)
+	# A spot at zero energy still lights every object in its cone as far as the
+	# renderer is concerned: a per-pixel loop for nothing, and a second program
+	# for every material it touches compiled mid-ride. Off by day, not just dark.
+	_headlight.visible = t > 0.001
 	_headlight.spot_attenuation = lerpf(0.75, -0.4, t)
 	_headlight.spot_angle_attenuation = lerpf(1.1, 1.0, t)
 	_headlight.spot_range = lerpf(26.0, 36.0, t)
