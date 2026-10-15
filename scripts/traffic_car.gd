@@ -664,12 +664,64 @@ func register_near_miss() -> void:
 # ------------------------------------------------------------------- meshes
 
 
+## Building a body costs ~5 ms on the laptop, and a convoy of new paints in one
+## frame was a 10-20 ms traffic hitch every few hundred metres of a first ride.
+## A worker thread builds every (kind, colour) once at load instead; spawning
+## only looks the mesh up. Meshes made off the main thread only queue their
+## renderer calls, which the main thread runs at its next sync.
+static var _prebuilt: Dictionary = {}
+static var _prebuilt_lock := Mutex.new()
+static var _prebuild_started: bool = false
+
+
+static func prebuild_meshes() -> void:
+	if _prebuild_started:
+		return
+	_prebuild_started = true
+	# The shared materials are lazy statics: create them here, on the main
+	# thread, so the worker only ever reads them.
+	for channel: int in [LowPoly.SOLID, LowPoly.GLOW, LowPoly.METAL, LowPoly.PAINT, LowPoly.FOLIAGE, LowPoly.MIRROR]:
+		LowPoly.material_for(channel)
+	WorkerThreadPool.add_task(_prebuild_all, false, "Prebuild traffic meshes")
+
+
+static func _prebuild_all() -> void:
+	for vehicle_kind: int in Kind.size():
+		var lamps := {
+			"brake": _build_brake_mesh(vehicle_kind),
+			"blink_l": _build_blinker_mesh(vehicle_kind, -1.0),
+			"blink_r": _build_blinker_mesh(vehicle_kind, 1.0),
+		}
+		_prebuilt_lock.lock()
+		_prebuilt[-1 - vehicle_kind] = lamps
+		_prebuilt_lock.unlock()
+		for color_index: int in BODY_COLORS.size():
+			var mesh := _build_body_mesh(vehicle_kind, color_index)
+			_prebuilt_lock.lock()
+			_prebuilt[vehicle_kind * 100 + color_index] = mesh
+			_prebuilt_lock.unlock()
+
+
+static func _take_prebuilt(key: int) -> Variant:
+	_prebuilt_lock.lock()
+	var found: Variant = _prebuilt.get(key)
+	_prebuilt_lock.unlock()
+	return found
+
+
 static func _mesh_for(vehicle_kind: int, color_index: int) -> ArrayMesh:
-	## One mesh per (kind, colour), built on demand and shared by every car after
-	## that.
-	var key := vehicle_kind * 100 + color_index
+	## One mesh per (kind, colour), shared by every car after that.
+	var key := vehicle_kind * 100 + color_index % BODY_COLORS.size()
 	if _mesh_cache.has(key):
 		return _mesh_cache[key]
+	var mesh: ArrayMesh = _take_prebuilt(key)
+	if mesh == null:
+		mesh = _build_body_mesh(vehicle_kind, color_index)
+	_mesh_cache[key] = mesh
+	return mesh
+
+
+static func _build_body_mesh(vehicle_kind: int, color_index: int) -> ArrayMesh:
 	var body := BODY_COLORS[color_index % BODY_COLORS.size()]
 	var b := LowPoly.new()
 	match vehicle_kind:
@@ -687,9 +739,7 @@ static func _mesh_for(vehicle_kind: int, color_index: int) -> ArrayMesh:
 			_build_bus(b, body)
 		_:
 			_build_sedan(b, body)
-	var mesh := b.commit()
-	_mesh_cache[key] = mesh
-	return mesh
+	return b.commit()
 
 
 const GLASS := Color("2b3a4e")  # dark tinted at dusk; a pale blue slab reads as a hole
@@ -806,6 +856,13 @@ static func _brake_mesh(vehicle_kind: int) -> ArrayMesh:
 	## plus a high-mounted third lamp on anything with a roof worth using.
 	if _brake_cache.has(vehicle_kind):
 		return _brake_cache[vehicle_kind]
+	var lamps: Variant = _take_prebuilt(-1 - vehicle_kind)
+	var mesh: ArrayMesh = lamps["brake"] if lamps != null else _build_brake_mesh(vehicle_kind)
+	_brake_cache[vehicle_kind] = mesh
+	return mesh
+
+
+static func _build_brake_mesh(vehicle_kind: int) -> ArrayMesh:
 	var row: Array = LAMPS[vehicle_kind]
 	var half_x: float = row[0]
 	var y: float = row[1] + 0.06
@@ -815,9 +872,7 @@ static func _brake_mesh(vehicle_kind: int) -> ArrayMesh:
 	for side in [-1.0, 1.0]:
 		_rbx(b, Vector3(side * half_x, y, rear_z - 0.02), Vector3(w * 0.94, 0.21, 0.1), BRAKELIGHT, 0.03, 0.0, true)
 	_bx(b, Vector3(0, HIGH_BRAKE[vehicle_kind], rear_z - 0.04), Vector3(half_x * 1.0, 0.09, 0.08), BRAKELIGHT, true)
-	var mesh := b.commit()
-	_brake_cache[vehicle_kind] = mesh
-	return mesh
+	return b.commit()
 
 
 static func _blinker_mesh(vehicle_kind: int, side: float) -> ArrayMesh:
@@ -826,6 +881,15 @@ static func _blinker_mesh(vehicle_kind: int, side: float) -> ArrayMesh:
 	var key := vehicle_kind * 10 + (0 if side < 0.0 else 1)
 	if _blinker_cache.has(key):
 		return _blinker_cache[key]
+	var lamps: Variant = _take_prebuilt(-1 - vehicle_kind)
+	var mesh: ArrayMesh = (
+		lamps["blink_l" if side < 0.0 else "blink_r"] if lamps != null else _build_blinker_mesh(vehicle_kind, side)
+	)
+	_blinker_cache[key] = mesh
+	return mesh
+
+
+static func _build_blinker_mesh(vehicle_kind: int, side: float) -> ArrayMesh:
 	var row: Array = LAMPS[vehicle_kind]
 	var half_x: float = row[0]
 	var y: float = row[1]
@@ -836,9 +900,7 @@ static func _blinker_mesh(vehicle_kind: int, side: float) -> ArrayMesh:
 	var b := LowPoly.new()
 	_rbx(b, Vector3(x, y, front_z - 0.03), Vector3(w * 0.36, 0.15, 0.09), INDICATOR, 0.02, 0.0, true)
 	_rbx(b, Vector3(x, y + 0.06, rear_z + 0.03), Vector3(w * 0.36, 0.15, 0.09), INDICATOR, 0.02, 0.0, true)
-	var mesh := b.commit()
-	_blinker_cache[key] = mesh
-	return mesh
+	return b.commit()
 
 
 static func _build_sedan(b: LowPoly, c: Color) -> void:

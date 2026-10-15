@@ -87,6 +87,7 @@ func _ready() -> void:
 	_path = get_node_or_null("/root/RoadPath")
 	_seed_from_world()
 	_timer = first_spawn_delay
+	TrafficCarGD.prebuild_meshes()
 
 
 func bind_player(player: Node3D) -> void:
