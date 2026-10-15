@@ -39,6 +39,7 @@ var _path: Node
 var difficulty: int = 1
 var pack_chance: float = 0.18
 var _prefilling: bool = false
+const PREFILL_OWN_LANE_CLEAR := 260.0
 
 
 ## Traffic weather along the route. Indexed in this order by the mood tables.
@@ -419,6 +420,13 @@ func _try_spawn(anchor_z: float = NAN, anchor_lane: int = -1) -> Vector2:
 		for c in _cars:
 			if absf(c.track_z - z) < gap and (absf(c.lateral - lane_x) < 2.8 or int(c.get("_pending_lane")) == lane):
 				return Vector2(-1.0, -1.0)
+	## The opening stream keeps the rider's own lane clear for a few hundred
+	## metres. A run starts — or restarts after a crash — flat on the throttle
+	## from town pace, and a slow van parked 125 m up that same lane is a
+	## second crash five seconds later rather than traffic to read.
+	if _prefilling and z < _player.track_z + PREFILL_OWN_LANE_CLEAR \
+	and absf(lane_x - float(_player.lateral)) < 2.8:
+		return Vector2(-1.0, -1.0)
 	var car: Node3D = TrafficCarGD.new() as Node3D
 	add_child(car)
 	car.call("setup", kind, lane, z, speed, _rng.randi_range(0, 15))
