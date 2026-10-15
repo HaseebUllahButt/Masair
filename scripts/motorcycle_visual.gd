@@ -904,15 +904,19 @@ func set_night_lighting(darkness: float) -> void:
 	if _headlight == null:
 		return
 	var t: float = pow(clampf(darkness, 0.0, 1.0), 0.55)
-	# A warm halogen pool, not a pale wash: at 5.4 and near-white the beam on
-	# moonlit tarmac read as a faint pink smudge under the grade's lavender toe.
-	_headlight.light_energy = lerpf(0.0, 12.0, t)
-	# A flatter falloff throws the pool up the lane instead of piling it on
-	# the front wheel.
-	_headlight.spot_attenuation = lerpf(0.75, 0.5, t)
-	_headlight.spot_range = lerpf(26.0, 68.0, t)
-	_headlight.spot_angle = lerpf(20.0, 33.0, t)
-	_headlight.light_color = Color(1.0, 0.90, 0.72).lerp(Color(1.0, 0.86, 0.62), t)
+	# A beam, not a pool: aimed nearly level so the cone meets the road as a fan
+	# from just ahead of the wheel out up the lane. A road lit at a graze fades
+	# with distance on its own, so the falloff runs slightly backwards (a
+	# negative exponent) to carry the fan out; the range cuts it off before it
+	# floods the verge trees far ahead. A soft rim keeps the centre of travel the
+	# brightest. Warm white: the halogen orange read as an egg on the tarmac.
+	_headlight.rotation_degrees.x = lerpf(-4.0, -1.5, t)
+	_headlight.light_energy = lerpf(0.0, 5.0, t)
+	_headlight.spot_attenuation = lerpf(0.75, -0.4, t)
+	_headlight.spot_angle_attenuation = lerpf(1.1, 1.0, t)
+	_headlight.spot_range = lerpf(26.0, 36.0, t)
+	_headlight.spot_angle = lerpf(20.0, 36.0, t)
+	_headlight.light_color = Color(1.0, 0.90, 0.72).lerp(Color(1.0, 0.93, 0.82), t)
 
 
 func _build_needle(head: Node3D, at: Vector3) -> Node3D:
