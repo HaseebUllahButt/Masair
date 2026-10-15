@@ -4,6 +4,8 @@ extends SceneTree
 ## heading cap; a held bar cannot describe a circle on an endless road strip.
 ## Uses the actual input actions and stock Mesa profile, independent of saves.
 ## --check adds grip, gearbox, recovery and camera-hitch regression checks.
+## Those checks were written for the round-7 bike; the pre-night handling that
+## replaced it fails four of them by design. The plain measurements still hold.
 ## --hz=30|60|120 compares frame-rate behaviour; --bike-script=<path> measures
 ## a saved baseline script with exactly the same inputs and road seed.
 
