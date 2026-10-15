@@ -17,6 +17,19 @@ uniform float band_low : hint_range(0.01, 0.6) = 0.12;
 uniform float band_high : hint_range(0.05, 1.5) = 0.62;
 uniform float horizon_glow : hint_range(0.0, 3.0) = 0.55;
 uniform float energy : hint_range(0.0, 3.0) = 1.0;
+// How much the horizon depends on which way you look. Zero is one colour all
+// the way round (day, night). A low sun only warms its own side of the sky: the
+// far side of a sunrise is the cool blue-grey of the earth's own shadow with a
+// rose band over it, and that cool half is most of what tells a morning from a
+// sunset, which wraps its orange round the whole skyline.
+uniform float azimuth_split : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 anti_horizon : source_color = vec3(0.56, 0.60, 0.74);
+uniform vec3 belt_color : source_color = vec3(0.86, 0.64, 0.72);
+uniform float belt_strength : hint_range(0.0, 1.0) = 0.0;
+// A pale moon left over from the night, opposite the sun. Sky-coloured and
+// faint, the way a daytime moon is: brighter than the blue, never a lamp.
+uniform float ghost_moon : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 ghost_moon_dir = vec3(-0.55, 0.42, -0.72);
 
 group_uniforms celestial;
 uniform vec3 sun_color : source_color = vec3(1.0, 0.72, 0.42);
@@ -132,11 +145,52 @@ void sky() {
 	// colour instead of three painted stripes. Horizon glow stays a skirt.
 	float zenith_w = smoothstep(band_low * 0.45, band_high, h);
 	float mid_w = smoothstep(0.0, max(band_low * 2.6, 0.05), h);
-	vec3 col = mix(horizon_color, mid_color, mid_w);
+	// 1 looking at the sun's bearing, 0 with it behind you. Raised to the
+	// fourth so the warm half is a wedge round the sun rather than half the
+	// skyline.
+	float sun_side = 1.0;
+	if (LIGHT0_ENABLED && azimuth_split > 0.001) {
+		vec2 view_az = normalize(EYEDIR.xz + vec2(1e-4));
+		vec2 sun_az = normalize(LIGHT0_DIRECTION.xz + vec2(1e-4));
+		sun_side = pow(dot(view_az, sun_az) * 0.5 + 0.5, 4.0);
+	}
+	vec3 horizon = mix(horizon_color, mix(anti_horizon, horizon_color, sun_side), azimuth_split);
+	vec3 col = mix(horizon, mid_color, mid_w);
 	col = mix(col, zenith_color, zenith_w);
 	float skirt = pow(1.0 - min(abs(up) * 3.4, 1.0), 2.2);
-	col += horizon_color * skirt * horizon_glow;
+	col += horizon * skirt * horizon_glow;
+	// The Belt of Venus: a rose band a few degrees up on the shadow side, lit by
+	// sun that has not reached the ground yet. Lifted off the horizon so the
+	// earth-shadow blue still sits under it. Toward the sun the same rose sits
+	// higher and fainter, between the gold and the blue — without it the two
+	// mix to a grey-brown wash, which no real sunrise has.
+	float belt_lo = mix(0.012, 0.05, sun_side);
+	float belt_hi = mix(0.09, 0.20, sun_side);
+	float belt = smoothstep(belt_lo, belt_lo + 0.05, h) * (1.0 - smoothstep(belt_hi, belt_hi + 0.17, h));
+	col = mix(col, belt_color, belt * mix(1.0, 0.45, sun_side) * belt_strength);
 	col = mix(col, ground_color, smoothstep(0.0, -0.08, up));
+
+	if (ghost_moon > 0.001 && !AT_CUBEMAP_PASS) {
+		vec3 md = normalize(ghost_moon_dir);
+		float ma = acos(clamp(dot(EYEDIR, md), -1.0, 1.0));
+		const float MOON_R = 0.021;
+		if (ma < MOON_R * 1.3) {
+			vec3 mx = normalize(cross(md, vec3(0.0, 1.0, 0.0)));
+			vec3 my = cross(mx, md);
+			vec2 face = vec2(dot(EYEDIR, mx), dot(EYEDIR, my)) / MOON_R;
+			// A little past half: the lit limb faces the sun, the rest of the
+			// disc is gone into the blue.
+			vec2 toward = vec2(0.0, -1.0);
+			if (LIGHT0_ENABLED) {
+				toward = normalize(vec2(dot(LIGHT0_DIRECTION, mx), dot(LIGHT0_DIRECTION, my)) + vec2(1e-4));
+			}
+			float lit = smoothstep(-0.32, -0.12, dot(face, toward));
+			float maria = 1.0 - 0.22 * (1.0 - smoothstep(0.08, 0.42, length(face - vec2(-0.22, 0.18))));
+			maria -= 0.16 * (1.0 - smoothstep(0.06, 0.32, length(face - vec2(0.24, 0.30))));
+			float disc = 1.0 - smoothstep(MOON_R * 0.92, MOON_R * 1.04, ma);
+			col = mix(col, mix(col, vec3(0.78, 0.85, 1.0), 0.40 * maria), disc * lit * ghost_moon);
+		}
+	}
 
 	// ── Clouds ─────────────────────────────────────────────────────────────
 	float cloud_alpha = 0.0;
@@ -231,10 +285,10 @@ void sky() {
 		cloud_col += sun_color * (rim * 1.25 + halo * facing * 0.5);
 		bank_col = mix(cloud_dark, cloud_lit, clamp(facing * 0.4 + (1.0 - bank_thickness * 0.5) * 0.7, 0.0, 1.0));
 		bank_col += sun_color * (1.0 - bank_thickness) * facing * 0.4;
-		bank_col = mix(bank_col, horizon_color, bank_haze);
+		bank_col = mix(bank_col, horizon, bank_haze);
 		col += sun_color * (disc * 1.9 + halo + mie) * (1.0 - cloud_alpha * 0.85) * (1.0 - bank_alpha * 0.7);
 	} else {
-		bank_col = mix(cloud_dark, horizon_color, bank_haze);
+		bank_col = mix(cloud_dark, horizon, bank_haze);
 	}
 
 	// ── Stars and galactic band ────────────────────────────────────────────

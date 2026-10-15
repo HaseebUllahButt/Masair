@@ -220,8 +220,8 @@ func _process(_delta: float) -> bool:
 		)
 		# Time of day is chosen for the run rather than driven by distance.
 		main.set("rain", 0.0)
-		main.set("lighting_mode", 1)
-		main.call("_apply_lighting")
+		# Immediate: the title screen may have a mood fade still running.
+		main.call("preview_mood", 1, true)
 		var environment: Environment = (main.get_node("WorldEnvironment") as WorldEnvironment).environment
 		var sun: DirectionalLight3D = main.get_node("Sun") as DirectionalLight3D
 		var sky_material: ShaderMaterial = environment.sky.sky_material as ShaderMaterial
@@ -254,8 +254,8 @@ func _process(_delta: float) -> bool:
 			float(sky_material.get_shader_parameter("star_intensity")) == 0.0,
 			"day mode shows no stars"
 		)
-		main.set("lighting_mode", 2)
-		main.call("_apply_lighting")
+		# Immediate: the title screen may have a mood fade still running.
+		main.call("preview_mood", 2, true)
 		# Energy times colour, not energy alone. Ambient contributes the product of
 		# the two, and a bare energy threshold silently stopped meaning "darker"
 		# the moment the ambient colours changed — it only ever held because the
@@ -264,12 +264,12 @@ func _process(_delta: float) -> bool:
 		var day_ambient: float = (
 			float(main.MOODS[1]["ambient"]) * (main.MOODS[1]["ambient_color"] as Color).get_luminance()
 		)
-		var dusk_ambient: float = (
+		var dawn_ambient: float = (
 			float(main.MOODS[0]["ambient"]) * (main.MOODS[0]["ambient_color"] as Color).get_luminance()
 		)
 		check(
-			night_ambient < day_ambient and night_ambient < dusk_ambient,
-			"night mode is darker than day and dusk"
+			night_ambient < day_ambient and night_ambient < dawn_ambient,
+			"night mode is darker than day and dawn"
 		)
 		check(environment.fog_density > 0.001 and environment.fog_density < 0.002, "night remains readable through controlled fog")
 		check(sun.light_color.b > sun.light_color.r, "night mode uses cool moonlight")
@@ -288,9 +288,15 @@ func _process(_delta: float) -> bool:
 			main.get_node_or_null("Player/CameraPivot/Camera3D/NightSky") == null,
 			"no camera-parented celestial art remains to swim with the view"
 		)
-		main.set("lighting_mode", 0)
-		main.call("_apply_lighting")
-		check(environment.fog_density > day_fog, "dusk mode restores evening atmosphere")
+		# Immediate: the title screen may have a mood fade still running.
+		main.call("preview_mood", 0, true)
+		# Dawn air is now the clearest of the three, so the check is that leaving
+		# night restores dawn's own air rather than that dawn is the haziest.
+		check(
+			is_equal_approx(environment.fog_density, float(main.get("MOODS")[0]["fog_density"]))
+			and float(sky_material.get_shader_parameter("star_intensity")) == 0.0,
+			"dawn mode brings back the morning air"
+		)
 		check(
 			not main.has_method("_protect_scenic_visibility"),
 			"the overlook does not swap the riding mood for a scenic one"

@@ -275,11 +275,15 @@ func _ambient(owner: Node3D) -> void:
 		_:
 			await _balloons(owner)
 			if _mood == Mood.DUSK:
+				# The first mood is dawn: the vale's lake holds its night mist
+				# too, and the starlings are leaving the roost.
+				await _mist(4, owner)
 				_murmuration()
 	if _root != owner:
 		return
-	if _mood != Mood.DAY and (_theme == FOREST or _theme == COUNTRY):
-		_fireflies(46 if _mood == Mood.NIGHT else 30)
+	# Fireflies are a night thing; at dawn they have long since gone out.
+	if _mood == Mood.NIGHT and (_theme == FOREST or _theme == COUNTRY):
+		_fireflies(46)
 	for k in range(before, _actors.size()):
 		_actors[k]["ambient"] = true
 
@@ -1229,8 +1233,10 @@ func _mist(count: int, owner: Node3D) -> void:
 	## the sun and a cream cloud at dusk, with no water showing through. Mist is
 	## a few torn wisps over dark water, thinnest by day when the sun has
 	## burned most of it off.
-	var color := Color("b89aa6")
-	var opacity: float = 0.2
+	# Dawn mist is the palest thing in the valley — white with the sky's lilac
+	# in it — not a sunset rose.
+	var color := Color("dcd6e4")
+	var opacity: float = 0.22
 	match _mood:
 		Mood.DAY:
 			color = Color("cdd8e0")

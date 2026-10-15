@@ -42,7 +42,7 @@ class Runner:
 		_player.lat_vel = 0.0
 		_player.call("_place")
 		var main := get_tree().root.find_child("Main", true, false)
-		main.call("preview_mood", 1)
+		main.call("preview_mood", 1, true)
 		var world_env := get_tree().root.find_child("WorldEnvironment", true, false) as WorldEnvironment
 		_env = world_env.environment
 		_sky_mat = _env.sky.sky_material

@@ -27,7 +27,7 @@ func _initialize() -> void:
 	cap.shots = int(opts.get("shots", 8 if opts.has("sweep") else 6))
 	cap.gap = float(opts.get("gap", 1.0 if opts.has("sweep") else 4.0))
 	cap.warmup = float(opts.get("warmup", 2.5))
-	cap.mode = String(opts.get("mode", "dusk"))
+	cap.mode = String(opts.get("mode", "dawn"))
 	cap.bench = opts.has("bench")
 	cap.look = String(opts.get("look", ""))
 	cap.viewpoint = opts.has("viewpoint")
@@ -63,6 +63,10 @@ func _initialize() -> void:
 	cap.trace = String(opts.get("trace", ""))
 	cap.hitch = opts.has("hitch")
 	cap.settle = opts.has("settle")
+	cap.cycle = float(opts.get("cycle", 0.0))
+	if opts.has("variants"):
+		cap.variants = JSON.parse_string(FileAccess.get_file_as_string(String(opts["variants"])))
+		cap.shots = cap.variants.size()
 	cap.tree_ref = self
 	if cap.hitch:
 		RoadChunkGD.set("hitch_trace", true)
@@ -89,7 +93,7 @@ class Capture:
 	var shots: int = 6
 	var gap: float = 4.0
 	var warmup: float = 2.5
-	var mode: String = "dusk"
+	var mode: String = "dawn"
 	## "left"/"right": hold the glance action, to check that sky bodies stay put
 	## in the world instead of swimming with the camera.
 	var look: String = ""
@@ -141,6 +145,15 @@ class Capture:
 	## bike was, and the streamer's job/queue state, so a spike can be blamed on
 	## a build stage instead of guessed at.
 	var hitch := false
+	## Press T every this many seconds once warm (0 = never) — with --hitch,
+	## the frame log shows whether a mood change costs a frame.
+	var cycle: float = 0.0
+	## --variants=file.json: [[name, {mood key: value}], ...]. One shot per
+	## entry, each with those keys laid over the current mood row — a lighting
+	## A/B of the same spot in one boot. Colours as "#hex", vectors as [x,y,z].
+	var variants: Array = []
+	var _variant_on: int = -1
+	var _next_cycle: float = -1.0
 	## "x,y" pixel to trace a single ray through: prints every batch it crosses.
 	var trace: String = ""
 	## Hold the warmup clock until the streamer reports itself idle. Chunks
@@ -258,10 +271,10 @@ class Capture:
 		# Select the requested authored look directly. Simulating T here was order-
 		# dependent: Main could process before this helper released/re-pressed the
 		# action, leaving a file named "night" with the previous dusk sky.
-		var mood_id: int = {"auto": 0, "dusk": 0, "day": 1, "night": 2}.get(mode, 0)
+		var mood_id: int = {"auto": 0, "dawn": 0, "dusk": 0, "day": 1, "night": 2}.get(mode, 0)
 		var main := get_tree().root.find_child("Main", true, false)
 		if main and main.has_method("preview_mood"):
-			main.call("preview_mood", mood_id)
+			main.call("preview_mood", mood_id, true)
 		await get_tree().process_frame
 		await get_tree().process_frame
 		if menu and hud:
@@ -543,6 +556,17 @@ class Capture:
 			Input.action_release("steer_left")
 			Input.action_release("steer_right")
 			Input.action_press("steer_right" if seg % 2 == 0 else "steer_left", weave)
+		if cycle > 0.0 and _elapsed > warmup:
+			if _next_cycle < 0.0:
+				_next_cycle = _elapsed + cycle
+			elif _elapsed >= _next_cycle:
+				_next_cycle += cycle
+				var main := get_tree().root.find_child("Main", true, false)
+				if main:
+					main.call("_cycle_lighting")
+					print("cycle: t=%.1f mood=%d" % [_elapsed, int(main.get("lighting_mode"))])
+		if not variants.is_empty() and _variant_on < 0 and _elapsed > warmup * 0.5:
+			_apply_variant(0)
 		if _ignore_next_frame:
 			# PNG encoding is deliberately synchronous and is not gameplay work.
 			_ignore_next_frame = false
@@ -689,6 +713,8 @@ class Capture:
 		var suffix := ""
 		if sweep:
 			suffix = "_y%03d" % int(round(fposmod(yaw + _taken * 45.0, 360.0)))
+		if _variant_on >= 0:
+			suffix += "_" + String(variants[_variant_on][0])
 		var path := "%s/%s%s.png" % [out_dir, stem, suffix] if shot_name != "" else "%s/%s%s_%02d.png" % [out_dir, stem, suffix, _taken]
 		img.save_png(path)
 		_ignore_next_frame = true
@@ -719,6 +745,48 @@ class Capture:
 			tree_ref.quit(0)
 		elif catalog:
 			_apply_catalog_job(_taken)
+		elif not variants.is_empty():
+			_apply_variant(_taken)
+
+	func _apply_variant(index: int) -> void:
+		_variant_on = index
+		var main := get_tree().root.find_child("Main", true, false)
+		if main == null:
+			return
+		var row: Dictionary = (main.get("MOODS")[int(main.get("lighting_mode"))] as Dictionary).duplicate()
+		var over: Dictionary = variants[index][1]
+		var beam: Dictionary = {}
+		for key in over:
+			var v: Variant = over[key]
+			if String(key).begins_with("hl_"):
+				beam[String(key).substr(3)] = v
+				continue
+			if v is String:
+				row[key] = Color(v)
+			elif v is Array and row.get(key) is Color:
+				row[key] = Color(v[0], v[1], v[2])
+			elif v is Array:
+				row[key] = Vector3(v[0], v[1], v[2])
+			else:
+				row[key] = float(v)
+		# Main's own fade path: a non-empty "from" row at fade 0 is what shows.
+		main.set("_mood_from", row)
+		main.set("_mood_fade", 0.0)
+		main.call("_apply_lighting")
+		# "hl_<property>" keys go to the bike's headlight after the mood has set
+		# it; "hl_pitch" tilts it.
+		var lamp := main.find_child("Headlight", true, false) as SpotLight3D
+		if lamp != null:
+			for key in beam:
+				var v: Variant = beam[key]
+				if key == "pitch":
+					lamp.rotation_degrees.x = float(v)
+				elif v is String:
+					lamp.set(key, Color(v))
+				elif v is Array:
+					lamp.set(key, Color(v[0], v[1], v[2]))
+				else:
+					lamp.set(key, float(v))
 
 	func _trace_ray() -> void:
 		## One ray through --trace=x,y: every batch it crosses, nearest first,

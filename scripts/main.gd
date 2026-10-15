@@ -3,7 +3,8 @@ extends Node3D
 ##
 ## Every visual mood — sky, sun, fog, exposure, grading, cloud weather — is one
 ## row of MOODS. Switching mood only pushes numbers into a shader and an
-## Environment, so T is instant and never rebuilds the streamed world.
+## Environment, so T is cheap and never rebuilds the streamed world — the
+## numbers fade across a second and a half rather than cutting.
 ##
 ## Deliberately no SSAO, no volumetric fog, no screen-space anything: this is a
 ## flat-shaded low-poly game and the mood comes from colour, a gradient sky and a
@@ -45,6 +46,12 @@ const SKY_UNIFORMS := [
 	"bank_haze",
 	"star_intensity",
 	"galaxy_color",
+	"azimuth_split",
+	"anti_horizon",
+	"belt_color",
+	"belt_strength",
+	"ghost_moon",
+	"ghost_moon_dir",
 ]
 
 @onready var road_streamer: Node3D = $RoadStreamer
@@ -55,7 +62,7 @@ const SKY_UNIFORMS := [
 @onready var world_env: WorldEnvironment = $WorldEnvironment
 @onready var camera: Camera3D = $Player/CameraPivot/Camera3D
 
-enum LightingMode { DUSK, DAY, NIGHT }
+enum LightingMode { DAWN, DAY, NIGHT }
 
 ## One row per mood. Keys map 1:1 onto sky shader uniforms, Environment
 ## properties and the sun, so adding a mood is data rather than branches.
@@ -64,133 +71,126 @@ enum LightingMode { DUSK, DAY, NIGHT }
 ## nearby scenery must keep its own colour. Dense fog plus strong sky ambient is
 ## what used to turn every environment into the same flat mauve.
 const MOODS := {
-	LightingMode.DUSK:
+	LightingMode.DAWN:
 	{
-		"zenith_color": Color("12183c"),
-		"mid_color": Color("cf6681"),
-		"horizon_color": Color("f7a76a"),
-		"ground_color": Color("1e2a30"),
-		"band_low": 0.08,
-		"band_high": 0.50,
-		"horizon_glow": 0.42,
+		# Dawn, not a second sunset. This row used to be one — a magenta dome
+		# and a ff9e62 key down the road — and nothing in it said morning. What
+		# does, in every photograph of a sunrise: the sky overhead is already
+		# clear blue, the warmth is a wedge round the sun and nowhere else, the
+		# far side of the sky is the cool earth-shadow with a rose band over it,
+		# shadows are long and lilac, and the low ground holds the night's mist.
+		# Fresh, cool, clean air — the orange is a guest, not the room.
+		"zenith_color": Color("26407f"),
+		# Periwinkle, with blue clearly on top. The grade turns any pale,
+		# half-saturated blue to sage (see the day row); this survives it.
+		"mid_color": Color("7584c8"),
+		# The sun's side only — azimuth_split hands the rest of the skyline to
+		# anti_horizon. Gold, not orange: dawn light has had all night's dust
+		# settle out of it. Kept a step below white, or the sun disc and the sky
+		# round it both hit the grade's ceiling and the disc vanishes.
+		"horizon_color": Color("f2b585"),
+		"ground_color": Color("2a3446"),
+		"band_low": 0.07,
+		"band_high": 0.56,
+		"horizon_glow": 0.10,
+		"azimuth_split": 1.0,
+		"anti_horizon": Color("97a1c6"),
+		"belt_color": Color("e2a6bd"),
+		"belt_strength": 0.55,
+		"ghost_moon": 0.40,
+		# A last-quarter moon, most of a right angle round the sky from the sun
+		# and 22 degrees up: top right of the frame while riding, and over the
+		# far shore from any bench that faces away from the sunrise.
+		"ghost_moon_dir": Vector3(-0.596, 0.375, 0.710),
 		"energy": 1.0,
-		"sun_color": Color(1.0, 0.55, 0.28),
-		"sun_radius": 0.026,
-		"sun_halo": 0.52,
-		"sun_halo_falloff": 11.0,
+		"sun_color": Color(1.55, 1.12, 0.74),
+		"sun_radius": 0.022,
+		# A tight, faint halo: a soft disc with a little glow round it, not the
+		# sunset's blown-out ball.
+		"sun_halo": 0.12,
+		"sun_halo_falloff": 30.0,
 		"sun_disc": 1.0,
 		"moon_face": 0.0,
-		"cloud_lit": Color("f4b07d"),
-		"cloud_dark": Color("413b58"),
-		"cloud_cover": 0.34,
-		"cloud_sharpness": 0.36,
-		"cloud_scale": 1.35,
-		"cloud_speed": 0.007,
-		"cloud_opacity": 0.72,
-		"bank_cover": 0.50,
-		"bank_opacity": 0.70,
-		"bank_height": 0.13,
-		"bank_haze": 0.62,
+		# Clouds take the first light pink on top and stay lilac underneath.
+		"cloud_lit": Color("f7c6b6"),
+		"cloud_dark": Color("6470a8"),
+		"cloud_cover": 0.30,
+		"cloud_sharpness": 0.42,
+		"cloud_scale": 1.30,
+		"cloud_speed": 0.006,
+		"cloud_opacity": 0.66,
+		"bank_cover": 0.44,
+		"bank_opacity": 0.55,
+		"bank_height": 0.11,
+		"bank_haze": 0.60,
 		"star_intensity": 0.0,
 		"galaxy_color": Color("6b74b8"),
-		"light_color": Color("ff9e62"),
-		# Key energy and exposure are one decision, not two. Raised together with
-		# the angle below: the sun is the only directional light in the scene, so
-		# it is the only thing that can put a lit side and a shaded side on a
-		# hill. More key with the white point pulled back down keeps the
-		# frame's overall brightness where it was while spending the extra
-		# energy on *range* in the midtones instead of on overall level — which
-		# is the one thing this lookoff was missing.
-		#
-		# Halved when the sun's shadow came on: in this renderer a shadowed
-		# directional lands roughly twice the light of a shadowless one at the
-		# same energy, so all three moods' keys re-centre on the old exposure.
-		"light_energy": 3.1,
-		"light_angle": Vector3(-15.0, 14.0, 0.0),
-		"angular_distance": 0.8,
-		# The warning at the top of this table is about exactly this row. A violet
-		# fill at 0.28 against a 0.62 sun is nearly a third of the light arriving
-		# as one hue from everywhere, and it took the grass, the trees and the
-		# hills all the way to mauve — the sunset stopped being something the
-		# landscape was lit by and became the only colour in it. Weaker fill,
-		# stronger warm key: the drama is in the sky, and the ground should be
-		# lit by it rather than painted with it.
-		# Fill and ambient were left where they are while the key went up 3.9x.
-		# That is the point: these two are the flat, from-everywhere component,
-		# and every unit of light that arrives as one hue from one direction-less
-		# source is a unit the frame cannot separate. With the key now doing most
-		# of the work, the fill and ambient are back to being the *shade* colour
-		# rather than the light's share of the picture, and the cool/warm split
-		# between them is the whole of the dusk look on a shaded hillside.
-		"fill_color": Color("5b7ea0"),
-		"fill_energy": 0.52,
-		"ambient": 0.70,
-		"ambient_color": Color("46426e"),
+		# Soft gold, nowhere near the sunset's ff9e62: a red-deep key is what
+		# paints every leaf brown, and dawn greens should come out dew-fresh.
+		"light_color": Color("ffd2a2"),
+		"light_energy": 2.6,
+		# Eleven degrees up and thirty-two off the road's axis, so the sun rakes across
+		# the carriageway from the front-left: every crown and post on the left
+		# verge throws a long shadow over the tarmac, the right verge is lit
+		# face-on, and the road never turns into a glare tunnel at the sun.
+		# Overlooks face out to either side, so one bench looks into the sunrise
+		# and the other gets the rose-lit ridges opposite it. Any lower or wider
+		# and the disc sits behind the verge hills.
+		"light_angle": Vector3(-11.0, 32.0, 0.0),
+		"angular_distance": 0.7,
+		# The shade colour is the sky's: a lilac-blue from the whole clear dome,
+		# strong enough that a shadow is cool rather than dark — but greyed a
+		# step, or the tarmac in a crown's shadow went navy.
+		"fill_color": Color("9ba2c6"),
+		"fill_energy": 0.32,
+		"ambient": 0.50,
+		"ambient_color": Color("6e7396"),
 		"ambient_sky_mix": 0.30,
 		"exposure": 0.96,
-		# Pulled down from 1.62 to pay for the key energy above. Exposure here is
-		# the ACES white point: lower is more headroom, and the extra key light
-		# would otherwise spend all of itself in the shoulder. Holding the
-		# brightness and buying the contrast is the whole trade — the overlook
-		# was not too dark, it was too evenly lit to read as three dimensional.
-		"white": 1.20,
-		# Not a colour picked for looks: RangeMaterial derives all six horizon
-		# shader colours from this one value, so whatever hue it carries is the
-		# hue every biome's woods, rock, scree and mist get diluted with. At
-		# 8b625f that was a brick — hue 4, and the derived forest and country
-		# woods came out as the same warm grey-brown, so the overlook had one
-		# material and three biomes' worth of nothing. 8a7a86 is a cool dusk
-		# haze instead: hue 315, roughly half the chroma, and lighter, which
-		# also pushes the `daylight` term the shader uses to blend biome colour
-		# back in towards its cap. Day's 9b9f92 (hue 78, near-zero chroma) is
-		# the model here — a mood's air should be a value, not a colour.
-		"fog_color": Color("8a7a86"),
-		"fog_energy": 0.90,
-		# Down from 0.0010. Exponential fog reaches 65% at a kilometre and 86% at
-		# two, and an overlook's whole mid-ground — lake, far shore, fells — sits
-		# inside that band, which is why half the view arrived greyed out. The
-		# vista ranges are fog-disabled and carry their own air; the engine fog
-		# only needs to bed the streamed edge in, not repainted as milk.
-		"fog_density": 0.00052,
-		# The dusk sun sits low and dead ahead. Strong sun scatter plus a ground
-		# fog layer therefore lit the tarmac itself into a bright wedge that
-		# followed the camera down the road — a haze sitting on the surface the
-		# player is trying to read. Scatter now only warms the far distance, and
-		# the ground layer is gone entirely.
-		"fog_sun_scatter": 0.14,
-		"fog_aerial": 0.13,
-		"fog_sky": 0.07,
-		"fog_height": 3.0,
-		"fog_height_density": 0.0,
-		"glow": 0.82,
-		"glow_bloom": 0.16,
-		"glow_strength": 1.25,
-		"contrast": 1.18,
-		# Dusk was the most saturated of the three moods while also being the
-		# flattest, and the two fed each other: no value separation meant the only
-		# way to make the picture read was to push chroma, which is exactly the
-		# mobile-game primary look the note in the day row warns about. With the
-		# key/exposure trade above supplying real separation, saturation goes to
-		# neutral and lets the sunset's own colours do the work.
-		"saturation": 1.08,
-		# The road's own counter-tint, pushed to tarmac_tint each mood change.
-		# Dusk lights the tarmac with a ff9e62 key and a violet shade at once —
-		# red plus purple is the maroon the road kept arriving in. The tint buys
-		# the red channel back down and spends it on blue, so the surface keeps
-		# the day's charcoal with only a sunset's worth of warmth left in it.
-		# Sheen is cut with it: at grazing angles the wet-look streak adds the
-		# same orange back, so half the win was losing it.
-		"road_tint": Color(0.74, 1.20, 1.26),
-		"road_sheen": 0.13,
+		"white": 1.24,
+		# RangeMaterial derives the ranges from this (see the day row): a cool
+		# blue-grey, light enough to read as daylight air, so ridges stay rock
+		# and forest instead of being dyed. Thin and a step bluer than the mist:
+		# dawn air is the clearest of the day, and a paler, thicker veil laid
+		# milk over every lookout.
+		"fog_color": Color("8e9cc4"),
+		"fog_energy": 1.0,
+		"fog_density": 0.00007,
+		"fog_sun_scatter": 0.05,
+		"fog_aerial": 0.04,
+		"fog_sky": 0.03,
+		# The valley mist. Height fog in this renderer is by depth below the
+		# line, not by distance, so the line sits under the lowest road (about
+		# -9 m) and the mist lies only in the lake basins well beneath it. Thin:
+		# at a half the whole basin went under one cream blanket and the water
+		# was gone; with the line at -20 the lookouts' middle distance went milky.
+		"fog_height": -40.0,
+		"fog_height_density": 0.003,
+		"glow": 0.6,
+		"glow_bloom": 0.06,
+		"glow_strength": 1.2,
+		"contrast": 1.2,
+		"saturation": 1.18,
+		# A low sun barely lights a flat road, so the tarmac is mostly lit by
+		# the lilac sky and the gold key at a graze — navy one way, rust the
+		# other. Green is the channel neither of them carries, so that is the
+		# one the counter-tint buys back. Measured to land charcoal.
+		"road_tint": Color(1.15, 1.22, 1.05),
+		"road_sheen": 0.15,
+		# The grade's apricot highlight split was written for sunsets; at dawn
+		# it is what turns clean light into orange soup. Most of it off.
+		"grade_split": 0.05,
+		"grade_warmth": 0.035,
+		"range_key_tint": Color(1.08, 0.90, 0.93),
+		"range_key_mix": 1.0,
 	},
 	LightingMode.DAY:
 	{
-		# Warm at the skyline, deep overhead. A blue that runs cyan all the way
+		# Pale at the skyline, deep overhead. A blue that runs cyan all the way
 		# down to the horizon is the daylight sky of a phone game: the air near
-		# the ground carries the most dust and the longest path, so it goes pale
-		# and warm, and that warm band is what makes the distance look like air
-		# instead of paint. It also feeds the sky ambient, so it warms the light
-		# on every shaded face in the world at the same time.
+		# the ground carries the most dust and the longest path, so it goes
+		# pale, and that pale band is what makes the distance look like air
+		# instead of paint.
 		# Mid blue is much deeper than it looks. The grade (LUT + the bright-
 		# range warm split in grade.gdshader) pulls any pale or half-saturated
 		# blue toward sage — a mid like 5590e0 renders mint. 2e68cc survives the
@@ -198,14 +198,18 @@ const MOODS := {
 		# reads as sky instead of shallow water.
 		"zenith_color": Color("2a5aa8"),
 		"mid_color": Color("2e68cc"),
-		"horizon_color": Color("f4d2a0"),
+		# Nearly neutral: a peach skyline at noon is the light of five in the
+		# afternoon, and the lakes mirror it — at f4d2a0 the overlook water came
+		# out as a cream sheet. Clear midday air is white-blue low down; the
+		# warmth stays in the key.
+		"horizon_color": Color("dfe4e2"),
 		"ground_color": Color("505e57"),
 		"band_low": 0.10,
 		# The zenith has to reach low. A wide mid band (0.78) held the gradient
 		# at exactly the luminance the split-tone mints; pulling the ramp down to
 		# 0.50 keeps the crossover dark enough to stay blue.
 		"band_high": 0.50,
-		"horizon_glow": 0.26,
+		"horizon_glow": 0.22,
 		"energy": 1.0,
 		"sun_color": Color(1.70, 1.58, 1.30),
 		"sun_radius": 0.019,
@@ -213,7 +217,7 @@ const MOODS := {
 		"sun_halo_falloff": 18.0,
 		"sun_disc": 1.0,
 		"moon_face": 0.0,
-		"cloud_lit": Color("f4e6cc"),
+		"cloud_lit": Color("f7f2e8"),
 		# 6f88a2 graded to sage — the shadowed sides of clouds were the most
 		# visible mint in the frame. Needs a strong blue lead before the LUT to
 		# land as blue-grey instead of green: its blend with the warm lit side
@@ -296,7 +300,7 @@ const MOODS := {
 		"fog_sun_scatter": 0.05,
 		# Aerial perspective drags the fog colour toward the sky's pale horizon
 		# band. At 0.22 it read as a second, brighter fog layered over the first.
-		"fog_aerial": 0.12,
+		"fog_aerial": 0.16,
 		# Fog on the sky is a flat mix toward sage + sun-scatter, and 7% of it
 		# was enough to lay a mint veil over the whole blue. A whisper keeps the
 		# horizon band joined to the land's air without tinting the dome.
@@ -312,26 +316,42 @@ const MOODS := {
 		# image is what gives a scene the primary-colour look of a mobile game;
 		# what it was actually missing was separation between light and dark.
 		"contrast": 1.16,
-		"saturation": 1.14,
+		"saturation": 1.17,
 		# Measured to land neutral grey asphalt (R=G=B within 1%) under the warm
 		# day key and grade: less red and a touch more green, not more blue,
 		# which only turned the road violet.
 		"road_tint": Color(0.925,1.035,1.01),
 		"road_sheen": 0.20,
+		"grade_split": 0.12,
+		"grade_warmth": 0.065,
+		"azimuth_split": 0.0,
+		"anti_horizon": Color("dfe4e2"),
+		"belt_color": Color("dfe4e2"),
+		"belt_strength": 0.0,
+		"ghost_moon": 0.0,
+		"ghost_moon_dir": Vector3(-0.71, 0.50, 0.50),
+		"range_key_tint": Color(1.0, 1.0, 1.0),
+		"range_key_mix": 0.0,
 	},
 	LightingMode.NIGHT:
 	{
 		"zenith_color": Color("030a22"),
 		"mid_color": Color("0d1e42"),
-		"horizon_color": Color("17475f"),
+		# Lighter than the land under it, so every ridge and treeline stands
+		# out as a silhouette against the glow instead of merging with it.
+		"horizon_color": Color("2a5a80"),
 		"ground_color": Color("050a16"),
 		"band_low": 0.10,
 		"band_high": 0.62,
-		"horizon_glow": 0.34,
+		"horizon_glow": 0.45,
 		"energy": 1.0,
-		"sun_color": Color(0.68, 0.72, 0.84),
-		"sun_radius": 0.040,
-		"sun_halo": 0.26,
+		# Dim and blue on purpose. The grade LUT tops out at 0.85 in blue but
+		# 1.0 in red, so anything bright enough to near white flips to cream —
+		# the old moon was a gold coin whatever colour it was given. Held under
+		# that knee the disc stays pale silver-blue and keeps its maria.
+		"sun_color": Color(0.14, 0.20, 0.38),
+		"sun_radius": 0.030,
+		"sun_halo": 0.45,
 		"sun_halo_falloff": 18.0,
 		"sun_disc": 1.0,
 		"moon_face": 1.0,
@@ -359,13 +379,16 @@ const MOODS := {
 		# Moonlit surfaces stay below daylight. The former strong fill made the
 		# pale terrace brighter at night and kept the woodland saturated green.
 		"light_color": Color("9ec8de"),
-		"light_energy": 0.68,
-		"fill_color": Color("4d6d9a"),
-		"fill_energy": 0.35,
-		"ambient": 0.36,
+		"light_energy": 0.9,
+		# The fill is the moonlit sky, steep, so it lands on the ground: with it
+		# at 0.35 the tarmac outside the headlight was a black hole. Now the road
+		# reads as blue-grey asphalt and the headlight pool sits warm on it.
+		"fill_color": Color("5a7cb0"),
+		"fill_energy": 0.75,
+		"ambient": 0.45,
 		"ambient_color": Color("1e3a66"),
 		"ambient_sky_mix": 0.30,
-		"exposure": 0.91,
+		"exposure": 0.98,
 		"white": 1.52,
 		# Not a colour picked for looks, and the reason is arithmetic rather than
 		# taste: RangeMaterial derives all six horizon-shader colours from this one
@@ -416,8 +439,20 @@ const MOODS := {
 		# road outside the headlight pool is a navy stripe. Kept gentle —
 		# asphalt at night should stay darker and cooler than dusk's, just
 		# not read as painted blue.
-		"road_tint": Color(1.14, 1.02, 0.94),
+		"road_tint": Color(1.05, 1.02, 0.98),
 		"road_sheen": 0.16,
+		# The apricot highlight split is for sunlight. At night the only bright
+		# things are the moon and its path on the water, and both went cream.
+		"grade_split": 0.04,
+		"grade_warmth": 0.025,
+		"azimuth_split": 0.0,
+		"anti_horizon": Color("17475f"),
+		"belt_color": Color("17475f"),
+		"belt_strength": 0.0,
+		"ghost_moon": 0.0,
+		"ghost_moon_dir": Vector3(-0.71, 0.50, 0.50),
+		"range_key_tint": Color(1.0, 1.0, 1.0),
+		"range_key_mix": 0.0,
 	},
 }
 
@@ -451,6 +486,12 @@ var _pollen_fx: GPUParticles3D
 var _pollen_mat: StandardMaterial3D
 var _road_material: ShaderMaterial
 var _applied_rain: float = -1.0
+## Seconds a T press takes to walk the light to the next mood.
+const MOOD_FADE_SECONDS := 1.6
+## Snapshot of the hour on screen when the fade began; empty when settled.
+var _mood_from: Dictionary = {}
+var _mood_fade: float = 1.0
+var _fade_tween: Tween
 
 ## Dust-mote tints per biome: gold over the corn, greener under the trees,
 ## paler on the fell. Anything not listed falls back to the first colour —
@@ -510,7 +551,8 @@ func _process(delta: float) -> void:
 	_update_weather(delta)
 	_update_pollen()
 	# Realtime sky can absorb a uniform write every frame, so rain eases the
-	# overcast instead of jumping the deck in fifths.
+	# overcast instead of jumping the deck in fifths. A mood fade drives its own
+	# writes from the tween below.
 	if _applied_rain < 0.0 or not is_equal_approx(rain, _applied_rain):
 		_applied_rain = rain
 		_apply_lighting()
@@ -518,16 +560,50 @@ func _process(delta: float) -> void:
 
 func _cycle_lighting() -> void:
 	## T previews the three authored looks; there is no distance-driven ride time.
-	lighting_mode = ((lighting_mode + 1) % LightingMode.size()) as LightingMode
-	_apply_lighting()
+	_fade_to((lighting_mode + 1) % LightingMode.size())
 	if hud.has_method("show_lighting_mode"):
 		hud.call("show_lighting_mode", lighting_mode)
 
 
-func preview_mood(mood: int) -> void:
+func preview_mood(mood: int, immediate: bool = false) -> void:
 	## Title screen live-preview: swap the sky without touching traffic or score.
-	lighting_mode = clampi(mood, 0, LightingMode.size() - 1) as LightingMode
+	## Captures and tests ask for `immediate` so a frame is never mid-fade.
+	var next: int = clampi(mood, 0, LightingMode.size() - 1)
 	_applied_rain = -1.0
+	if immediate:
+		if _fade_tween:
+			_fade_tween.kill()
+		_mood_from = {}
+		lighting_mode = next as LightingMode
+		_apply_lighting()
+	elif next != lighting_mode:
+		_fade_to(next)
+	else:
+		_apply_lighting()
+
+
+func _fade_to(mood: int) -> void:
+	## Cut moods read as a renderer switching presets; a short fade reads as the
+	## light changing. The fade starts from whatever is on screen — including a
+	## half-finished fade, so a second T mid-way never snaps back first. Nothing
+	## but numbers moves: no light, shader or sky variant enters or leaves.
+	##
+	## A tween that ignores pause, because the title screen previews moods with
+	## the tree paused and Main's own _process asleep.
+	_mood_from = _hour_mood().duplicate()
+	_mood_fade = 0.0
+	lighting_mode = mood as LightingMode
+	if _fade_tween:
+		_fade_tween.kill()
+	_fade_tween = create_tween()
+	_fade_tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	_fade_tween.tween_method(_step_fade, 0.0, 1.0, MOOD_FADE_SECONDS)
+
+
+func _step_fade(t: float) -> void:
+	_mood_fade = t
+	if t >= 1.0:
+		_mood_from = {}
 	_apply_lighting()
 
 
@@ -731,7 +807,10 @@ func _grade_lut() -> ImageTexture:
 
 
 func _hour_mood() -> Dictionary:
-	return MOODS[lighting_mode]
+	## The displayed hour: the chosen row, or the fade towards it.
+	if _mood_from.is_empty():
+		return MOODS[lighting_mode]
+	return _blend(_mood_from, MOODS[lighting_mode], smoothstep(0.0, 1.0, _mood_fade))
 
 
 func _mood_now() -> Dictionary:
@@ -789,12 +868,16 @@ static func _overcast(mood: Dictionary, r: float) -> Dictionary:
 	# wet road's reflection — takes that pale on, which is what turned rain into
 	# a beige wash. A dark sky over a darker, wetter, *more* saturated land is
 	# what rain actually looks like.
-	out["zenith_color"] = (out["zenith_color"] as Color).lerp(Color("28323e"), r * 0.82)
-	out["mid_color"] = (out["mid_color"] as Color).lerp(Color("4c5764"), r * 0.86)
-	out["horizon_color"] = (out["horizon_color"] as Color).lerp(Color("76818d"), r * 0.90)
-	out["cloud_lit"] = (out["cloud_lit"] as Color).lerp(Color("8e98a4"), r * 0.75)
-	out["cloud_dark"] = (out["cloud_dark"] as Color).lerp(Color("252e38"), r * 0.75)
-	out["fog_color"] = (out["fog_color"] as Color).lerp(Color("5f6973"), r * 0.70)
+	# A squall at night is a darker night, not a grey day: the daylight deck
+	# colours lit the dome up exactly as the moon and stars went out. The moon
+	# face is the night weight, so a fade between hours walks the deck too.
+	var night: float = float(mood["moon_face"])
+	out["zenith_color"] = (out["zenith_color"] as Color).lerp(Color("28323e").lerp(Color("070d1c"), night), r * 0.82)
+	out["mid_color"] = (out["mid_color"] as Color).lerp(Color("4c5764").lerp(Color("111c30"), night), r * 0.86)
+	out["horizon_color"] = (out["horizon_color"] as Color).lerp(Color("76818d").lerp(Color("24384e"), night), r * 0.90)
+	out["cloud_lit"] = (out["cloud_lit"] as Color).lerp(Color("8e98a4").lerp(Color("34465c"), night), r * 0.75)
+	out["cloud_dark"] = (out["cloud_dark"] as Color).lerp(Color("252e38").lerp(Color("080e1a"), night), r * 0.75)
+	out["fog_color"] = (out["fog_color"] as Color).lerp(Color("5f6973").lerp(Color("263850"), night), r * 0.70)
 	out["cloud_cover"] = lerpf(mood["cloud_cover"], 0.90, r)
 	out["cloud_opacity"] = lerpf(mood["cloud_opacity"], 1.0, r)
 	# A rain deck is a sheet, not chopped cumulus: soften the edges and grow the
@@ -810,6 +893,9 @@ static func _overcast(mood: Dictionary, r: float) -> Dictionary:
 	out["sun_halo"] = mood["sun_halo"] * (1.0 - r * 0.85)
 	out["horizon_glow"] = mood["horizon_glow"] * (1.0 - r * 0.7)
 	out["star_intensity"] = mood["star_intensity"] * (1.0 - r)
+	out["belt_strength"] = mood["belt_strength"] * (1.0 - r)
+	out["ghost_moon"] = mood["ghost_moon"] * (1.0 - r)
+	out["anti_horizon"] = (mood["anti_horizon"] as Color).lerp(out["horizon_color"], r)
 	out["light_energy"] = mood["light_energy"] * (1.0 - r * 0.58)
 	out["fill_energy"] = mood["fill_energy"] * (1.0 - r * 0.3)
 	out["angular_distance"] = lerpf(mood["angular_distance"], 3.0, r)
@@ -1154,6 +1240,9 @@ func _apply_lighting() -> void:
 	LowPoly.foliage_material().set_shader_parameter(
 		"sky_fill", (mood["ambient_color"] as Color) * float(mood["ambient"]) * 4.6
 	)
+	if _grade_mat:
+		_grade_mat.set_shader_parameter("lum_split", mood["grade_split"])
+		_grade_mat.set_shader_parameter("split_tone", mood["grade_warmth"])
 	var horizon := get_node_or_null("HorizonMountains")
 	if horizon and horizon.has_method("apply_mood"):
 		horizon.call("apply_mood", mood)

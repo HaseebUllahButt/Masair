@@ -1,7 +1,7 @@
 # Splendor
 
 Fast low-poly first-person motorcycle riding game (Godot 4.7). Ride an endless
-streaming road past traffic, forests and mountains — day, dusk or
+streaming road past traffic, forests and mountains — dawn, day or
 night, with a café-rider start menu, distance-unlocked bikes and persistent
 credits.
 
@@ -37,7 +37,7 @@ off, including after quitting the game.
 | F | Get off and sit on the bench at a viewpoint |
 | Space | Wheelie |
 | H | Horn |
-| T | Cycle dusk / day / night |
+| T | Cycle dawn / day / night |
 | R | Restart |
 | Esc / P | Pause |
 | M | Back to the ride menu while paused |
