@@ -9752,10 +9752,12 @@ func _build_far_bank_bands(streamed: bool = false) -> void:
 		return
 	var z := _vp_centre - 400.0
 	var band := 0
-	# near-black, dark olive, mid olive-grey. Ordered light-to-dark going away is
+	# near-black, dark olive, mid olive. Ordered light-to-dark going away is
 	# wrong and is the whole trick: the far band is the palest, because that is
-	# what distance does to a value.
-	var forest_tones: Array[Color] = [Color("16261e"), Color("2c4634"), Color("556d55")]
+	# what distance does to a value. Still a green, though — the foliage shader
+	# adds its own air on top, and an olive-grey here came out as scattered
+	# cream spikes on a green bank.
+	var forest_tones: Array[Color] = [Color("16261e"), Color("2c4634"), Color("3f5a42")]
 	var rock_tones: Array[Color] = [Color("3a3f42"), Color("5f686c"), Color("8b9498")]
 	# The three ranks: one on the bank itself, then two out on the skirt behind
 	# it, each far enough back that the rank in front of it stands against it.
@@ -9813,11 +9815,13 @@ func _far_bank_ground_tone() -> Array[Color]:
 		Env.FOREST:
 			# Lichened stone rather than shadow: once these were faceted rock the
 			# near-black end of the ladder read as holes punched in the meadow.
-			return [Color("6a7262"), Color("3b4738")]
+			# Not much paler than the grass, though: a flat-topped slab facing a
+			# high sun lifts a full step, and at 6a7262 the tops came out cream.
+			return [Color("5b6556"), Color("3b4738")]
 		Env.MOUNTAIN:
 			return [Color("4f5a57"), Color("2a3133")]
 		Env.COUNTRY:
-			return [Color("6e7060"), Color("3c4634")]
+			return [Color("5f6454"), Color("3c4634")]
 	return [Color("434c3d"), Color("242a21")]
 
 
