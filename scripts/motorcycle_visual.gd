@@ -58,12 +58,6 @@ const ENGINE := Vector3(0.0, 0.42, 0.06)
 const SIDES := 18
 const DIAL_TOP_SPEED := 62.0
 const MAX_BAR_STEER := deg_to_rad(11.0)
-## Counter-steering is the brief tip-in push, not the fork's resting angle.
-## Once settled, the front wheel points a little into the turn; drawing the
-## bars held opposite forever made even a gentle bend look like a slide.
-const BAR_COUNTER_FLICK := 0.018
-const COUNTER_V0 := 13.0
-const COUNTER_V1 := 24.0
 
 var _bars: Node3D
 var _front: MeshInstance3D
@@ -116,27 +110,16 @@ func _process(delta: float) -> void:
 		_spin += speed / WHEEL_R * delta
 		_front.rotation.x = _spin
 		_rear.rotation.x = _spin
-	var steer := _rider_value("_steer_input")
-	var counter_gate := smoothstep(COUNTER_V0, COUNTER_V1, speed)
-	var counter := _rider_value("counter_steer")
-	var turn_rate := _rider_value("turn_rate", 9.81 * tan(_rider_value("lean")) / maxf(speed, 0.5))
-	var rolling_angle := atan(1.42 * turn_rate / maxf(speed, 0.5))
-	var target_bar_y := lerpf(steer * MAX_BAR_STEER, rolling_angle, smoothstep(3.0, 13.0, speed))
-	target_bar_y += counter * BAR_COUNTER_FLICK * counter_gate
+	var lean: float = _rider.lean if _rider and "lean" in _rider else 0.0
+	var steer := Input.get_axis("steer_left", "steer_right") if InputMap.has_action("steer_left") else 0.0
+	var target_bar_y := -lean * 0.15 + steer * MAX_BAR_STEER
 	_bars.rotation.y = lerpf(_bars.rotation.y, target_bar_y, 1.0 - exp(-12.0 * delta))
 	if _needles.is_empty():
 		return
 	var v: float = clampf(speed / _dial_top_speed, 0.0, 1.0)
-	var crank := _rider_value("engine_rpm", fposmod(v * 3.4, 1.0) * 0.75 + v * 0.25)
-	_revs = lerpf(_revs, crank, 1.0 - exp(-10.0 * delta))
+	_revs = lerpf(_revs, fposmod(v * 3.4, 1.0) * 0.75 + v * 0.25, 1.0 - exp(-6.0 * delta))
 	_needles[0].basis = _needle_base * Basis(Vector3.UP, lerpf(2.3, -2.3, v))
 	_needles[1].basis = _needle_base * Basis(Vector3.UP, lerpf(2.3, -2.3, _revs))
-
-
-func _rider_value(property: String, fallback: float = 0.0) -> float:
-	## Remote riders share the silhouette but do not transmit the local gearbox
-	## or bar input. Keep their existing pose without adding network state.
-	return float(_rider.get(property)) if is_instance_valid(_rider) and property in _rider else fallback
 
 
 func set_hero_view(on: bool) -> void:
