@@ -52,6 +52,8 @@ class Ride:
 	var t_resume_end: int = 0
 	var t_phys_start: int = 0
 	var phys_usec: int = 0
+	var phys_ticks: int = 0
+	var phys_worst: int = 0
 	var phases: Dictionary = {}
 	var phase_hitch: Dictionary = {}
 	## Distance ahead (m) at which each chunk's dressing became complete.
@@ -207,6 +209,8 @@ class Ride:
 		if t_frame > 0:
 			cur_phases["rest"] = now - int(cur_phases.get("_process_end", now))
 			cur_phases["physics"] = phys_usec
+			cur_phases["ticks"] = phys_ticks
+			cur_phases["tick_max"] = phys_worst
 			var done := {}
 			for key: String in cur_phases:
 				if not key.begins_with("_"):
@@ -228,6 +232,8 @@ class Ride:
 				_scan_looks(false)
 		cur_phases = {}
 		phys_usec = 0
+		phys_ticks = 0
+		phys_worst = 0
 		t_frame = now
 
 	## The renderer's program cache rewrites a shader's cache file each time it
@@ -352,6 +358,8 @@ class Ride:
 		if physics:
 			if label == "process_end":
 				phys_usec += now - t_phys_start
+				phys_ticks += 1
+				phys_worst = maxi(phys_worst, now - t_phys_start)
 			return
 		match label:
 			"resume":
@@ -374,6 +382,7 @@ class Ride:
 		var out := PackedStringArray()
 		for key: String in ["physics", "resume", "stream", "traffic", "process", "rest"]:
 			out.append("%s=%.1f" % [key, float(p.get(key, 0)) / 1000.0])
+		out.append("ticks=%d tick_max=%.1f" % [int(p.get("ticks", 0)), float(p.get("tick_max", 0)) / 1000.0])
 		return " ".join(out)
 
 	func _bracket(target: Node, label: String, priority: int) -> void:
