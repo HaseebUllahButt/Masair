@@ -143,6 +143,10 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	## Light, because the haze it lays on is the mist colour and the mist is
 	## pale: at 0.75 every range in the rain glowed off-white against a slate sky.
 	mat.set_shader_parameter("weather_haze", 0.35 * float(_mood.get("rain", 0.0)))
+	## How much of the aerial veil the ranges wear, per mood. 1 is as authored.
+	mat.set_shader_parameter("haze_scale", float(_mood.get("range_haze", 1.0)))
+	mat.set_shader_parameter("form_bite", float(_mood.get("range_form", 0.0)))
+	mat.set_shader_parameter("sun_swing", deg_to_rad(float(_mood.get("range_swing", 0.0))))
 	## Only a high sun: dusk's and night's low keys lit the rock through the
 	## same grade path as before and must stay as they were (see the shader).
 	mat.set_shader_parameter("blue_hold", smoothstep(16.0, 20.0, -light_angle.x))

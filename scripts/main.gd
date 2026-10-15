@@ -195,6 +195,9 @@ const MOODS := {
 		# grade, foliage and field shading back to how that build drew them.
 		"sun_shadow": 0.0,
 		"classic": 1.0,
+		"range_haze": 1.0,
+		"range_form": 0.0,
+		"range_swing": 0.0,
 		"grade_split": 0.12,
 		"grade_warmth": 0.065,
 		"azimuth_split": 0.0,
@@ -303,7 +306,7 @@ const MOODS := {
 		# midtone into the shoulder, which is where the colour goes: a lit green
 		# and a lit white came out within a few percent of each other. More
 		# headroom, and the exposure back up to hold the midtones where they were.
-		"exposure": 0.9,
+		"exposure": 0.86,
 		# Down from 1.85 with the sun raised to 3.0. Note this only keeps
 		# brightness; the midtones gain because more of the frame's light now
 		# arrives from the sun's direction instead of from flat ambient.
@@ -337,7 +340,7 @@ const MOODS := {
 		# Contrast over saturation. Turning saturation up to compensate for a flat
 		# image is what gives a scene the primary-colour look of a mobile game;
 		# what it was actually missing was separation between light and dark.
-		"contrast": 1.16,
+		"contrast": 1.24,
 		"saturation": 1.17,
 		# Measured to land neutral grey asphalt (R=G=B within 1%) under the warm
 		# day key and grade: less red and a touch more green, not more blue,
@@ -356,6 +359,12 @@ const MOODS := {
 		"range_key_mix": 0.0,
 		"sun_shadow": 1.0,
 		"classic": 0.0,
+		# The overlooks' ranges take a shoulder sun (55° off the line of sight)
+		# with a firmer terminator and less veil: under the high key every face
+		# came out the same lit beige-grey.
+		"range_haze": 0.8,
+		"range_form": 0.8,
+		"range_swing": 55.0,
 	},
 	LightingMode.NIGHT:
 	{
@@ -408,11 +417,11 @@ const MOODS := {
 		# at 0.35 the tarmac outside the headlight was a black hole. Now the road
 		# reads as blue-grey asphalt and the headlight pool sits warm on it.
 		"fill_color": Color("5a7cb0"),
-		"fill_energy": 0.75,
-		"ambient": 0.45,
+		"fill_energy": 0.35,
+		"ambient": 0.36,
 		"ambient_color": Color("1e3a66"),
 		"ambient_sky_mix": 0.30,
-		"exposure": 0.98,
+		"exposure": 0.91,
 		"white": 1.52,
 		# Not a colour picked for looks, and the reason is arithmetic rather than
 		# taste: RangeMaterial derives all six horizon-shader colours from this one
@@ -478,7 +487,13 @@ const MOODS := {
 		"range_key_tint": Color(1.0, 1.0, 1.0),
 		"range_key_mix": 0.0,
 		"sun_shadow": 1.0,
-		"classic": 0.0,
+		# The dusk grade (no blue-lead protection, the old LUT): the newer grade
+		# lifted every blue-leading pixel, and at night that is all of them —
+		# a pale glowing sheet over the lake and meadows.
+		"classic": 1.0,
+		"range_haze": 1.0,
+		"range_form": 0.0,
+		"range_swing": 0.0,
 	},
 }
 
