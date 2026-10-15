@@ -188,7 +188,7 @@ void sky() {
 			float maria = 1.0 - 0.22 * (1.0 - smoothstep(0.08, 0.42, length(face - vec2(-0.22, 0.18))));
 			maria -= 0.16 * (1.0 - smoothstep(0.06, 0.32, length(face - vec2(0.24, 0.30))));
 			float disc = 1.0 - smoothstep(MOON_R * 0.92, MOON_R * 1.04, ma);
-			col = mix(col, mix(col, vec3(0.96, 0.95, 1.0), 0.55 * maria), disc * lit * ghost_moon);
+			col = mix(col, mix(col, vec3(0.78, 0.85, 1.0), 0.40 * maria), disc * lit * ghost_moon);
 		}
 	}
 

@@ -96,7 +96,7 @@ const MOODS := {
 		"anti_horizon": Color("97a1c6"),
 		"belt_color": Color("e2a6bd"),
 		"belt_strength": 0.55,
-		"ghost_moon": 0.55,
+		"ghost_moon": 0.40,
 		# A last-quarter moon, most of a right angle round the sky from the sun
 		# and 22 degrees up: top right of the frame while riding, and over the
 		# far shore from any bench that faces away from the sunrise.
@@ -151,7 +151,7 @@ const MOODS := {
 		"fog_energy": 1.0,
 		"fog_density": 0.00022,
 		"fog_sun_scatter": 0.05,
-		"fog_aerial": 0.13,
+		"fog_aerial": 0.11,
 		"fog_sky": 0.03,
 		# The valley mist. Height fog in this renderer is by depth below the
 		# line, not by distance, so the line sits under the lowest road (about
