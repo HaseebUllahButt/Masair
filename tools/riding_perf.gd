@@ -260,6 +260,15 @@ class Ride:
 		if m is ShaderMaterial:
 			var sh: Shader = (m as ShaderMaterial).shader
 			return "SM:" + (sh.resource_path.get_file() if sh and sh.resource_path != "" else str(sh.get_instance_id() if sh else 0))
+		if mat_keys.has(m.get_instance_id()):
+			return mat_keys[m.get_instance_id()]
+		var key := _mat_key(m)
+		mat_keys[m.get_instance_id()] = key
+		return key
+
+	var mat_keys: Dictionary = {}
+
+	func _mat_key(m: Material) -> String:
 		if m is BaseMaterial3D:
 			# Every flag and mode is a term in the generated shader; colours and
 			# floats are only uniforms. Hash the switches, keep a readable head.
