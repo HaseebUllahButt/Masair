@@ -10334,7 +10334,8 @@ func _far_cliff_tone() -> Array[Color]:
 			# Moss and turf, a step under the meadow: with the bank laid back it
 			# takes the sky, and the near-black stone it used to carry turned the
 			# whole shore into a void at noon. Wet moss stays the darkest step.
-			return [Color("2c3f2c"), Color("1d281e"), Color("3c5634")]
+			# Lifted a step with the country bank, for the same dawn shade.
+			return [Color("304a33"), Color("22332a"), Color("41603a")]
 		Env.MOUNTAIN:
 			return [Color("282e32"), Color("1f2528"), Color("474f52")]
 		Env.COUNTRY:
@@ -10350,7 +10351,12 @@ func _far_cliff_tone() -> Array[Color]:
 			# ends at dark turf on the lip.
 			# Greener again once the bank was laid back: a sloped face is lit
 			# like the pasture it carries, so it can be turf rather than earth.
-			return [Color("33452a"), Color("1e2a1f"), Color("465a33")]
+			# Cooler and a step up. The slope faces the bench, so it takes the
+			# whole key: under the day sun 33452a still came out a tan berm
+			# (~149,141,61), and with the dawn sun behind the bank it fell to
+			# near-black (~22,38,26) — a heavy dark rule round the far shore. A
+			# bluer green holds green under the warm key and stays turf in shade.
+			return [Color("3a5a38"), Color("2a4430"), Color("4a6c3e")]
 	return [Color("28261f"), Color("21201b"), Color("3c372c")]
 
 
