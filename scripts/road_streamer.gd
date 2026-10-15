@@ -3,6 +3,7 @@ extends Node3D
 
 const RoadChunkGD: GDScript = preload("res://scripts/road_chunk.gd")
 const RoadPathGD: GDScript = preload("res://scripts/road_path.gd")
+const WorldWarmupGD: GDScript = preload("res://scripts/world_warmup.gd")
 const CHUNK_LENGTH: float = 40.0
 @export var chunks_ahead: int = 14
 @export var chunks_behind: int = 2
@@ -53,6 +54,12 @@ const OPENING_AHEAD := 1
 ## Dress this far ahead of the bike so the corridor looks finished before it
 ## enters the lens. Too tight and the ride reads as pop-in / procedural.
 const DRESS_AHEAD := 10
+## Undressed scenery nearer than this lifts the shared building budget until
+## it is caught up; dressing normally lands 270 m+ ahead, and "late" (seen
+## arriving) is under 160 m.
+const DRESS_LEAD_M := 240.0
+## The lifted budget: every job its full slice again, as before the cap.
+const LIFTED_FRAME_USEC := 1 << 30
 ## Ribbon look-ahead on the scenic spur — must stay ahead of DRESS_AHEAD so
 ## tarmac is ready when the dress window wants to plant.
 const SCENIC_CHUNKS_AHEAD := 10
@@ -85,6 +92,10 @@ func _ready() -> void:
 
 func bind_player(player: Node3D) -> void:
 	_player = player
+	# Compile the ride's programs in the ride's own world while the menu is up.
+	var warmup: Node = WorldWarmupGD.new()
+	warmup.name = "WorldWarmup"
+	add_child(warmup)
 	# Only the road under the bike blocks startup. The next chunk immediately
 	# enters the incremental queue; synchronously rebuilding two dense scenic
 	# chunks was the remaining restart hitch.
@@ -144,6 +155,19 @@ func _process(_delta: float) -> void:
 	_sync(false)
 
 
+func _dressing_behind(current: int) -> bool:
+	## Whether a chunk inside DRESS_LEAD_M of the bike still has no dressing,
+	## or no road yet. Normally dressing lands 270 m+ ahead; nearer means the
+	## jobs are losing.
+	var index := current + 1
+	while float(index) * CHUNK_LENGTH - _player.track_z < DRESS_LEAD_M:
+		var chunk: Node = _chunks.get(index)
+		if chunk == null or not bool(chunk.get_meta("props_done", false)):
+			return true
+		index += 1
+	return false
+
+
 func theme_at(z: float) -> int:
 	return theme_for_chunk(int(floor(z / CHUNK_LENGTH)))
 
@@ -172,6 +196,9 @@ func _sync(build_all: bool) -> void:
 		1400 if bool(_player.get("seated")) and not view_work else RoadChunkGD.STREAM_SLICE_USEC
 	)
 	var current: int = int(floor(_player.track_z / CHUNK_LENGTH))
+	chunk_gd.frame_budget_usec = (
+		LIFTED_FRAME_USEC if _dressing_behind(current) else RoadChunkGD.FRAME_STREAM_USEC
+	)
 	var keep_bounds := _desired_bounds(current)
 	# The platform owner renders the full lake independently of road chunks.
 	# Retain the logical lake span for the overlook contract, but retire old
@@ -893,10 +920,11 @@ func debug_state() -> String:
 	var stage := ""
 	if is_instance_valid(_building):
 		stage = str(_building.get_meta("dbg_stage", ""))
-	return "cur=%d job=%s stage=%s last=%s q(r/p/s/h/u)=%d/%d/%d/%d/%d live=%d dying=%d" % [
+	return "cur=%d job=%s stage=%s last=%s q(r/p/s/h/u)=%d/%d/%d/%d/%d live=%d dying=%d lift=%d" % [
 		cur, _dbg, stage, _dbg_last,
 		_ribbon_queue.size(), _props_queue.size(), _scenic_queue.size(),
 		_highway_queue.size(), _unload_queue.size(), _chunks.size(), _dying.size(),
+		1 if RoadChunkGD.frame_budget_usec > RoadChunkGD.FRAME_STREAM_USEC else 0,
 	]
 
 

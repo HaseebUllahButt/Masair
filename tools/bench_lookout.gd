@@ -15,6 +15,8 @@ func _initialize() -> void:
 	for arg: String in OS.get_cmdline_user_args():
 		var kv: PackedStringArray = arg.trim_prefix("--").split("=", true, 1)
 		_opts[kv[0]] = kv[1] if kv.size() == 2 else "1"
+	if _opts.has("hitch"):
+		load("res://scripts/road_chunk.gd").set("hitch_trace", true)
 	_seed = int(_opts.get("seed", 2))
 	_mode = String(_opts.get("mode", "day"))
 	_run.call_deferred()
@@ -30,6 +32,8 @@ func _run() -> void:
 	RenderingServer.viewport_set_measure_render_time(_rid, true)
 	var warm: Node = root.find_child("ScenicWarmup", true, false)
 	while is_instance_valid(warm):
+		await process_frame
+	while is_instance_valid(root.find_child("WorldWarmup", true, false)):
 		await process_frame
 	var hud: Node = root.find_child("HUD", true, false)
 	hud.call("_start_ride")
@@ -68,6 +72,12 @@ func _run() -> void:
 		await _pixel_gallery(main, centre)
 		quit()
 		return
+	if _opts.has("steady"):
+		_player.call("_toggle_seat")
+		await create_timer(8.0).timeout
+		await _sample("steady", 1, 10.0)
+		quit()
+		return
 	await _sample("arrived", 180)
 	for lap: int in 2:
 		_player.call("_toggle_seat")
@@ -98,6 +108,8 @@ func _sample(label: String, count: int, seconds: float = 0.0) -> void:
 		await process_frame
 		var ms: float = float(Time.get_ticks_usec() - start) / 1000.0
 		samples.append(ms)
+		if ms > 33.0 and _opts.has("hitch"):
+			print("hitch: seated %s wall=%.2f process=%.2f physics=%.2f render=%.2f gpu=%.2f" % [label, ms, Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, RenderingServer.viewport_get_measured_render_time_cpu(_rid), RenderingServer.viewport_get_measured_render_time_gpu(_rid)])
 		if ms > 20.0:
 			slow += 1
 			if label.begins_with("sit"):
@@ -109,6 +121,21 @@ func _sample(label: String, count: int, seconds: float = 0.0) -> void:
 		i += 1
 	count = samples.size()
 	samples.sort()
+	var total: float = 0.0
+	var tail_total: float = 0.0
+	var hitches: int = 0
+	var tail: int = maxi(1, ceili(count * 0.01))
+	for j: int in count:
+		total += samples[j]
+		if j >= count - tail:
+			tail_total += samples[j]
+		if samples[j] > 33.0:
+			hitches += 1
+	print("seat: ", JSON.stringify({"seed": _seed, "mode": _mode, "label": label,
+		"frames": count, "seconds": total / 1000.0, "fps": count * 1000.0 / total,
+		"low1": tail * 1000.0 / tail_total, "hitches33": hitches,
+		"worst_ms": samples[-1], "gpu_ms": gpu / count, "render_cpu_ms": cpu / count,
+		"draws": draws / count, "primitives": prims / count}))
 	print("seatbench seed=%d mood=%s %-18s median=%.2f p95=%.2f worst=%.2f over20=%d gpu=%.2f cpu=%.2f draws=%.0f prims=%.0f" % [_seed, _mode, label, samples[count / 2], samples[int(count * 0.95)], samples[-1], slow, gpu / count, cpu / count, draws / count, prims / count])
 
 
