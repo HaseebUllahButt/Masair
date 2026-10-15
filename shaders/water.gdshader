@@ -171,11 +171,17 @@ void light() {
 	// up and the thresholded points sit on a grid — from the bench the whole
 	// basin read as a screen door. The glint lobe is kept tight to the sun's
 	// own line: at a broad one every wave across the lake caught the moon too.
-	float t = TIME * wave_speed;
-	vec2 turned = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * world_position.xz;
-	float fine = wnoise(world_position.xz * 1.7 + vec2(t * 0.9, -t * 0.7)) * 0.6
-		+ wnoise(turned * 3.1 + vec2(-t * 1.3, t * 1.1)) * 0.4;
-	float glint = smoothstep(0.70, 0.90, fine) * pow(ndh, 48.0) * shimmer_amount;
+	// Only near the sun's line: below ndh 0.9 the lobe is under one percent,
+	// and the noise is the lake's costliest term — the basin fills half the
+	// seated frame and almost none of it is on the path.
+	float glint = 0.0;
+	if (ndh > 0.9) {
+		float t = TIME * wave_speed;
+		vec2 turned = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * world_position.xz;
+		float fine = wnoise(world_position.xz * 1.7 + vec2(t * 0.9, -t * 0.7)) * 0.6
+			+ wnoise(turned * 3.1 + vec2(-t * 1.3, t * 1.1)) * 0.4;
+		glint = smoothstep(0.70, 0.90, fine) * pow(ndh, 48.0) * shimmer_amount;
+	}
 	float core = pow(ndh, 600.0);
 	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * (sheen + glint * 3.0 + core * 1.4) * mix(1.0, 2.0, glance);
 }
