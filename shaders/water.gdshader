@@ -148,18 +148,34 @@ void fragment() {
 void light() {
 	float ndl = max(dot(NORMAL, LIGHT), 0.0);
 	DIFFUSE_LIGHT += ALBEDO * LIGHT_COLOR * ATTENUATION * ndl * 0.42;
-	// Deliberately broad. A tight lobe on a near-flat sheet is a single hot dot
-	// on the horizon; real glitter is thousands of small facets each catching the
-	// sun at a slightly different angle, and the wave normals above are standing
-	// in for those facets. A low exponent is what spreads it into a path running
-	// back toward the viewer instead of a spot sitting on the far shore.
+	// Real glitter is thousands of small facets each catching the sun at a
+	// slightly different angle; the wave normals and the glint noise below
+	// stand in for those facets.
 	vec3 half_vector = normalize(LIGHT + VIEW);
-	float spec = pow(max(dot(NORMAL, half_vector), 0.0), 22.0);
+	float ndh = max(dot(NORMAL, half_vector), 0.0);
 	// Grazing angles catch far more of it, which is what makes the path widen and
 	// brighten as it runs away from the eye. Recomputed here rather than handed
 	// over from fragment(): a varying written in fragment() and read in light()
 	// is not something to rely on, and this is two instructions.
 	float glance = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 4.0);
 	float sparkle = glitter(world_position.xz, TIME * wave_speed);
-	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * spec * mix(1.0, 3.4, glance) * (0.55 + 0.75 * sparkle * shimmer_amount);
+	// The broad lobe laid one even cream sheet over half the basin whenever
+	// the view faced the sun — from the bench it read as a sand bar, not
+	// water, in every forest overlook by day. The waves here are a few
+	// centimetres high, so real glitter stays close to the sun's mirror line:
+	// a narrow sheen, and the path itself made of glints — a finer, faster
+	// noise thresholded hard, so the sun breaks into moving points with dark
+	// water between them, densest on the line to the sun.
+	float sheen = pow(ndh, 120.0) * (0.3 + 0.3 * sparkle * shimmer_amount);
+	// The second octave is turned against the first, or the two lattices line
+	// up and the thresholded points sit on a grid — from the bench the whole
+	// basin read as a screen door. The glint lobe is kept tight to the sun's
+	// own line: at a broad one every wave across the lake caught the moon too.
+	float t = TIME * wave_speed;
+	vec2 turned = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * world_position.xz;
+	float fine = wnoise(world_position.xz * 1.7 + vec2(t * 0.9, -t * 0.7)) * 0.6
+		+ wnoise(turned * 3.1 + vec2(-t * 1.3, t * 1.1)) * 0.4;
+	float glint = smoothstep(0.70, 0.90, fine) * pow(ndh, 48.0) * shimmer_amount;
+	float core = pow(ndh, 600.0);
+	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * (sheen + glint * 3.0 + core * 1.4) * mix(1.0, 2.0, glance);
 }

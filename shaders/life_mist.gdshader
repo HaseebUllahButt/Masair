@@ -42,7 +42,9 @@ void fragment() {
 	// re-form as they go instead of sliding past as one printed pattern.
 	float n = mnoise(p * grain + seed) * 0.6
 		+ mnoise(p * grain * 2.7 + vec2(seed * 1.7, -seed) - flow * TIME * 0.004) * 0.4;
-	float wisps = smoothstep(0.42, 0.78, n);
+	// A high threshold: most of the sheet is clear and the wisps are torn
+	// strands with water between them, not a blanket with holes in it.
+	float wisps = smoothstep(0.56, 0.86, n);
 	// Feathered all round, so the sheet has no edge anywhere.
 	vec2 e = abs(UV * 2.0 - 1.0);
 	float edge = (1.0 - smoothstep(0.45, 1.0, e.x)) * (1.0 - smoothstep(0.35, 1.0, e.y));
