@@ -292,36 +292,55 @@ static func unit_bush() -> ArrayMesh:
 	## smooth ball it replaced was the one bubble-plastic shape left among
 	## faceted crowns, and squashed to a shrub's proportions it became a dark
 	## lens lying on the grass — the "discs" that littered the valley from the
-	## bench. A few faceted lobes give a lumpy silhouette that still reads as
-	## leaf at any squash. Everything stays inside the unit sphere the corridor
-	## sweep measures, so no swaying lobe can reach further than the ball did,
-	## and the main lobe reaches the sphere's floor so nothing hovers.
+	## bench. One faceted lump with its rings twisted and every vertex pushed
+	## in by its own amount gives a lumpy silhouette that reads as leaf at any
+	## squash.
+	##
+	## Budget: this is the most-instanced mesh in the game and the foliage
+	## shader sways every vertex. Four separate faceted lobes were ~380
+	## vertices against the ball's ~63 and cost a millisecond and more at the
+	## overlook; this is 84. Everything stays inside the unit sphere the
+	## corridor sweep measures, and the foot reaches the sphere's floor so
+	## nothing hovers.
 	if _unit_bush == null:
 		var b := LowPoly.new()
 		b.index_flat = true
 		b.channel = LowPoly.FOLIAGE
-		# [x, y, z, radius, y-stretch, shade]: one body down to the ground, a
-		# raised shoulder, two lower side lobes in their own shade.
-		const LOBES := [
-			[0.00, -0.04, 0.00, 0.44, 1.05, 0.90],
-			[0.08, 0.20, -0.06, 0.24, 1.0, 1.10],
-			[0.18, -0.14, 0.10, 0.23, 1.0, 0.76],
-			[-0.18, -0.12, -0.14, 0.23, 1.0, 0.80],
-		]
-		var turn := 0.0
-		for lobe in LOBES:
-			var shade: float = lobe[5]
-			b.add_sphere(
-				Transform3D(
-					Basis(Vector3.UP, turn).scaled(Vector3(1.0, lobe[4], 1.0)), Vector3(lobe[0], lobe[1], lobe[2])
-				),
-				lobe[3],
-				6,
-				4,
-				Color(shade, shade, shade)
-			)
-			# Each lobe a different twist so their facets never line up.
-			turn += 0.71
+		b.hull_origin = Vector3.ZERO
+		const SEGS := 6
+		# [height, radius]: a flat-ish foot, a wide belly, a full shoulder and a
+		# blunt crown — a bush, not a ball.
+		const RINGS := [[-0.5, 0.0], [-0.28, 0.38], [-0.02, 0.48], [0.24, 0.38], [0.44, 0.0]]
+		var grid: Array = []
+		for r in RINGS.size():
+			var level: Array = RINGS[r]
+			var row: Array[Vector3] = []
+			for i in SEGS:
+				# Fixed hash, as for the boulder: one shared mesh, the same bush
+				# every boot; instances turn and squash it into all the others.
+				var h: float = fposmod(sin(float(i) * 41.31 + float(r) * 17.17) * 43758.5453, 1.0)
+				var a: float = TAU * (float(i) + (h - 0.5) * 0.4) / float(SEGS) + float(r) * 0.55
+				var rad: float = float(level[1]) * lerpf(0.72, 1.0, h)
+				var y: float = float(level[0]) + (h - 0.5) * 0.08 * float(level[1] > 0.0)
+				row.append(Vector3(cos(a) * rad, y, sin(a) * rad))
+			grid.append(row)
+		for r in RINGS.size() - 1:
+			# Shaded skirt, lit crown.
+			var t: float = (float(r) + 0.5) / float(RINGS.size() - 1)
+			var shade: float = lerpf(0.76, 1.1, t)
+			for i in SEGS:
+				var j: int = (i + 1) % SEGS
+				var p00: Vector3 = grid[r][i]
+				var p10: Vector3 = grid[r][j]
+				var p01: Vector3 = grid[r + 1][i]
+				var p11: Vector3 = grid[r + 1][j]
+				var c := Color(shade, shade, shade)
+				if float(RINGS[r][1]) == 0.0:
+					b.add_hull_tri(p00, p11, p01, c)
+				elif float(RINGS[r + 1][1]) == 0.0:
+					b.add_hull_tri(p00, p10, p01, c)
+				else:
+					b.add_hull_quad(p00, p10, p11, p01, c)
 		_unit_bush = b.commit()
 	return _unit_bush
 
