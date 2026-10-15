@@ -56,6 +56,12 @@ uniform float mist_strength : hint_range(0.0, 1.0) = 0.12;
 // per-mood from range_material: under a blue night key the same warm cast
 // read as sand dunes sprinkled over the skyline.
 uniform vec3 key_tint : source_color = vec3(1.03, 0.97, 0.85);
+// High-sun only (set by range_material). The film grade now leaves
+// blue-leading pixels unwarmed so the sky stays blue — and the slate rock was
+// written blue-leading on purpose, for that warmth to turn it grey. Without
+// it the day ranges came out cobalt. Holding blue at green's level hands the
+// rock back to the grade's warm path, which is how it reached grey before.
+uniform float blue_hold : hint_range(0.0, 1.0) = 0.0;
 
 varying vec3 world_n;
 varying float snow_v;
@@ -297,5 +303,12 @@ void fragment() {
 	}
 	float side = 1.0 - smoothstep(0.12, 0.78, ahead);
 	col = mix(col, air, side * 0.0);
+	// Red is held up to green on bare rock as well: blue alone left a
+	// sage-grey where the old rock read warm granite. Never on the woods —
+	// lifting red there turns the green foothills olive. The far bands keep
+	// half their blue: that is the air, and the old ranges wore it too.
+	float grey_hold = blue_hold * mix(1.0, 0.5, smoothstep(0.20, 0.60, haze_v));
+	col.b = mix(col.b, min(col.b, col.g * 0.96), grey_hold);
+	col.r = mix(col.r, max(col.r, col.g * 0.94), grey_hold * (1.0 - forest));
 	ALBEDO = col;
 }
