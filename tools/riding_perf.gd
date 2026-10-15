@@ -66,11 +66,26 @@ class Ride:
 		RenderingServer.viewport_set_measure_render_time(rid, true)
 		get_tree().process_frame.connect(_on_frame_start)
 		get_tree().physics_frame.connect(_on_physics_start)
+		var menu_began := Time.get_ticks_usec()
+		var menu_last := menu_began
+		var menu_frames := 0
+		var menu_slow := 0
+		var menu_worst := 0.0
 		while DisplayServer.get_name() != "headless" and (
 			is_instance_valid(get_tree().root.find_child("ScenicWarmup", true, false))
 			or is_instance_valid(get_tree().root.find_child("WorldWarmup", true, false))
 		):
 			await get_tree().process_frame
+			var now := Time.get_ticks_usec()
+			var ms := float(now - menu_last) / 1000.0
+			menu_last = now
+			menu_frames += 1
+			menu_slow += 1 if ms > 33.0 else 0
+			menu_worst = maxf(menu_worst, ms)
+		print("menu: ", JSON.stringify({
+			"ms": float(menu_last - menu_began) / 1000.0, "frames": menu_frames,
+			"slow33": menu_slow, "worst_ms": menu_worst,
+		}))
 		var hud: Node = get_tree().root.find_child("HUD", true, false)
 		hud.call("_start_ride")
 		var main: Node = get_tree().root.find_child("Main", true, false)
