@@ -9349,9 +9349,7 @@ func _build_far_ground() -> void:
 		if _vp_theme == Env.COUNTRY or _vp_theme == Env.MOUNTAIN or _vp_theme == Env.FOREST:
 			# _range_quad_lit already shades these slopes. Preserve their local
 			# palette under the warm sunset while retaining normal distance fog.
-			var far_material: StandardMaterial3D = LowPoly.terrain_material().duplicate() as StandardMaterial3D
-			far_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			mesh.material_override = far_material
+			mesh.material_override = LowPoly.far_ground_material()
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		mesh.visibility_range_end = 0.0
 
@@ -9500,9 +9498,7 @@ func _build_far_ground_incremental() -> void:
 		if _vp_theme == Env.COUNTRY or _vp_theme == Env.MOUNTAIN or _vp_theme == Env.FOREST:
 			# _range_quad_lit already shades these slopes. Preserve their local
 			# palette under the warm sunset while retaining normal distance fog.
-			var far_material: StandardMaterial3D = LowPoly.terrain_material().duplicate() as StandardMaterial3D
-			far_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			mesh.material_override = far_material
+			mesh.material_override = LowPoly.far_ground_material()
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		mesh.visibility_range_end = 0.0
 

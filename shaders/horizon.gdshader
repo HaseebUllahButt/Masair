@@ -63,7 +63,8 @@ uniform vec3 key_tint : source_color = vec3(1.03, 0.97, 0.85);
 // rock back to the grade's warm path, which is how it reached grey before.
 uniform float blue_hold : hint_range(0.0, 1.0) = 0.0;
 // Per-mood share of the aerial veil (range_material): 1 is as authored. A
-// clear noon can thin it so the far faces keep their lit and shaded sides.
+// clear noon thins it on the near ranges so they keep their lit and shaded
+// sides; the farthest keep their full veil. It thins the valley mist with it.
 uniform float haze_scale : hint_range(0.0, 2.0) = 1.0;
 // Per-mood bite of the terminator (range_material): 0 is as authored. A high
 // clear sun leaves most faces past the soft ramp, so the day range reads as
@@ -74,6 +75,12 @@ uniform float form_bite : hint_range(0.0, 1.0) = 0.0;
 // overlook can face any way off the road, and a key square behind or before
 // the bench lights every face alike.
 uniform float sun_swing = 0.0;
+// How far form_bite drops the shaded floor.
+uniform float range_shade = 0.14;
+// How much a face's left/right turn against the sun counts under form_bite. A
+// range seen face-on has little spread in N·L; the turn is what splits each
+// massif into a lit flank and a shaded one.
+uniform float range_rake = 0.5;
 
 varying vec3 world_n;
 varying float snow_v;
@@ -131,6 +138,7 @@ void fragment() {
 		n = normalize(mix(n, vec3(flat_dir.x, n.y, flat_dir.y), flatten_eff));
 	}
 	vec3 sun = normalize(sun_dir);
+	vec3 real_sun = sun;
 	if (form_bite > 0.0 && dot(to_eye, to_eye) > 1.0) {
 		vec2 back = normalize(to_eye);
 		vec2 swung = vec2(
@@ -158,7 +166,17 @@ void fragment() {
 	// its lit side against its shaded side, so the terminator has to be a
 	// decision, not a fade. Still soft enough that a rolling face does not band.
 	float lit = smoothstep(0.40 - 0.22 * light_soft, 0.66 + 0.22 * light_soft, key + (rake - 0.5) * 0.30);
-	lit = mix(lit, smoothstep(0.46, 0.86, key + (rake - 0.5) * 0.50), form_bite);
+	// The woods keep the authored light under the real key: the swung sun and
+	// the bite are for bare rock, and on the rolling forested foothills they
+	// painted dark blotches.
+	float lit_woods = lit;
+	if (form_bite > 0.0) {
+		float key_real = clamp(dot(n, real_sun) * 0.5 + 0.5, 0.0, 1.0);
+		vec3 across_real = normalize(cross(real_sun, vec3(0.0, 1.0, 0.0)) + vec3(1e-4));
+		float rake_real = clamp(dot(n, across_real) * 0.5 + 0.5, 0.0, 1.0);
+		lit_woods = smoothstep(0.40 - 0.22 * light_soft, 0.66 + 0.22 * light_soft, key_real + (rake_real - 0.5) * 0.30);
+	}
+	lit = mix(lit, smoothstep(0.46, 0.86, key + (rake - 0.5) * range_rake), form_bite);
 	// Floor raised from 0.40. The terminator still has to be a decision — that
 	// is what makes a range read as two-sided form rather than a pink gradient —
 	// but 0.40 was low enough that a shaded face had almost no value left to
@@ -171,7 +189,7 @@ void fragment() {
 	// side. Note this is the *internal* spread only — the whole frame's
 	// light-to-dark ratio also has to survive tonemapping and the grade LUT
 	// above it, and at dusk the air is what finally sets that.
-	float lum = mix(0.50 - 0.14 * form_bite, 1.05, lit);
+	float lum = mix(0.50 - range_shade * form_bite, 1.05, lit);
 	lum += 0.16 * dome * dome;
 	lum *= mix(0.90, 1.08, grit_v);
 	lum *= mix(0.88 + 0.08 * light_soft, 1.08, relief);
@@ -215,7 +233,7 @@ void fragment() {
 	// the middle of the skyline.
 	float ragged = (couloir - 0.5) * 90.0 + (grit_v - 0.5) * 30.0;
 	float forest = 1.0 - smoothstep(treeline - 30.0, treeline + 30.0, band_v + ragged);
-	vec3 woods = forest_color * mix(0.62, 1.05, lit) * (0.9 + 0.2 * dome);
+	vec3 woods = forest_color * mix(0.62, 1.05, lit_woods) * (0.9 + 0.2 * dome);
 	forest *= 1.0 - steep * slope_rock;
 	col = mix(col, woods, forest * 0.9);
 
@@ -246,7 +264,8 @@ void fragment() {
 	// Valley mist lying at the foot of each layer, so every ridgeline stands
 	// out of the one in front of it.
 	float foot = 1.0 - smoothstep(-140.0, 60.0, band_v);
-	col = mix(col, mist_color, foot * foot * mist_strength * (0.3 + 0.6 * haze_v));
+	float veil = mix(haze_scale, 1.0, smoothstep(0.35, 0.90, haze_v));
+	col = mix(col, mist_color, foot * foot * mist_strength * (0.3 + 0.6 * haze_v) * veil);
 	// Aerial perspective is the depth cue. Each layer steps most of the way to
 	// the air behind it, snow included — an unhazed cap on the farthest range
 	// glowed brighter than the near one and flattened the stack.
@@ -288,7 +307,7 @@ void fragment() {
 	// returns as one tan mountain standing among blue ones. Even the closest
 	// range sits inside a kilometre and a half of air.
 	float haze_w = clamp(
-		0.03 + haze_v * 0.55 * (1.0 - 0.2 * haze_v) * haze_scale + weather_haze * (0.45 + haze_v),
+		0.03 + haze_v * 0.55 * (1.0 - 0.2 * haze_v) * veil + weather_haze * (0.45 + haze_v),
 		0.0, 0.55
 	);
 	// Air dims as well as veils: a kilometre of path eats the key light before

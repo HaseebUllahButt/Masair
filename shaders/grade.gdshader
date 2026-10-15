@@ -43,6 +43,10 @@ uniform float lum_split : hint_range(0.0, 0.3) = 0.12;
 // How much of the blue-lead protection below applies. The golden dusk was
 // signed off before it existed, and its violet sky wants the full warm tints.
 uniform float blue_protect : hint_range(0.0, 1.0) = 1.0;
+// Night only: takes the green out of cool pixels so moonlight reads blue, not
+// teal (the cyan key on green leaves and pasture). Warm lamps and fireflies,
+// where red leads blue, are left alone. 0 is off.
+uniform float night_blue : hint_range(0.0, 1.0) = 0.0;
 uniform vec3 light_tint : source_color = vec3(1.06, 0.99, 0.88);
 uniform vec3 dark_tint : source_color = vec3(0.93, 0.94, 1.00);
 // Lens softness at the frame edge — the tilt-shift feel. The centre of the
@@ -96,6 +100,11 @@ void fragment() {
 
 	vec3 pos_tint = mix(warm, cool, edge * 0.55) * (1.0 + split_tone) - split_tone;
 	c *= mix(pos_tint, vec3(dot(pos_tint, vec3(0.2126, 0.7152, 0.0722))), blue_lead);
+	if (night_blue > 0.0) {
+		float cool_px = smoothstep(0.0, 0.06, c.b - c.r) * night_blue;
+		c.g *= 1.0 - 0.18 * cool_px;
+		c.b *= 1.0 + 0.06 * cool_px;
+	}
 	c *= 1.0 - edge * vignette;
 
 	c += (hash(SCREEN_UV * vec2(1279.0, 721.0) + seed) - 0.5) * grain;

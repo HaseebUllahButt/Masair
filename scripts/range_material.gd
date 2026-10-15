@@ -139,7 +139,9 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	var key_norm := Color(key.r / kl, key.g / kl, key.b / kl)
 	var cool: Color = key_norm.lerp(Color(0.82, 0.90, 1.06), 0.45)
 	var cool_weight := clampf((key.b - key.r) * 3.0, 0.0, 1.0)
-	mat.set_shader_parameter("key_tint", Color(1.03, 0.97, 0.85).lerp(cool, cool_weight))
+	var key_tint: Color = Color(1.03, 0.97, 0.85).lerp(cool, cool_weight)
+	## `range_cool` walks a white sun's warm cast toward clean granite grey.
+	mat.set_shader_parameter("key_tint", key_tint.lerp(Color(0.96, 0.99, 1.05), float(_mood.get("range_cool", 0.0))))
 	## Light, because the haze it lays on is the mist colour and the mist is
 	## pale: at 0.75 every range in the rain glowed off-white against a slate sky.
 	mat.set_shader_parameter("weather_haze", 0.35 * float(_mood.get("rain", 0.0)))
@@ -147,6 +149,10 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	mat.set_shader_parameter("haze_scale", float(_mood.get("range_haze", 1.0)))
 	mat.set_shader_parameter("form_bite", float(_mood.get("range_form", 0.0)))
 	mat.set_shader_parameter("sun_swing", deg_to_rad(float(_mood.get("range_swing", 0.0))))
+	mat.set_shader_parameter("range_shade", float(_mood.get("range_shade", 0.14)))
+	mat.set_shader_parameter("range_rake", float(_mood.get("range_rake", 0.5)))
 	## Only a high sun: dusk's and night's low keys lit the rock through the
 	## same grade path as before and must stay as they were (see the shader).
-	mat.set_shader_parameter("blue_hold", smoothstep(16.0, 20.0, -light_angle.x))
+	## `range_cool` also eases that hold, so lit rock lands on cool granite
+	## instead of the grade's cream.
+	mat.set_shader_parameter("blue_hold", smoothstep(16.0, 20.0, -light_angle.x) * (1.0 - 0.6 * float(_mood.get("range_cool", 0.0))))

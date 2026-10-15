@@ -198,6 +198,11 @@ const MOODS := {
 		"range_haze": 1.0,
 		"range_form": 0.0,
 		"range_swing": 0.0,
+		"range_cool": 0.0,
+		"range_shade": 0.14,
+		"range_rake": 0.5,
+		"night_blue": 0.0,
+		"far_ground_tint": Color(1.0, 1.0, 1.0),
 		"grade_split": 0.12,
 		"grade_warmth": 0.065,
 		"azimuth_split": 0.0,
@@ -359,12 +364,20 @@ const MOODS := {
 		"range_key_mix": 0.0,
 		"sun_shadow": 1.0,
 		"classic": 0.0,
-		# The overlooks' ranges take a shoulder sun (55° off the line of sight)
-		# with a firmer terminator and less veil: under the high key every face
-		# came out the same lit beige-grey.
-		"range_haze": 0.8,
-		"range_form": 0.8,
-		"range_swing": 55.0,
+		# The ranges take a shoulder sun (20° off the line of sight) and split
+		# each massif by its left/right turn into a lit flank of cool granite and
+		# a darker shade side, with a thinner veil on the near ranges: under the
+		# high key every face came out the same hazy beige. Woods keep the real
+		# key. Seen face-on, a range flips all-lit or all-shaded on the swing
+		# alone; the turn (range_rake) is what gives it form.
+		"range_haze": 0.6,
+		"range_form": 1.0,
+		"range_swing": 20.0,
+		"range_cool": 1.0,
+		"range_shade": 0.26,
+		"range_rake": 1.7,
+		"night_blue": 0.0,
+		"far_ground_tint": Color(1.0, 1.0, 1.0),
 	},
 	LightingMode.NIGHT:
 	{
@@ -494,6 +507,14 @@ const MOODS := {
 		"range_haze": 1.0,
 		"range_form": 0.0,
 		"range_swing": 0.0,
+		"range_cool": 0.0,
+		"range_shade": 0.14,
+		"range_rake": 0.5,
+		# Moonlight reads blue, not teal: the cyan key on green leaves and grass.
+		"night_blue": 1.0,
+		# The overlooks' far valley floor is drawn unshaded in its daylight
+		# colours; under the moon it glowed as a pale green sheet.
+		"far_ground_tint": Color("4c5a78"),
 	},
 }
 
@@ -1293,6 +1314,7 @@ func _apply_lighting() -> void:
 	# the same sky that the engine fog converges the far distance to.
 	LowPoly.foliage_material().set_shader_parameter("aerial_tint", mood["fog_color"])
 	LowPoly.field_material().set_shader_parameter("aerial_tint", mood["fog_color"])
+	LowPoly.far_ground_material().albedo_color = mood["far_ground_tint"]
 	# `classic` is the golden dusk's pre-overnight shading: no mid-ground air
 	# on the woods and pasture, the old crown, glow and gust tints, and no
 	# shade fill (there are no sun shadows for it to lift).
@@ -1322,6 +1344,7 @@ func _apply_lighting() -> void:
 		_grade_mat.set_shader_parameter("blue_protect", 1.0 - classic)
 		_grade_mat.set_shader_parameter("lum_split", mood["grade_split"])
 		_grade_mat.set_shader_parameter("split_tone", mood["grade_warmth"])
+		_grade_mat.set_shader_parameter("night_blue", mood["night_blue"])
 	var horizon := get_node_or_null("HorizonMountains")
 	if horizon and horizon.has_method("apply_mood"):
 		horizon.call("apply_mood", mood)

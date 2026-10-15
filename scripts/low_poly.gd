@@ -24,6 +24,7 @@ static var _solid: StandardMaterial3D
 static var _glow: StandardMaterial3D
 static var _road: ShaderMaterial
 static var _terrain: StandardMaterial3D
+static var _far_ground: StandardMaterial3D
 static var _field: ShaderMaterial
 static var _metal: StandardMaterial3D
 static var _paint: StandardMaterial3D
@@ -178,6 +179,17 @@ static func terrain_material() -> StandardMaterial3D:
 		# thing giving a hillside form in a game that renders no shadows.
 		_terrain.diffuse_mode = BaseMaterial3D.DIFFUSE_LAMBERT
 	return _terrain
+
+
+static func far_ground_material() -> StandardMaterial3D:
+	## The overlooks' far valley floor: the terrain material drawn unshaded, so
+	## its vertex colour is the surface (see road_chunk's `_far_field_color`).
+	## Shared so the mood can dim it — unshaded, a daylight meadow otherwise
+	## glows at full value under the moon. White leaves it as authored.
+	if _far_ground == null:
+		_far_ground = terrain_material().duplicate() as StandardMaterial3D
+		_far_ground.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	return _far_ground
 
 
 static func field_material() -> ShaderMaterial:
