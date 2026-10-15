@@ -841,12 +841,23 @@ func setup_ribbon_incremental(index: int, theme_id: int) -> void:
 	if not await _keep_streaming():
 		return
 	await _dress_shoulder_incremental()
+	_trace_tail("ribbon")
 
 
 func setup_props_incremental() -> void:
 	_slice_started_usec = Time.get_ticks_usec()
 	_resumed_usec = _slice_started_usec
 	await _build_props_incremental()
+	_trace_tail("props")
+
+
+func _trace_tail(job: String) -> void:
+	## A job's last slice never reaches `_keep_streaming`, so its cost was
+	## invisible to the slice trace — the shape of a hitch that names no stage.
+	if hitch_trace and is_instance_valid(self):
+		var work := Time.get_ticks_usec() - _resumed_usec
+		if work >= 12000:
+			print("chunk %d tail %s: %.1f ms" % [chunk_index, job, float(work) / 1000.0])
 
 
 func _dress_shoulder_immediate() -> void:
@@ -1193,6 +1204,7 @@ func ensure_scenic_dress() -> void:
 	set_meta("scenic_building", true)
 	_resumed_usec = Time.get_ticks_usec()
 	await _build_scenic_props_incremental()
+	_trace_tail("scenic")
 	if is_instance_valid(self):
 		set_meta("scenic_done", true)
 		set_meta("scenic_building", false)
@@ -1252,6 +1264,7 @@ func ensure_highway_dress() -> void:
 	set_meta("highway_building", true)
 	_resumed_usec = Time.get_ticks_usec()
 	await _build_highway_props_incremental()
+	_trace_tail("highway")
 	if is_instance_valid(self):
 		set_meta("highway_done", true)
 		set_meta("highway_building", false)

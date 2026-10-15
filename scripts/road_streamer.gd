@@ -3,6 +3,7 @@ extends Node3D
 
 const RoadChunkGD: GDScript = preload("res://scripts/road_chunk.gd")
 const RoadPathGD: GDScript = preload("res://scripts/road_path.gd")
+const WorldWarmupGD: GDScript = preload("res://scripts/world_warmup.gd")
 const CHUNK_LENGTH: float = 40.0
 @export var chunks_ahead: int = 14
 @export var chunks_behind: int = 2
@@ -85,6 +86,10 @@ func _ready() -> void:
 
 func bind_player(player: Node3D) -> void:
 	_player = player
+	# Compile the ride's programs in the ride's own world while the menu is up.
+	var warmup: Node = WorldWarmupGD.new()
+	warmup.name = "WorldWarmup"
+	add_child(warmup)
 	# Only the road under the bike blocks startup. The next chunk immediately
 	# enters the incremental queue; synchronously rebuilding two dense scenic
 	# chunks was the remaining restart hitch.

@@ -33,6 +33,8 @@ func _run() -> void:
 	var warm: Node = root.find_child("ScenicWarmup", true, false)
 	while is_instance_valid(warm):
 		await process_frame
+	while is_instance_valid(root.find_child("WorldWarmup", true, false)):
+		await process_frame
 	var hud: Node = root.find_child("HUD", true, false)
 	hud.call("_start_ride")
 	main.call("preview_mood", {"day": 1, "dusk": 0, "night": 2}[_mode])

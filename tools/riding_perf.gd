@@ -66,7 +66,10 @@ class Ride:
 		RenderingServer.viewport_set_measure_render_time(rid, true)
 		get_tree().process_frame.connect(_on_frame_start)
 		get_tree().physics_frame.connect(_on_physics_start)
-		while is_instance_valid(get_tree().root.find_child("ScenicWarmup", true, false)) and DisplayServer.get_name() != "headless":
+		while DisplayServer.get_name() != "headless" and (
+			is_instance_valid(get_tree().root.find_child("ScenicWarmup", true, false))
+			or is_instance_valid(get_tree().root.find_child("WorldWarmup", true, false))
+		):
 			await get_tree().process_frame
 		var hud: Node = get_tree().root.find_child("HUD", true, false)
 		hud.call("_start_ride")
@@ -258,8 +261,14 @@ class Ride:
 			var sh: Shader = (m as ShaderMaterial).shader
 			return "SM:" + (sh.resource_path.get_file() if sh and sh.resource_path != "" else str(sh.get_instance_id() if sh else 0))
 		if m is BaseMaterial3D:
+			# Every flag and mode is a term in the generated shader; colours and
+			# floats are only uniforms. Hash the switches, keep a readable head.
 			var b := m as BaseMaterial3D
-			return "STD:%d/%d/%d/%d" % [b.shading_mode, b.transparency, int(b.vertex_color_use_as_albedo), b.cull_mode]
+			var flags := PackedStringArray()
+			for prop: Dictionary in b.get_property_list():
+				if int(prop["usage"]) & PROPERTY_USAGE_STORAGE and int(prop["type"]) in [TYPE_BOOL, TYPE_INT]:
+					flags.append(str(b.get(prop["name"])))
+			return "STD:%d/%d/%d/%d#%x" % [b.shading_mode, b.transparency, int(b.vertex_color_use_as_albedo), b.cull_mode, hash("".join(flags)) & 0xffff]
 		return m.get_class()
 
 	func _scan_looks(report: bool) -> void:
@@ -284,7 +293,14 @@ class Ride:
 					looks_new.append([Engine.get_process_frames(), key])
 		for node: Node in get_tree().root.find_children("*", "Light3D", true, false):
 			var light := node as Light3D
-			if light is DirectionalLight3D or not light.is_visible_in_tree():
+			if not light.is_visible_in_tree():
+				continue
+			if light is DirectionalLight3D:
+				var dkey := "light Directional %s" % light.name
+				if not looks_seen.has(dkey):
+					looks_seen[dkey] = true
+					if looks_primed:
+						looks_new.append([Engine.get_process_frames(), dkey])
 				continue
 			var key := "light %s %s energy=%.1f" % [light.get_class(), light.name.rstrip("0123456789"), light.light_energy]
 			if light.global_position.distance_to(eye) < 80.0 and not looks_seen.has(key):
