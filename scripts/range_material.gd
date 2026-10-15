@@ -21,15 +21,7 @@ const RANGE_SHADER: Shader = preload("res://shaders/horizon.gdshader")
 ## panel-to-panel turn out of its light, and `slope_rock` bares steep ground
 ## (see the shader for all three).
 const RING := {
-	## 170 -> 240. The treeline is metres above the ring's own foot (-160), so
-	## 170 left only the bottom third of the 900 m back layer wooded — the far
-	## range read as bare pale rock to the skyline, which fed the "washed grey"
-	## complaint. 240 puts real forest on the foot of every layer: the foothill
-	## ring woods almost to its crests, the back range keeps a green skirt under
-	## the rock, the way the treeline actually behaves on a tall face. Snow at
-	## -0.32: the DEM crests only touch the layer top at their one hero summit,
-	## and at -0.10 no cap showed anywhere on the ring.
-	"treeline": 240.0, "woods": Color("34573f"), "snow_bias": -0.32, "light_soft": 0.3, "azimuth_flatten": 0.85
+	"treeline": 170.0, "woods": Color("34573f"), "snow_bias": -0.10, "light_soft": 0.3, "azimuth_flatten": 0.85
 }
 ## Keyed by RoadChunk.Env.
 const OVERLOOK := {
@@ -86,10 +78,6 @@ static func _make(profile: Dictionary) -> ShaderMaterial:
 
 static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	var haze: Color = _mood.get("horizon_color", Color("f6b06a"))
-	## A dawn sky is only gold on the sun's side; the ranges stand all round
-	## the horizon, so they take the air halfway to the cool side. Painted in
-	## the gold alone, every shaded face away from the sun came out grey-brown.
-	haze = haze.lerp(_mood.get("anti_horizon", haze), 0.5 * float(_mood.get("azimuth_split", 0.0)))
 	var fog: Color = _mood.get("fog_color", Color("8b625f"))
 	var light_angle: Vector3 = _mood.get("light_angle", Vector3(-7.0, 14.0, 0.0))
 	var euler := Vector3(deg_to_rad(light_angle.x), deg_to_rad(light_angle.y), deg_to_rad(light_angle.z))
@@ -125,15 +113,9 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	## side on without bleaching.
 	var crest: Color = Color("6b7683").lerp(fog.darkened(0.1), 0.5 * (1.0 - daylight_r))
 	mat.set_shader_parameter("crest_color", crest)
-	## What an up-facing plane collects from the dome, and the colour the
-	## aerial term veils toward. It used to anchor on 8fa6c8 — a grey so close
-	## to the haze's own value that a kilometre of "air" arrived as a grey
-	## sheet, which is the washed-pale-range complaint. Airlight is scattered
-	## skylight: anchor on the sky's mid band instead, so the veil is blue by
-	## day, rose at dusk and navy at night — and a touch darker than the real
-	## horizon, because a ridge never reads brighter than the sky behind it.
-	var mid: Color = _mood.get("mid_color", Color("8fa6c8"))
-	mat.set_shader_parameter("sky_color", haze.lerp(mid, 0.55).darkened(0.06))
+	## What an up-facing plane collects from the dusk dome. This is the term
+	## that keeps the backlit face off zero without smearing sunset over it.
+	mat.set_shader_parameter("sky_color", haze.lerp(Color("8fa6c8"), 0.62).lightened(0.04))
 	## Snow is only white by daylight. The shader is unshaded, so a constant
 	## white would glow on a night skyline; walk it toward the crest colour as
 	## the fog darkens.
@@ -146,7 +128,7 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	## it merged into one near-black silhouette.
 	var woods: Color = profile["woods"]
 	mat.set_shader_parameter("forest_color", fog.darkened(0.15).lerp(woods, 0.85 * daylight))
-	mat.set_shader_parameter("mist_color", fog.lerp(haze, 0.25).lerp(Color("9fb4cc"), 0.55 * daylight))
+	mat.set_shader_parameter("mist_color", fog.lerp(haze, 0.25).lerp(Color("9fb4cc"), 0.45 * daylight))
 	mat.set_shader_parameter("sun_dir", toward_sun)
 	# The lit-face tint follows the key. Under a warm sun it keeps the authored
 	# warm cast; once the key goes blue (night's 9ec8de) the same warm cast
@@ -157,23 +139,10 @@ static func _paint(mat: ShaderMaterial, profile: Dictionary) -> void:
 	var key_norm := Color(key.r / kl, key.g / kl, key.b / kl)
 	var cool: Color = key_norm.lerp(Color(0.82, 0.90, 1.06), 0.45)
 	var cool_weight := clampf((key.b - key.r) * 3.0, 0.0, 1.0)
-	# The old constant (1.03,0.97,0.85) laid a full warm cast on every lit
-	# face, and the grade's warm mids returned a neutral-warm rock as tan —
-	# the "sand dunes" the reviewer kept rejecting. Daylight granite takes
-	# almost no warm cast: a kilometre and a half of air scatters the warm
-	# out of the key long before it reaches the ridge, so a lit face at
-	# noon is slate, not caramel. The cast is reserved for a genuinely low
-	# sun — dusk's ff9e62 is red-deep enough that alpenglow is real, and its
-	# (r-b) of 0.62 sits clear of day's 0.40. Night's cool path is unchanged.
-	var warm_depth := smoothstep(0.45, 0.60, key.r - key.b)
-	var lit_cast := Color(0.93, 0.965, 1.045).lerp(Color(1.03, 0.97, 0.85), warm_depth)
-	var key_tint: Color = lit_cast.lerp(cool, cool_weight)
-	## Alpenglow. A sunrise lights the tops rose before it lights anything
-	## gold; the gold key alone took the ranges through the daytime path and
-	## the grade returned them as cream. A rose tint here also keeps the rock's
-	## own slate in shade, since the shader only greys rock under a cool key.
-	key_tint = key_tint.lerp(_mood.get("range_key_tint", key_tint), float(_mood.get("range_key_mix", 0.0)))
-	mat.set_shader_parameter("key_tint", key_tint)
+	mat.set_shader_parameter("key_tint", Color(1.03, 0.97, 0.85).lerp(cool, cool_weight))
 	## Light, because the haze it lays on is the mist colour and the mist is
 	## pale: at 0.75 every range in the rain glowed off-white against a slate sky.
 	mat.set_shader_parameter("weather_haze", 0.35 * float(_mood.get("rain", 0.0)))
+	## Only a high sun: dusk's and night's low keys lit the rock through the
+	## same grade path as before and must stay as they were (see the shader).
+	mat.set_shader_parameter("blue_hold", smoothstep(16.0, 20.0, -light_angle.x))
