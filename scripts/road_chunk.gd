@@ -11542,12 +11542,14 @@ func _deck_raceme(z: float, lateral: float, top: float, col: Color) -> void:
 	## that is one continuous soft mass, darker at the stalk and pale at the
 	## tip, is what a wisteria actually hangs as.
 	var length: float = _rng.randf_range(0.36, 0.78)
-	var drops: int = 3 if length > 0.55 else 2
+	var drops: int = 4 if length > 0.55 else 3
 	var reach: float = 0.0
 	for k in drops:
 		var f: float = float(k) / float(drops)
-		var w: float = lerpf(0.16, 0.07, f) * _rng.randf_range(0.9, 1.1)
-		var h: float = length / float(drops) * 1.55
+		# Near-round lumps, overlapping: stretched past about one and a half to
+		# one, the faceted bush mesh reads as a hanging amethyst, not a bloom.
+		var w: float = lerpf(0.19, 0.09, f) * _rng.randf_range(0.9, 1.1)
+		var h: float = length / float(drops) * 1.35
 		_deck_blob(
 			z + _rng.randf_range(-0.03, 0.03),
 			lateral + _vp_side * _rng.randf_range(-0.03, 0.03),
