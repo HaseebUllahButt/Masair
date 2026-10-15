@@ -26,6 +26,7 @@ func _lantern() -> ArrayMesh:
 	var iron := Color("23272a")
 	var iron_hi := Color("343a3e")
 	var b = LowPolyGD.new()
+	b.index_flat = true
 	b.add_rounded_box(Transform3D(Basis.IDENTITY, Vector3(0, 0.035, 0)), Vector3(0.28, 0.07, 0.28), 0.015, iron)
 	b.add_rounded_box(Transform3D(Basis.IDENTITY, Vector3(0, 0.1, 0)), Vector3(0.19, 0.06, 0.19), 0.012, iron_hi)
 	b.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0, 0.39, 0)), 0.052, 0.52, 8, iron)
@@ -51,5 +52,7 @@ func _rebuild(scene_path: String, node_name: String, mesh: ArrayMesh) -> void:
 	var out := PackedScene.new()
 	out.pack(root)
 	var err := ResourceSaver.save(out, scene_path)
+	# ResourceSaver drops the scene's UID line; references are by path, but keep
+	# the file stable — put the original header back by hand if it changed.
 	print("rebuilt ", scene_path, " err=", err, " verts=", mesh.surface_get_array_len(0))
 	root.free()
