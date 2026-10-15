@@ -106,7 +106,7 @@ var _results_scroll: ScrollContainer
 var _ready_pending: bool = false
 var _hud_defaults: Dictionary = {}
 
-const MOOD_NAMES := ["DAWN", "DAYLIGHT", "MIDNIGHT"]
+const MOOD_NAMES := ["GOLDEN DUSK", "DAYLIGHT", "MIDNIGHT"]
 const DIFFICULTY_NAMES := ["OPEN ROAD", "SUNDAY RUN", "THE TON"]
 const DIFFICULTY_COPY := [
 	"10 vehicles  ·  generous gaps  ·  score ×1.0",
@@ -597,7 +597,7 @@ func _on_bonus_awarded(kind: String, amount: int) -> void:
 
 
 func show_lighting_mode(mode: int) -> void:
-	const MODE_NAMES := ["DAWN MODE", "DAY MODE", "NIGHT MODE"]
+	const MODE_NAMES := ["DUSK MODE", "DAY MODE", "NIGHT MODE"]
 	const MODE_COLORS := [Color("ffbd91"), Color("d8f2ff"), Color("a9c8ff")]
 	var safe_mode := clampi(mode, 0, MODE_NAMES.size() - 1)
 	flash_label.text = MODE_NAMES[safe_mode]
@@ -1234,7 +1234,7 @@ func _nudge_difficulty(direction: int) -> void:
 
 
 func _cycle_menu_mood() -> void:
-	## Same dawn → day → night order as T during a ride.
+	## Same dusk → day → night order as T during a ride.
 	_nudge_mood(1)
 
 

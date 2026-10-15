@@ -27,7 +27,7 @@ func _initialize() -> void:
 	cap.shots = int(opts.get("shots", 8 if opts.has("sweep") else 6))
 	cap.gap = float(opts.get("gap", 1.0 if opts.has("sweep") else 4.0))
 	cap.warmup = float(opts.get("warmup", 2.5))
-	cap.mode = String(opts.get("mode", "dawn"))
+	cap.mode = String(opts.get("mode", "dusk"))
 	cap.bench = opts.has("bench")
 	cap.look = String(opts.get("look", ""))
 	cap.viewpoint = opts.has("viewpoint")
@@ -93,7 +93,7 @@ class Capture:
 	var shots: int = 6
 	var gap: float = 4.0
 	var warmup: float = 2.5
-	var mode: String = "dawn"
+	var mode: String = "dusk"
 	## "left"/"right": hold the glance action, to check that sky bodies stay put
 	## in the world instead of swimming with the camera.
 	var look: String = ""

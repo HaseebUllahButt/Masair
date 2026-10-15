@@ -1,6 +1,6 @@
 extends SceneTree
 ## Moods fade rather than cut, start from what is on screen, and the first one
-## is a dawn rather than a second sunset.
+## is still round six's golden dusk.
 
 var failures: int = 0
 
@@ -36,25 +36,16 @@ func _run() -> void:
 	check(sun.light_color.is_equal_approx(halfway), "a second T continues from the half-faded hour")
 	main.call("_step_fade", 1.0)
 	check((main.get("_mood_from") as Dictionary).is_empty(), "a finished fade settles on the row")
-	check(int(main.get("lighting_mode")) == 0, "the cycle wraps round to dawn")
+	check(int(main.get("lighting_mode")) == 0, "the cycle wraps round to dusk")
 
-	# Dawn reads as morning: blue overhead, warmth only on the sun's side, and
-	# a key that is gold rather than sunset orange.
-	var zenith: Color = sky.get_shader_parameter("zenith_color")
-	check(zenith.b > zenith.r * 1.8, "the dawn sky overhead is already blue")
-	check(float(sky.get_shader_parameter("azimuth_split")) > 0.5, "dawn warmth belongs to the sun's side of the sky")
-	var anti: Color = sky.get_shader_parameter("anti_horizon")
-	check(anti.b > anti.r, "the sky opposite the sunrise is the cool earth-shadow")
-	check(sun.light_color.g > sun.light_color.r * 0.75, "the dawn key is gold, not sunset orange")
-	check(env.fog_height_density > 0.0, "dawn lays mist in the low ground")
-	check(sun.rotation_degrees.x > -15.0, "the dawn sun sits low")
-
-	# Rain still layers over dawn without leaving the rose band or moon behind.
-	main.set("rain", 1.0)
-	main.call("_apply_lighting")
-	check(float(sky.get_shader_parameter("belt_strength")) == 0.0, "a closed sky hides the dawn rose band")
-	check(float(sky.get_shader_parameter("ghost_moon")) == 0.0, "a closed sky hides the morning moon")
-	main.set("rain", 0.0)
+	# The first mood is round six's golden dusk: one warm skyline all the way
+	# round, an orange key, and none of the morning-only sky features left on.
+	var horizon: Color = sky.get_shader_parameter("horizon_color")
+	check(horizon.r > horizon.b * 1.4, "the dusk skyline is warm")
+	check(float(sky.get_shader_parameter("azimuth_split")) == 0.0, "the dusk sky is one colour all the way round")
+	check(float(sky.get_shader_parameter("belt_strength")) == 0.0, "dusk carries no dawn rose band")
+	check(float(sky.get_shader_parameter("ghost_moon")) == 0.0, "dusk carries no morning moon")
+	check(sun.light_color.r > sun.light_color.b * 1.4, "the dusk key is sunset orange")
 
 	# A night squall stays night rather than lighting the dome grey.
 	main.call("preview_mood", 2, true)
@@ -65,7 +56,7 @@ func _run() -> void:
 	main.set("rain", 0.0)
 
 	var hud_script: GDScript = load("res://scripts/hud.gd")
-	check(hud_script.get_script_constant_map()["MOOD_NAMES"][0] == "DAWN", "the title picker calls the first mood dawn")
+	check(hud_script.get_script_constant_map()["MOOD_NAMES"][0] == "GOLDEN DUSK", "the title picker calls the first mood golden dusk")
 	main.free()
 	print("lighting: %d failures" % failures)
 	quit(1 if failures else 0)

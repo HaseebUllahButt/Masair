@@ -43,6 +43,8 @@ uniform float aerial_strength : hint_range(0.0, 1.0) = 0.55;
 uniform float aerial_near = 140.0;
 uniform float aerial_far = 540.0;
 uniform vec3 aerial_tint : source_color = vec3(0.61, 0.66, 0.72);
+// 1 draws the golden dusk's pre-overnight hay lean.
+uniform float classic : hint_range(0.0, 1.0) = 0.0;
 
 varying vec3 world_pos;
 varying float view_dist;
@@ -104,7 +106,7 @@ void fragment() {
 	// value, so the patches read as different ground and not as a shadow map.
 	// The hay lean used to crush blue by a fifth; on top of the warm key and
 	// the gust tint it pushed whole scarps to pink. Straw, not sand.
-	albedo *= mix(vec3(1.0), vec3(1.06, 1.015, 0.88), smoothstep(0.60, 0.92, mottle) * mottle_strength * 3.2);
+	albedo *= mix(vec3(1.0), mix(vec3(1.06, 1.015, 0.88), vec3(1.10, 1.02, 0.80), classic), smoothstep(0.60, 0.92, mottle) * mottle_strength * 3.2);
 	// See foliage.gdshader — fade chroma, hold value.
 	float airy = smoothstep(aerial_near, aerial_far, view_dist) * aerial_strength;
 	if (airy > 0.001) {

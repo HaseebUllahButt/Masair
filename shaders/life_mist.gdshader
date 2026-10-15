@@ -14,6 +14,9 @@ uniform vec2 flow = vec2(1.5, 0.0);
 uniform float grain = 0.011;
 uniform float seed = 0.0;
 uniform float fade = 1.0;
+// Where the noise turns to mist. High by day and night (torn strands with
+// water between them); the golden dusk keeps its older, fuller sheet.
+uniform vec2 wisp_range = vec2(0.56, 0.86);
 
 varying vec3 world_pos;
 
@@ -44,7 +47,7 @@ void fragment() {
 		+ mnoise(p * grain * 2.7 + vec2(seed * 1.7, -seed) - flow * TIME * 0.004) * 0.4;
 	// A high threshold: most of the sheet is clear and the wisps are torn
 	// strands with water between them, not a blanket with holes in it.
-	float wisps = smoothstep(0.56, 0.86, n);
+	float wisps = smoothstep(wisp_range.x, wisp_range.y, n);
 	// Feathered all round, so the sheet has no edge anywhere.
 	vec2 e = abs(UV * 2.0 - 1.0);
 	float edge = (1.0 - smoothstep(0.45, 1.0, e.x)) * (1.0 - smoothstep(0.35, 1.0, e.y));

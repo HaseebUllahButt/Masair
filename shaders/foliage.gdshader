@@ -55,6 +55,8 @@ uniform float wrap : hint_range(0.0, 1.0) = 0.62;
 // driven by the mood's ambient so dusk goes violet and night goes navy instead
 // of glowing.
 uniform vec3 sky_fill : source_color = vec3(0.0);
+// 1 draws the golden dusk's pre-overnight crown tints and near-and-far glow.
+uniform float classic : hint_range(0.0, 1.0) = 0.0;
 
 // Canopy hexes were authored nearly black ("1c3328" is 0.02 linear) back when
 // ambient was strong enough to wash everything mint. Nothing multiplied onto an
@@ -142,7 +144,11 @@ void fragment() {
 	// cool, shadowed skirts under a warm sunlit top. It is the same warm/cool
 	// split the key and fill put on everything else, pre-baked because foliage
 	// has no shadow map to find it in.
-	albedo *= mix(vec3(0.87, 0.96, 1.12), vec3(1.12, 1.06, 0.82), smoothstep(0.08, 0.85, crown_h));
+	albedo *= mix(
+		mix(vec3(0.87, 0.96, 1.12), vec3(0.90, 0.97, 1.09), classic),
+		mix(vec3(1.12, 1.06, 0.82), vec3(1.09, 1.05, 0.86), classic),
+		smoothstep(0.08, 0.85, crown_h)
+	);
 	// Same tree, different green. Cool spruce-blue one way, warm new-leaf the
 	// other — kept narrow enough that every tint still reads as foliage.
 	vec3 hue_walk = mix(vec3(0.94, 1.00, 1.10), vec3(1.12, 1.01, 0.83), drift_hue + 0.5);
@@ -201,6 +207,6 @@ void light() {
 		+ leaf_glow_strength * toward * (0.15 + 0.85 * behind) * (0.30 + 0.70 * rim_edge) * (0.45 + 0.55 * crown_h));
 	// The gold rim is a near-field effect — a few hundred metres off, a whole
 	// crown is the size of its rim, and the glow turned stands to cream.
-	glow *= 1.0 - 0.6 * smoothstep(aerial_near, aerial_far, view_dist);
+	glow *= 1.0 - 0.6 * (1.0 - classic) * smoothstep(aerial_near, aerial_far, view_dist);
 	DIFFUSE_LIGHT += glow * ATTENUATION * LIGHT_COLOR / PI * 3.0;
 }

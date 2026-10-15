@@ -275,15 +275,11 @@ func _ambient(owner: Node3D) -> void:
 		_:
 			await _balloons(owner)
 			if _mood == Mood.DUSK:
-				# The first mood is dawn: the vale's lake holds its night mist
-				# too, and the starlings are leaving the roost.
-				await _mist(4, owner)
 				_murmuration()
 	if _root != owner:
 		return
-	# Fireflies are a night thing; at dawn they have long since gone out.
-	if _mood == Mood.NIGHT and (_theme == FOREST or _theme == COUNTRY):
-		_fireflies(46)
+	if _mood != Mood.DAY and (_theme == FOREST or _theme == COUNTRY):
+		_fireflies(46 if _mood == Mood.NIGHT else 30)
 	for k in range(before, _actors.size()):
 		_actors[k]["ambient"] = true
 
@@ -1233,20 +1229,24 @@ func _mist(count: int, owner: Node3D) -> void:
 	## the sun and a cream cloud at dusk, with no water showing through. Mist is
 	## a few torn wisps over dark water, thinnest by day when the sun has
 	## burned most of it off.
-	# Dawn mist is the palest thing in the valley — white with the sky's lilac
-	# in it — not a sunset rose.
-	var color := Color("dcd6e4")
-	var opacity: float = 0.22
+	# The golden dusk keeps its pre-overnight rose mist: full sheets, broad
+	# wisps, the old density. Day and night keep the torn-strand version.
+	var color := Color("cba4ac")
+	var opacity: float = 0.34
+	var grain := Vector2(0.009, 0.016)
+	var wisp := Vector2(0.42, 0.78)
 	match _mood:
 		Mood.DAY:
 			color = Color("cdd8e0")
 			opacity = 0.13
 			count = mini(count, 3)
+			grain = Vector2(0.016, 0.026)
+			wisp = Vector2(0.56, 0.86)
 		Mood.NIGHT:
 			color = Color("4e5a74")
 			opacity = 0.24
-		_:
-			count = mini(count, 4)
+			grain = Vector2(0.016, 0.026)
+			wisp = Vector2(0.56, 0.86)
 	var plane := PlaneMesh.new()
 	plane.size = Vector2.ONE
 	var wind := (_right if _rng.randf() < 0.5 else -_right) * _rng.randf_range(1.4, 2.4) + _fwd * _rng.randf_range(-0.4, 0.4)
@@ -1266,7 +1266,8 @@ func _mist(count: int, owner: Node3D) -> void:
 		mat.set_shader_parameter("mist_color", color)
 		mat.set_shader_parameter("opacity", opacity * _rng.randf_range(0.7, 1.0))
 		mat.set_shader_parameter("flow", Vector2(wind.x, wind.z) * _rng.randf_range(0.8, 1.2))
-		mat.set_shader_parameter("grain", _rng.randf_range(0.016, 0.026))
+		mat.set_shader_parameter("grain", _rng.randf_range(grain.x, grain.y))
+		mat.set_shader_parameter("wisp_range", wisp)
 		mat.set_shader_parameter("seed", _rng.randf_range(0.0, 50.0))
 		mat.set_shader_parameter("fade", 0.0)
 		var mi := MeshInstance3D.new()

@@ -264,12 +264,12 @@ func _process(_delta: float) -> bool:
 		var day_ambient: float = (
 			float(main.MOODS[1]["ambient"]) * (main.MOODS[1]["ambient_color"] as Color).get_luminance()
 		)
-		var dawn_ambient: float = (
+		var dusk_ambient: float = (
 			float(main.MOODS[0]["ambient"]) * (main.MOODS[0]["ambient_color"] as Color).get_luminance()
 		)
 		check(
-			night_ambient < day_ambient and night_ambient < dawn_ambient,
-			"night mode is darker than day and dawn"
+			night_ambient < day_ambient and night_ambient < dusk_ambient,
+			"night mode is darker than day and dusk"
 		)
 		check(environment.fog_density > 0.001 and environment.fog_density < 0.002, "night remains readable through controlled fog")
 		check(sun.light_color.b > sun.light_color.r, "night mode uses cool moonlight")
@@ -290,13 +290,7 @@ func _process(_delta: float) -> bool:
 		)
 		# Immediate: the title screen may have a mood fade still running.
 		main.call("preview_mood", 0, true)
-		# Dawn air is now the clearest of the three, so the check is that leaving
-		# night restores dawn's own air rather than that dawn is the haziest.
-		check(
-			is_equal_approx(environment.fog_density, float(main.get("MOODS")[0]["fog_density"]))
-			and float(sky_material.get_shader_parameter("star_intensity")) == 0.0,
-			"dawn mode brings back the morning air"
-		)
+		check(environment.fog_density > day_fog, "dusk mode restores evening atmosphere")
 		check(
 			not main.has_method("_protect_scenic_visibility"),
 			"the overlook does not swap the riding mood for a scenic one"

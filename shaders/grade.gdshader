@@ -40,6 +40,9 @@ uniform vec3 shadow_tint : source_color = vec3(0.52, 0.57, 0.76);
 // warm where the sun lands and cool where it does not, which is most of the
 // "dreamy" in a frame that would otherwise be one flat exposure.
 uniform float lum_split : hint_range(0.0, 0.3) = 0.12;
+// How much of the blue-lead protection below applies. The golden dusk was
+// signed off before it existed, and its violet sky wants the full warm tints.
+uniform float blue_protect : hint_range(0.0, 1.0) = 1.0;
 uniform vec3 light_tint : source_color = vec3(1.06, 0.99, 0.88);
 uniform vec3 dark_tint : source_color = vec3(0.93, 0.94, 1.00);
 // Lens softness at the frame edge — the tilt-shift feel. The centre of the
@@ -85,7 +88,7 @@ void fragment() {
 	// blue leads, apply each tint as a luminance-only multiplier so the frame
 	// keeps its exposure shaping while the hue stays put. Warm pixels (clouds,
 	// fields, the sunset itself) are unaffected: they get the full tints.
-	float blue_lead = clamp((c.b - max(c.r, c.g)) * 6.0, 0.0, 1.0);
+	float blue_lead = clamp((c.b - max(c.r, c.g)) * 6.0, 0.0, 1.0) * blue_protect;
 
 	// Luminance split-tone: dusk-pastel shadows, warm-cream highlights.
 	vec3 lum_tint = mix(dark_tint, light_tint, smoothstep(0.06, 0.62, lum)) * (1.0 + lum_split) - lum_split;
