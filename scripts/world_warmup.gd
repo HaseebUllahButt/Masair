@@ -97,28 +97,39 @@ func _build_group(rack: Node3D, group: int, at: Vector3) -> void:
 		omni.distance_fade_enabled = true
 		root.add_child(omni)
 	var items: Array[Node3D] = []
-	for entry: Array in _surfaces(group == 0):
+	for entry: Array in _surfaces(group):
 		var material: Material = entry[0]
 		var casts: bool = entry[1]
 		items.append(_mesh_item(RoadChunkGD.unit_cube(), material, casts))
-		items.append(_batch_item(material, casts))
+		# Only the scatter (blocks, lamps, grass, bushes) is ever batched; a
+		# batched copy of the rest would be a program the ride never asks for.
+		if entry[2]:
+			items.append(_batch_item(material, casts))
 	# The traffic bodies and lamps: paint, chrome, glass, glow, in one mesh.
 	items.append(_mesh_item(TrafficCarGD.call("_mesh_for", 0, 0), null, true))
 	items.append(_mesh_item(TrafficCarGD.call("_brake_mesh", 0), null, false))
-	# Every road sign's text.
-	var label := Label3D.new()
-	label.text = "Lookout 2 km"
-	label.font_size = 128
-	label.pixel_size = 0.0001
-	label.double_sided = false
-	label.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	items.append(label)
+	if group == 0 or group == 2:
+		# A car fades in when it spawns, and a see-through draw is a program of
+		# its own: the first car of a fresh install froze the ride's start.
+		var fading := _mesh_item(TrafficCarGD.call("_mesh_for", 0, 0), null, true) as GeometryInstance3D
+		fading.transparency = 0.5
+		items.append(fading)
+	if group == 0:
+		# Every road sign's text. Labels are unshaded, so one set is all of them.
+		var label := Label3D.new()
+		label.text = "Lookout 2 km"
+		label.font_size = 128
+		label.pixel_size = 0.0001
+		label.double_sided = false
+		label.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		items.append(label)
 	# Imported boulders and the overlook's packed props carry their own
 	# materials; the overlook is where the deck lamps meet them after dark.
-	for prefer_a: bool in [true, false]:
-		var rock: PackedScene = RoadChunkGD.call("_rock_scene", prefer_a)
-		if rock:
-			items.append(rock.instantiate() as Node3D)
+	if group < 3:
+		for prefer_a: bool in [true, false]:
+			var rock: PackedScene = RoadChunkGD.call("_rock_scene", prefer_a)
+			if rock:
+				items.append(rock.instantiate() as Node3D)
 	for asset: String in ["lookout_bench", "lookout_board", "lookout_bollard", "lookout_grove",
 		"lookout_deck", "lookout_rail", "lookout_pier", "lookout_balcony",
 		"lookout_stop", "lookout_bays", "lookout_tree"]:
@@ -148,24 +159,30 @@ func _build_group(rack: Node3D, group: int, at: Vector3) -> void:
 		i += 1
 
 
-func _surfaces(all: bool) -> Array:
-	## [material, casts a sun shadow in the game]. Lit sets keep to what a
-	## headlight or a lamp can actually reach: the road, its ground and what
-	## stands beside it. The far ranges, the lake and the beacon stay unlit.
-	var near: Array = [
-		[LowPolyGD.solid_material(), true], [LowPolyGD.glow_material(), true],
-		[LowPolyGD.road_material(), false], [LowPolyGD.terrain_material(), false],
-		[LowPolyGD.field_material(), false], [LowPolyGD.foliage_material(), true],
-		[LowPolyGD.metal_material(), true], [LowPolyGD.paint_material(), true],
-		[LowPolyGD.mirror_material(), true], [RoadChunkGD.water_material(), false],
+func _surfaces(group: int) -> Array:
+	## [material, casts a sun shadow in the game, ever batched]. Lit sets keep
+	## to what a headlight or a lamp can actually reach: the road, its ground
+	## and what stands beside it. The far ranges, the lake and the beacon stay
+	## unlit; under both lights at once there is only the roadside.
+	var both: Array = [
+		[LowPolyGD.solid_material(), true, true], [LowPolyGD.road_material(), false, false],
+		[LowPolyGD.terrain_material(), false, false], [LowPolyGD.field_material(), false, false],
+		[LowPolyGD.foliage_material(), true, true],
 	]
-	if not all:
+	if group == 3:
+		return both
+	var near: Array = both + [
+		[LowPolyGD.glow_material(), true, true], [LowPolyGD.metal_material(), true, false],
+		[LowPolyGD.paint_material(), true, false], [LowPolyGD.mirror_material(), true, false],
+		[RoadChunkGD.water_material(), false, false],
+	]
+	if group != 0:
 		return near
 	var far_ground: StandardMaterial3D = LowPolyGD.terrain_material().duplicate() as StandardMaterial3D
 	far_ground.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	return near + [
-		[RoadChunkGD.beacon_material(), false], [far_ground, false],
-		[RoadChunkGD.call("_vista_rock_material", Color("5a5148")), false],
+		[RoadChunkGD.beacon_material(), false, false], [far_ground, false, false],
+		[RoadChunkGD.call("_vista_rock_material", Color("5a5148")), false, false],
 	]
 
 
