@@ -156,12 +156,13 @@ func _process(_delta: float) -> void:
 
 
 func _dressing_behind(current: int) -> bool:
-	## Whether a chunk inside DRESS_LEAD_M of the bike still has no dressing.
-	## Normally dressing lands 270 m+ ahead; nearer means the jobs are losing.
+	## Whether a chunk inside DRESS_LEAD_M of the bike still has no dressing,
+	## or no road yet. Normally dressing lands 270 m+ ahead; nearer means the
+	## jobs are losing.
 	var index := current + 1
 	while float(index) * CHUNK_LENGTH - _player.track_z < DRESS_LEAD_M:
 		var chunk: Node = _chunks.get(index)
-		if chunk != null and not bool(chunk.get_meta("props_done", false)):
+		if chunk == null or not bool(chunk.get_meta("props_done", false)):
 			return true
 		index += 1
 	return false
@@ -919,10 +920,11 @@ func debug_state() -> String:
 	var stage := ""
 	if is_instance_valid(_building):
 		stage = str(_building.get_meta("dbg_stage", ""))
-	return "cur=%d job=%s stage=%s last=%s q(r/p/s/h/u)=%d/%d/%d/%d/%d live=%d dying=%d" % [
+	return "cur=%d job=%s stage=%s last=%s q(r/p/s/h/u)=%d/%d/%d/%d/%d live=%d dying=%d lift=%d" % [
 		cur, _dbg, stage, _dbg_last,
 		_ribbon_queue.size(), _props_queue.size(), _scenic_queue.size(),
 		_highway_queue.size(), _unload_queue.size(), _chunks.size(), _dying.size(),
+		1 if RoadChunkGD.frame_budget_usec > RoadChunkGD.FRAME_STREAM_USEC else 0,
 	]
 
 
