@@ -168,10 +168,15 @@ void light() {
 	// thousands of moving points with dark water between them, densest on the
 	// line to the sun and thinning out across the lobe.
 	float sheen = pow(ndh, 22.0) * (0.22 + 0.3 * sparkle * shimmer_amount);
+	// The second octave is turned against the first, or the two lattices line
+	// up and the thresholded points sit on a grid — from the bench the whole
+	// basin read as a screen door. The glint lobe is kept tight to the sun's
+	// own line: at a broad one every wave across the lake caught the moon too.
 	float t = TIME * wave_speed;
+	vec2 turned = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * world_position.xz;
 	float fine = wnoise(world_position.xz * 1.7 + vec2(t * 0.9, -t * 0.7)) * 0.6
-		+ wnoise(world_position.xz * 3.1 + vec2(-t * 1.3, t * 1.1)) * 0.4;
-	float glint = smoothstep(0.66, 0.86, fine) * pow(ndh, 9.0) * shimmer_amount;
+		+ wnoise(turned * 3.1 + vec2(-t * 1.3, t * 1.1)) * 0.4;
+	float glint = smoothstep(0.70, 0.90, fine) * pow(ndh, 48.0) * shimmer_amount;
 	float core = pow(ndh, 140.0);
-	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * (sheen + glint * 2.6 + core * 1.4) * mix(1.0, 3.4, glance);
+	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * (sheen + glint * 4.0 + core * 1.4) * mix(1.0, 3.4, glance);
 }
