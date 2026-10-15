@@ -11571,7 +11571,7 @@ func _build_platform_pergola(streamed: bool = false) -> void:
 	## inside the bench line and out of its z span: a post through the seat is
 	## not shade. All of it stays outboard of the parking.
 	var timber := Color("544839")
-	var stone := Color("8e8270")
+	var stone := Color("7a7a76")
 	var bloom := _platform_bloom()
 	var inner := RoadPathGD.PLATFORM_HALF_WIDTH + 1.15
 	var outer := RoadPathGD.PLATFORM_HALF_WIDTH + 5.45
@@ -11714,9 +11714,11 @@ func _build_platform_pergola(streamed: bool = false) -> void:
 	_deck_blob(z_mid, trough_lat, Vector3(0.55, 0.4, 1.4), Color("4a6a46"), 0.34, true)
 	for k in 3:
 		_deck_bloom_cluster(z_mid - 0.5 + float(k) * 0.5, trough_lat, bloom.lightened(0.05 * float(k)), 0.52, 3, 0.14)
-	# Pots at both open ends, so the frame's thresholds are planted alike.
+	# Pots at both open ends, so the frame's thresholds are planted alike —
+	# far enough in that the clearance sweep keeps their planting in the pot
+	# instead of nudging it off and leaving an empty stone box.
 	for pz in [z_a + 0.9, z_b - 0.9]:
-		var pot_lat: float = _platform_lateral(inner + 0.15, pz)
+		var pot_lat: float = _platform_lateral(inner + 0.6, pz)
 		_deck_planter(pz, pot_lat, Vector3(0.5, 0.5, 0.5), Color("b8ac98"))
 		_deck_blob(pz, pot_lat, Vector3(0.46, 0.34, 0.46), Color("4a6a46"), 0.42, true)
 		_deck_bloom_cluster(pz, pot_lat, bloom.lightened(0.08), 0.6, 4, 0.16)
@@ -12266,13 +12268,17 @@ func _belvedere_deck_pave(b: LowPoly, streamed: bool = false) -> void:
 	## a step deeper and cooler now, the joints a finger wider, and the border
 	## course lands as a proper dark kerb line — the same reading the walk had
 	## in the parapet shots, kept calm.
+	##
+	## The stone leans cool on purpose: the day and dusk keys are warm, and a
+	## neutral olive-grey still landed as beige sand in sun. A blue-grey flag
+	## comes out as plain weathered stone under the same light.
 	var inner := RoadPathGD.PLATFORM_HALF_WIDTH + 0.30
 	var outer := RoadPathGD.PLATFORM_HALF_WIDTH + TERRACE_RAIL_OUT - 0.10
 	var z0 := _vp_centre - RoadPathGD.PLATFORM_HALF_LENGTH + 0.45
 	var z1 := _vp_centre + RoadPathGD.PLATFORM_HALF_LENGTH - 0.45
-	var mortar := Color("3b372f")
-	var stone := Color("6b675b")
-	var kerb := Color("4a463e")
+	var mortar := Color("33363a")
+	var stone := Color("5a5f67")
+	var kerb := Color("45484c")
 	var m_i0 := _platform_lateral(inner, z0)
 	var m_o0 := _platform_lateral(outer, z0)
 	var m_i1 := _platform_lateral(inner, z1)
@@ -12458,6 +12464,10 @@ func _belvedere_buttresses(limestone: Color, shadow: Color) -> void:
 	## water; a pier every few metres gives it the rhythm, depth and shadow of
 	## something built to hold the terrace up. They stay clear of the balcony,
 	## which drops its own wall at the centre.
+	##
+	## Everything hangs off the wall face itself: `_p` drapes a point by the
+	## ground under it, and a few centimetres past the face that ground is the
+	## headland falling away, so a pier placed by lateral sank into the cliff.
 	const FACE := 6.85
 	var half: float = RoadPathGD.PLATFORM_HALF_LENGTH
 	var pier := limestone.lerp(shadow, 0.2)
@@ -12465,21 +12475,39 @@ func _belvedere_buttresses(limestone: Color, shadow: Color) -> void:
 	var z := _vp_centre - half + 1.2
 	while z < _vp_centre + half - 1.0:
 		if absf(z - _vp_centre) > 5.6:
-			var lat: float = _platform_lateral(FACE + 0.22, z)
 			var toe: float = _belvedere_toe(z, _platform_lateral(FACE, z)) + 0.6
-			# Battered: a broad foot under a narrower shaft.
-			_deck_cube(z, lat, Vector3(0.5, toe - 0.4, 0.8), pier, 0.0, -toe)
-			_deck_cube(z, _platform_lateral(FACE + 0.3, z), Vector3(0.66, toe * 0.45, 1.0), pier.darkened(0.06), 0.0, -toe)
-			_deck_cube(z, _platform_lateral(FACE + 0.16, z), Vector3(0.36, 0.14, 0.92), limestone.lightened(0.05), 0.0, -0.42 - top)
+			# Battered: a broad foot under a narrower shaft, and a cap stone.
+			_wall_block(z, FACE, 0.0, 0.45, 0.4, toe, 0.8, pier)
+			_wall_block(z, FACE, 0.0, 0.62, toe * 0.55, toe, 1.0, pier.darkened(0.06))
+			_wall_block(z, FACE, 0.0, 0.52, 0.28, 0.42, 0.94, limestone.lightened(0.05))
 		z += 4.6
-	# Drip course: one thin projecting band right under the deck lip, its
+	# Drip course: one thin projecting band right under the deck lip, whose
 	# shadow is what separates the parapet from the wall below it.
 	var s := _vp_centre - half
 	while s < _vp_centre + half - 0.01:
 		var e: float = minf(s + 2.3, _vp_centre + half)
 		if s > _vp_centre + 4.6 or e < _vp_centre - 4.6:
-			_deck_member(Vector3(s, FACE + 0.06, -top - 0.12), Vector3(e, FACE + 0.06, -top - 0.12), 0.16, 0.12, limestone.lightened(0.06))
+			var flat_s: Basis = _path.frame_flat_at(s)
+			var flat_e: Basis = _path.frame_flat_at(e)
+			var pa: Vector3 = _p(s, _platform_lateral(FACE, s), top + 0.12) + flat_s.x * _vp_side * 0.07
+			var pb: Vector3 = _p(e, _platform_lateral(FACE, e), top + 0.12) + flat_e.x * _vp_side * 0.07
+			_timber_between(pa, pb, 0.16, 0.13, limestone.lightened(0.06))
 		s = e
+
+
+func _wall_block(
+	z: float, face: float, inset: float, reach: float, drop_top: float, drop_bot: float, length: float, color: Color
+) -> void:
+	## A box standing proud of the belvedere wall: `reach` metres out from the
+	## face at `face`, between two drops below deck level, squared to the road.
+	var flat: Basis = _path.frame_flat_at(z)
+	var out: Vector3 = flat.x * _vp_side
+	var root: Vector3 = _p(z, _platform_lateral(face, z), (drop_top + drop_bot) * 0.5)
+	var height: float = drop_bot - drop_top
+	_cubes.append(Transform3D(
+		Basis(flat.x * (reach + inset), flat.y * height, flat.z * length), root + out * ((reach - inset) * 0.5)
+	))
+	_cube_cols.append(color)
 
 
 func _belvedere_toe(z: float, face_lat: float) -> float:
