@@ -160,7 +160,12 @@ void fragment() {
 		float lum = max(dot(albedo, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
 		float tint_lum = max(dot(aerial_tint, vec3(0.2126, 0.7152, 0.0722)), 1e-3);
 		vec3 aired = aerial_tint * (lum / tint_lum);
-		albedo = mix(albedo, mix(vec3(lum), aired, 0.65), airy);
+		// Toward the air, not onto it, and a step down in value. Grey at the
+		// crown's own luminance put every far stand above the green slope it
+		// stands on — the hillside ground keeps its chroma — so sunlit groves
+		// read as cream popcorn on a green hill. Real distant woods sit darker
+		// than their meadow and only cooler, never paler.
+		albedo = mix(albedo, mix(albedo, aired, 0.5) * 0.86, airy);
 	}
 	// Keep a cool canopy tint, but let the environment and wrapped light
 	// illuminate it. Self-emission made the trees glow green after dark.
@@ -194,5 +199,8 @@ void light() {
 	float rim_edge = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 2.0);
 	vec3 glow = leaf_glow * (translucency * behind
 		+ leaf_glow_strength * toward * (0.15 + 0.85 * behind) * (0.30 + 0.70 * rim_edge) * (0.45 + 0.55 * crown_h));
+	// The gold rim is a near-field effect — a few hundred metres off, a whole
+	// crown is the size of its rim, and the glow turned stands to cream.
+	glow *= 1.0 - 0.6 * smoothstep(aerial_near, aerial_far, view_dist);
 	DIFFUSE_LIGHT += glow * ATTENUATION * LIGHT_COLOR / PI * 3.0;
 }
