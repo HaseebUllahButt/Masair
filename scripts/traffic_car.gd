@@ -762,15 +762,27 @@ static func _arches(b: LowPoly, radius: float, flank: float, zs: Array, thicknes
 	## look bolted to a floating slab; with it the tyre sits under an eyebrow that
 	## catches its own shade. Beside the wheel it would only read as a mudflap, so
 	## it goes above the tyre, not next to it.
+	## The eyebrow turns down at both ends into a lip in front of and behind the
+	## tyre — an arch, not a bar laid over the wheel — so the wheel sits in a
+	## cut-out of the body the way a real one does.
 	for z in zs:
 		for side in [-1.0, 1.0]:
 			_rbx(
 				b,
 				Vector3(side * flank, radius * 1.62, float(z)),
-				Vector3(thickness, radius * 0.36, radius * 2.7),
+				Vector3(thickness, radius * 0.36, radius * 1.7),
 				TRIM,
 				0.04
 			)
+			for end in [-1.0, 1.0]:
+				_rbx(
+					b,
+					Vector3(side * flank, radius * 1.24, float(z) + end * radius * 1.1),
+					Vector3(thickness, radius * 0.34, radius * 0.95),
+					TRIM,
+					0.04,
+					end * 0.95
+				)
 
 
 static func _plates(b: LowPoly, y: float, front_z: float, rear_z: float) -> void:
